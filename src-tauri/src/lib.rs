@@ -202,6 +202,20 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            browser::browser_create_tab,
+            browser::browser_switch_tab,
+            browser::browser_close_tab,
+            browser::browser_navigate_tab,
+            browser::browser_go_back_tab,
+            browser::browser_go_forward_tab,
+            browser::browser_reload_tab,
+            browser::browser_get_multi_state,
+            browser::browser_set_bounds_all,
+            browser::browser_hide_all,
+            browser::browser_show_active,
+            browser::browser_get_tab_url,
+            browser::browser_get_tab_title,
+            browser::browser_get_tab_visible_text,
             browser::browser_create,
             browser::browser_destroy,
             browser::browser_show,

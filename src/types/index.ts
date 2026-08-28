@@ -108,6 +108,21 @@ export interface BrowserViewportBounds {
   height: number;
 }
 
+export interface BrowserTabInfo {
+  id: string;
+  label: string;
+  url: string;
+  title: string;
+  is_active: boolean;
+}
+
+export interface BrowserMultiStateInfo {
+  tabs: BrowserTabInfo[];
+  active_tab_id: string | null;
+  is_visible: boolean;
+  bounds?: BrowserViewportBounds;
+}
+
 export interface BrowserInfo {
   is_created: boolean;
   is_visible: boolean;
@@ -123,4 +138,5 @@ export type ViewTab =
   | 'memory_bank' 
   | 'plugins' 
   | 'settings';
+
 

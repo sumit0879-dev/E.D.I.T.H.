@@ -14,6 +14,8 @@ import type {
   AgentStatus,
   BrowserViewportBounds,
   BrowserInfo,
+  BrowserTabInfo,
+  BrowserMultiStateInfo,
 } from '../types';
 
 export const isTauri = () => {
@@ -764,7 +766,102 @@ export async function onModelProgress(callback: (msg: string) => void): Promise<
   }
 }
 
-// --- Browser Webview2 Controller Methods ---
+// --- Browser Webview2 Multi-Tab Controller Methods ---
+export async function browserCreateTab(tabId: string, url?: string, bounds?: BrowserViewportBounds): Promise<BrowserTabInfo> {
+  if (!isTauri()) {
+    return {
+      id: tabId,
+      label: `edith_tab_${tabId}`,
+      url: url || 'https://example.com',
+      title: 'Simulated Tab',
+      is_active: true,
+    };
+  }
+  return await invoke<BrowserTabInfo>('browser_create_tab', { tabId, url, bounds });
+}
+
+export async function browserSwitchTab(tabId: string, bounds?: BrowserViewportBounds): Promise<BrowserTabInfo> {
+  if (!isTauri()) {
+    return {
+      id: tabId,
+      label: `edith_tab_${tabId}`,
+      url: 'https://example.com',
+      title: 'Simulated Tab',
+      is_active: true,
+    };
+  }
+  return await invoke<BrowserTabInfo>('browser_switch_tab', { tabId, bounds });
+}
+
+export async function browserCloseTab(tabId: string): Promise<BrowserTabInfo | null> {
+  if (!isTauri()) return null;
+  return await invoke<BrowserTabInfo | null>('browser_close_tab', { tabId });
+}
+
+export async function browserNavigateTab(tabId: string, url: string): Promise<string> {
+  if (!isTauri()) return url;
+  return await invoke<string>('browser_navigate_tab', { tabId, url });
+}
+
+export async function browserGoBackTab(tabId: string): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_go_back_tab', { tabId });
+}
+
+export async function browserGoForwardTab(tabId: string): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_go_forward_tab', { tabId });
+}
+
+export async function browserReloadTab(tabId: string): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_reload_tab', { tabId });
+}
+
+export async function browserGetMultiState(): Promise<BrowserMultiStateInfo> {
+  if (!isTauri()) {
+    return {
+      tabs: [],
+      active_tab_id: null,
+      is_visible: false,
+    };
+  }
+  return await invoke<BrowserMultiStateInfo>('browser_get_multi_state');
+}
+
+export async function browserSetBoundsAll(bounds: BrowserViewportBounds): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_set_bounds_all', { bounds });
+}
+
+export async function browserHideAll(): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_hide_all');
+}
+
+export async function browserShowActive(bounds?: BrowserViewportBounds): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_show_active', { bounds });
+}
+
+export async function browserGetTabUrl(tabId: string): Promise<string> {
+  if (!isTauri()) return 'https://example.com';
+  return await invoke<string>('browser_get_tab_url', { tabId });
+}
+
+export async function browserGetTabTitle(tabId: string): Promise<string> {
+  if (!isTauri()) return 'Tab Title';
+  return await invoke<string>('browser_get_tab_title', { tabId });
+}
+
+export async function browserGetTabVisibleText(tabId: string): Promise<string> {
+  if (!isTauri()) {
+    return 'Sample simulated visible text content.';
+  }
+  return await invoke<string>('browser_get_tab_visible_text', { tabId });
+}
+
+// --- Legacy Phase 1 Delegate Methods ---
 export async function browserCreate(url?: string, bounds?: BrowserViewportBounds): Promise<BrowserInfo> {
   if (!isTauri()) {
     return {
@@ -834,4 +931,5 @@ export async function browserGetVisibleText(): Promise<string> {
   }
   return await invoke<string>('browser_get_visible_text');
 }
+
 

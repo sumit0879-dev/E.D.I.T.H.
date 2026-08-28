@@ -1,5 +1,5 @@
 import * as tauriService from './tauri';
-import type { BrowserInfo, BrowserViewportBounds } from '../types';
+import type { BrowserTabInfo, BrowserMultiStateInfo, BrowserViewportBounds, BrowserInfo } from '../types';
 
 /**
  * Normalizes user input into a direct HTTPS URL or a deterministic search engine query URL.
@@ -27,82 +27,208 @@ export function normalizeBrowserUrl(input: string): string {
   return `https://duckduckgo.com/?q=${encodeURIComponent(trimmed)}`;
 }
 
+export type BrowserStateListener = (state: BrowserMultiStateInfo) => void;
+
 class BrowserController {
-  private isInitialized = false;
-  private currentUrl = 'https://example.com';
-  private currentTitle = 'Example Domain';
+  private tabs: BrowserTabInfo[] = [];
+  private activeTabId: string | null = null;
+  private isVisible = false;
+  private currentBounds: BrowserViewportBounds | null = null;
+  private listeners: Set<BrowserStateListener> = new Set();
 
-  public async create(url?: string, bounds?: BrowserViewportBounds): Promise<BrowserInfo> {
-    const targetUrl = url ? normalizeBrowserUrl(url) : this.currentUrl;
-    const res = await tauriService.browserCreate(targetUrl, bounds);
-    this.isInitialized = true;
-    this.currentUrl = res.current_url;
-    this.currentTitle = res.title;
+  public subscribe(listener: BrowserStateListener): () => void {
+    this.listeners.add(listener);
+    listener(this.getState());
+    return () => this.listeners.delete(listener);
+  }
+
+  private notify() {
+    const s = this.getState();
+    this.listeners.forEach((l) => l(s));
+  }
+
+  public getState(): BrowserMultiStateInfo {
+    return {
+      tabs: [...this.tabs],
+      active_tab_id: this.activeTabId,
+      is_visible: this.isVisible,
+      bounds: this.currentBounds || undefined,
+    };
+  }
+
+  public getActiveTab(): BrowserTabInfo | undefined {
+    return this.tabs.find((t) => t.id === this.activeTabId);
+  }
+
+  public async createTab(
+    tabId: string,
+    url?: string,
+    bounds?: BrowserViewportBounds
+  ): Promise<BrowserTabInfo> {
+    if (bounds) this.currentBounds = bounds;
+    const normUrl = url ? normalizeBrowserUrl(url) : 'https://example.com';
+    const res = await tauriService.browserCreateTab(tabId, normUrl, this.currentBounds || undefined);
+
+    const existingIdx = this.tabs.findIndex((t) => t.id === tabId);
+    this.tabs.forEach((t) => (t.is_active = false));
+    if (existingIdx >= 0) {
+      this.tabs[existingIdx] = res;
+    } else {
+      this.tabs.push(res);
+    }
+    this.activeTabId = tabId;
+    this.isVisible = true;
+    this.notify();
     return res;
   }
 
-  public async destroy(): Promise<void> {
-    await tauriService.browserDestroy();
-    this.isInitialized = false;
+  public async switchTab(tabId: string, bounds?: BrowserViewportBounds): Promise<BrowserTabInfo> {
+    if (bounds) this.currentBounds = bounds;
+    const res = await tauriService.browserSwitchTab(tabId, this.currentBounds || undefined);
+    this.tabs.forEach((t) => {
+      t.is_active = t.id === tabId;
+      if (t.id === tabId) {
+        t.url = res.url;
+      }
+    });
+    this.activeTabId = tabId;
+    this.isVisible = true;
+    this.notify();
+    return res;
   }
 
-  public async show(): Promise<void> {
-    if (this.isInitialized) {
-      await tauriService.browserShow();
+  public async closeTab(tabId: string): Promise<BrowserTabInfo | null> {
+    const res = await tauriService.browserCloseTab(tabId);
+    this.tabs = this.tabs.filter((t) => t.id !== tabId);
+    if (res) {
+      this.activeTabId = res.id;
+      this.tabs.forEach((t) => (t.is_active = t.id === res.id));
+    } else {
+      this.activeTabId = null;
+      this.isVisible = false;
     }
+    this.notify();
+    return res;
   }
 
-  public async hide(): Promise<void> {
-    if (this.isInitialized) {
-      await tauriService.browserHide();
-    }
-  }
-
-  public async navigate(input: string): Promise<string> {
+  public async navigateTab(tabId: string, input: string): Promise<string> {
     const normalized = normalizeBrowserUrl(input);
-    this.currentUrl = normalized;
-    const res = await tauriService.browserNavigate(normalized);
+    const res = await tauriService.browserNavigateTab(tabId, normalized);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) {
+      tab.url = res;
+      this.notify();
+    }
     return res;
   }
 
-  public async goBack(): Promise<void> {
-    await tauriService.browserGoBack();
+  public async goBack(tabId?: string): Promise<void> {
+    const targetId = tabId || this.activeTabId;
+    if (targetId) {
+      await tauriService.browserGoBackTab(targetId);
+    }
   }
 
-  public async goForward(): Promise<void> {
-    await tauriService.browserGoForward();
+  public async goForward(tabId?: string): Promise<void> {
+    const targetId = tabId || this.activeTabId;
+    if (targetId) {
+      await tauriService.browserGoForwardTab(targetId);
+    }
   }
 
-  public async reload(): Promise<void> {
-    await tauriService.browserReload();
+  public async reload(tabId?: string): Promise<void> {
+    const targetId = tabId || this.activeTabId;
+    if (targetId) {
+      await tauriService.browserReloadTab(targetId);
+    }
   }
 
-  public async setBounds(bounds: BrowserViewportBounds): Promise<void> {
-    await tauriService.browserSetBounds(bounds);
+  public async setBoundsAll(bounds: BrowserViewportBounds): Promise<void> {
+    this.currentBounds = bounds;
+    await tauriService.browserSetBoundsAll(bounds);
   }
 
-  public async getUrl(): Promise<string> {
-    const url = await tauriService.browserGetUrl();
-    if (url) this.currentUrl = url;
+  public async hideAll(): Promise<void> {
+    this.isVisible = false;
+    await tauriService.browserHideAll();
+    this.notify();
+  }
+
+  public async showActive(bounds?: BrowserViewportBounds): Promise<void> {
+    if (bounds) this.currentBounds = bounds;
+    if (this.activeTabId) {
+      this.isVisible = true;
+      await tauriService.browserShowActive(this.currentBounds || undefined);
+      this.notify();
+    }
+  }
+
+  public async getTabUrl(tabId: string): Promise<string> {
+    const url = await tauriService.browserGetTabUrl(tabId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab && url) {
+      tab.url = url;
+      this.notify();
+    }
     return url;
   }
 
-  public async getTitle(): Promise<string> {
-    const title = await tauriService.browserGetTitle();
-    if (title) this.currentTitle = title;
+  public async getTabTitle(tabId: string): Promise<string> {
+    const title = await tauriService.browserGetTabTitle(tabId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab && title) {
+      tab.title = title;
+      this.notify();
+    }
     return title;
   }
 
-  public async getVisibleText(): Promise<string> {
-    return await tauriService.browserGetVisibleText();
+  public async getTabVisibleText(tabId: string): Promise<string> {
+    return await tauriService.browserGetTabVisibleText(tabId);
   }
 
-  public getState() {
+  // --- Legacy Phase 1 Delegate Methods ---
+  public async create(url?: string, bounds?: BrowserViewportBounds): Promise<BrowserInfo> {
+    const tab = await this.createTab('tab_a', url, bounds);
     return {
-      isInitialized: this.isInitialized,
-      currentUrl: this.currentUrl,
-      currentTitle: this.currentTitle,
+      is_created: true,
+      is_visible: true,
+      current_url: tab.url,
+      title: tab.title,
+      bounds,
     };
+  }
+
+  public async destroy(): Promise<void> {
+    await this.hideAll();
+  }
+
+  public async show(): Promise<void> {
+    await this.showActive();
+  }
+
+  public async hide(): Promise<void> {
+    await this.hideAll();
+  }
+
+  public async navigate(input: string): Promise<string> {
+    const targetId = this.activeTabId || 'tab_a';
+    return await this.navigateTab(targetId, input);
+  }
+
+  public async getUrl(): Promise<string> {
+    const targetId = this.activeTabId || 'tab_a';
+    return await this.getTabUrl(targetId);
+  }
+
+  public async getTitle(): Promise<string> {
+    const targetId = this.activeTabId || 'tab_a';
+    return await this.getTabTitle(targetId);
+  }
+
+  public async getVisibleText(): Promise<string> {
+    const targetId = this.activeTabId || 'tab_a';
+    return await this.getTabVisibleText(targetId);
   }
 }
 
