@@ -1,5 +1,12 @@
 import * as tauriService from './tauri';
-import type { BrowserTabInfo, BrowserMultiStateInfo, BrowserViewportBounds, BrowserInfo } from '../types';
+import type {
+  BrowserTabInfo,
+  BrowserMultiStateInfo,
+  BrowserViewportBounds,
+  BrowserInfo,
+  PageObservationSnapshot,
+  ScreenshotResult,
+} from '../types';
 
 /**
  * Normalizes user input into a direct HTTPS URL or a deterministic search engine query URL.
@@ -10,7 +17,13 @@ export function normalizeBrowserUrl(input: string): string {
     return 'https://example.com';
   }
 
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+  // Security check: Block javascript: execution
+  if (trimmed.toLowerCase().startsWith('javascript:')) {
+    console.warn('Blocked execution of javascript: URL from omnibox.');
+    return 'about:blank';
+  }
+
+  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('about:')) {
     return trimmed;
   }
 
@@ -89,6 +102,8 @@ class BrowserController {
       t.is_active = t.id === tabId;
       if (t.id === tabId) {
         t.url = res.url;
+        t.title = res.title;
+        t.favicon = res.favicon;
       }
     });
     this.activeTabId = tabId;
@@ -111,12 +126,44 @@ class BrowserController {
     return res;
   }
 
+  public async reopenLastClosedTab(bounds?: BrowserViewportBounds): Promise<BrowserTabInfo | null> {
+    if (bounds) this.currentBounds = bounds;
+    const res = await tauriService.browserReopenLastClosedTab(this.currentBounds || undefined);
+    if (res) {
+      this.tabs.forEach((t) => (t.is_active = false));
+      this.tabs.push(res);
+      this.activeTabId = res.id;
+      this.isVisible = true;
+      this.notify();
+    }
+    return res;
+  }
+
+  public async switchToNextTab(): Promise<BrowserTabInfo | undefined> {
+    if (this.tabs.length <= 1 || !this.activeTabId) return this.getActiveTab();
+    const idx = this.tabs.findIndex((t) => t.id === this.activeTabId);
+    const nextIdx = (idx + 1) % this.tabs.length;
+    return await this.switchTab(this.tabs[nextIdx].id);
+  }
+
+  public async switchToPrevTab(): Promise<BrowserTabInfo | undefined> {
+    if (this.tabs.length <= 1 || !this.activeTabId) return this.getActiveTab();
+    const idx = this.tabs.findIndex((t) => t.id === this.activeTabId);
+    const prevIdx = (idx - 1 + this.tabs.length) % this.tabs.length;
+    return await this.switchTab(this.tabs[prevIdx].id);
+  }
+
   public async navigateTab(tabId: string, input: string): Promise<string> {
     const normalized = normalizeBrowserUrl(input);
-    const res = await tauriService.browserNavigateTab(tabId, normalized);
     const tab = this.tabs.find((t) => t.id === tabId);
     if (tab) {
+      tab.is_loading = true;
+      this.notify();
+    }
+    const res = await tauriService.browserNavigateTab(tabId, normalized);
+    if (tab) {
       tab.url = res;
+      tab.is_loading = false;
       this.notify();
     }
     return res;
@@ -163,28 +210,36 @@ class BrowserController {
     }
   }
 
-  public async getTabUrl(tabId: string): Promise<string> {
-    const url = await tauriService.browserGetTabUrl(tabId);
+  // --- Phase 3 Live Observation & Screenshot APIs ---
+  public async observeTab(tabId: string): Promise<PageObservationSnapshot> {
+    const obs = await tauriService.browserObserveTab(tabId);
     const tab = this.tabs.find((t) => t.id === tabId);
-    if (tab && url) {
-      tab.url = url;
+    if (tab) {
+      tab.url = obs.url;
+      tab.title = obs.title;
+      tab.is_loading = false;
       this.notify();
     }
-    return url;
+    return obs;
+  }
+
+  public async screenshotTab(tabId: string): Promise<ScreenshotResult> {
+    return await tauriService.browserScreenshotTab(tabId, this.currentBounds || undefined);
+  }
+
+  public async getTabUrl(tabId: string): Promise<string> {
+    const obs = await this.observeTab(tabId);
+    return obs.url;
   }
 
   public async getTabTitle(tabId: string): Promise<string> {
-    const title = await tauriService.browserGetTabTitle(tabId);
-    const tab = this.tabs.find((t) => t.id === tabId);
-    if (tab && title) {
-      tab.title = title;
-      this.notify();
-    }
-    return title;
+    const obs = await this.observeTab(tabId);
+    return obs.title;
   }
 
   public async getTabVisibleText(tabId: string): Promise<string> {
-    return await tauriService.browserGetTabVisibleText(tabId);
+    const obs = await this.observeTab(tabId);
+    return obs.visible_text;
   }
 
   // --- Legacy Phase 1 Delegate Methods ---

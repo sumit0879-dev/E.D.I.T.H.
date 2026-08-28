@@ -108,12 +108,65 @@ export interface BrowserViewportBounds {
   height: number;
 }
 
+export interface BrowserElementBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface ElementInfo {
+  id?: string;
+  tag: string;
+  role?: string;
+  text: string;
+  aria_label?: string;
+  href?: string;
+  input_type?: string;
+  disabled: boolean;
+  visible: boolean;
+  bounding_box?: BrowserElementBounds;
+}
+
+export interface PageObservationSnapshot {
+  tab_id: string;
+  url: string;
+  title: string;
+  visible_text: string;
+  selected_text?: string;
+  interactive_elements: ElementInfo[];
+  timestamp: number;
+}
+
+export interface DownloadItemInfo {
+  id: string;
+  tab_id: string;
+  url: string;
+  suggested_filename: string;
+  state: string;
+  total_bytes?: number;
+  timestamp: number;
+}
+
+export interface ScreenshotResult {
+  tab_id: string;
+  data_url: string;
+  width: number;
+  height: number;
+}
+
 export interface BrowserTabInfo {
   id: string;
   label: string;
   url: string;
   title: string;
+  favicon?: string;
   is_active: boolean;
+  is_loading: boolean;
+  can_go_back: boolean;
+  can_go_forward: boolean;
+  error?: string;
+  created_at: number;
 }
 
 export interface BrowserMultiStateInfo {
@@ -121,6 +174,7 @@ export interface BrowserMultiStateInfo {
   active_tab_id: string | null;
   is_visible: boolean;
   bounds?: BrowserViewportBounds;
+  downloads?: DownloadItemInfo[];
 }
 
 export interface BrowserInfo {
@@ -138,5 +192,6 @@ export type ViewTab =
   | 'memory_bank' 
   | 'plugins' 
   | 'settings';
+
 
 

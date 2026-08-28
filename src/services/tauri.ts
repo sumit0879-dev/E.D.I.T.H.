@@ -16,6 +16,9 @@ import type {
   BrowserInfo,
   BrowserTabInfo,
   BrowserMultiStateInfo,
+  PageObservationSnapshot,
+  ScreenshotResult,
+  ElementInfo,
 } from '../types';
 
 export const isTauri = () => {
@@ -775,6 +778,10 @@ export async function browserCreateTab(tabId: string, url?: string, bounds?: Bro
       url: url || 'https://example.com',
       title: 'Simulated Tab',
       is_active: true,
+      is_loading: false,
+      can_go_back: false,
+      can_go_forward: false,
+      created_at: Date.now(),
     };
   }
   return await invoke<BrowserTabInfo>('browser_create_tab', { tabId, url, bounds });
@@ -788,6 +795,10 @@ export async function browserSwitchTab(tabId: string, bounds?: BrowserViewportBo
       url: 'https://example.com',
       title: 'Simulated Tab',
       is_active: true,
+      is_loading: false,
+      can_go_back: false,
+      can_go_forward: false,
+      created_at: Date.now(),
     };
   }
   return await invoke<BrowserTabInfo>('browser_switch_tab', { tabId, bounds });
@@ -859,6 +870,49 @@ export async function browserGetTabVisibleText(tabId: string): Promise<string> {
     return 'Sample simulated visible text content.';
   }
   return await invoke<string>('browser_get_tab_visible_text', { tabId });
+}
+
+export async function browserObserveTab(tabId: string): Promise<PageObservationSnapshot> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      url: 'https://example.com',
+      title: 'Example Domain (Simulated)',
+      visible_text: 'Example Domain. This domain is for use in illustrative examples in documents.',
+      selected_text: undefined,
+      interactive_elements: [
+        {
+          id: 'more-info-link',
+          tag: 'a',
+          role: 'link',
+          text: 'More information...',
+          href: 'https://www.iana.org/domains/example',
+          disabled: false,
+          visible: true,
+          bounding_box: { x: 100, y: 200, width: 150, height: 24 },
+        },
+      ],
+      timestamp: Date.now(),
+    };
+  }
+  return await invoke<PageObservationSnapshot>('browser_observe_tab', { tabId });
+}
+
+export async function browserScreenshotTab(tabId: string, bounds?: BrowserViewportBounds): Promise<ScreenshotResult> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      data_url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+      width: 800,
+      height: 600,
+    };
+  }
+  return await invoke<ScreenshotResult>('browser_screenshot_tab', { tabId, bounds });
+}
+
+export async function browserReopenLastClosedTab(bounds?: BrowserViewportBounds): Promise<BrowserTabInfo | null> {
+  if (!isTauri()) return null;
+  return await invoke<BrowserTabInfo | null>('browser_reopen_last_closed_tab', { bounds });
 }
 
 // --- Legacy Phase 1 Delegate Methods ---

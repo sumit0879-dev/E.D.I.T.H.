@@ -7,14 +7,24 @@ import {
   Globe,
   Lock,
   Eye,
+  Camera,
   CheckCircle2,
   Plus,
   X,
   Layers,
+  Sparkles,
+  RefreshCw,
+  Loader2,
+  Code2,
 } from 'lucide-react';
 import { browserController } from '../services/browserController';
 import { isTauri } from '../services/tauri';
-import type { BrowserTabInfo, BrowserMultiStateInfo } from '../types';
+import type {
+  BrowserTabInfo,
+  BrowserMultiStateInfo,
+  PageObservationSnapshot,
+  ScreenshotResult,
+} from '../types';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -24,11 +34,17 @@ export const BrowserView: React.FC = () => {
   });
   const [inputUrl, setInputUrl] = useState('https://example.com');
   const [isLoading, setIsLoading] = useState(false);
-  const [observationResult, setObservationResult] = useState<string | null>(null);
+  const [isOmniboxFocused, setIsOmniboxFocused] = useState(false);
+  
+  // Phase 3 Live Observation & Screenshot states
+  const [liveSnapshot, setLiveSnapshot] = useState<PageObservationSnapshot | null>(null);
   const [isObserving, setIsObserving] = useState(false);
   const [inspectTabId, setInspectTabId] = useState<string>('tab_a');
+  const [screenshotPreview, setScreenshotPreview] = useState<ScreenshotResult | null>(null);
+  const [isCapturingScreen, setIsCapturingScreen] = useState(false);
 
   const viewportRef = useRef<HTMLDivElement>(null);
+  const omniboxInputRef = useRef<HTMLInputElement>(null);
 
   // Sync bounds from DOM element to native active child WebView
   const syncBounds = useCallback(() => {
@@ -53,7 +69,7 @@ export const BrowserView: React.FC = () => {
       if (mounted) {
         setBrowserState(state);
         const activeTab = state.tabs.find((t) => t.id === state.active_tab_id);
-        if (activeTab) {
+        if (activeTab && !isOmniboxFocused) {
           setInputUrl(activeTab.url);
         }
       }
@@ -73,16 +89,11 @@ export const BrowserView: React.FC = () => {
         };
 
         try {
-          // Phase 2 Multi-WebView Test: Create Tab A, Tab B, Tab C
           const currentTabs = browserController.getState().tabs;
           if (currentTabs.length === 0) {
-            // Tab A -> https://example.com
             await browserController.createTab('tab_a', 'https://example.com', initialBounds);
-            // Tab B -> https://www.wikipedia.org
             await browserController.createTab('tab_b', 'https://www.wikipedia.org', initialBounds);
-            // Tab C -> https://github.com
             await browserController.createTab('tab_c', 'https://github.com', initialBounds);
-            // Set Tab A as initial active tab
             await browserController.switchTab('tab_a', initialBounds);
           } else {
             await browserController.showActive(initialBounds);
@@ -117,7 +128,81 @@ export const BrowserView: React.FC = () => {
       window.removeEventListener('resize', syncBounds);
       browserController.hideAll().catch(() => {});
     };
-  }, [syncBounds]);
+  }, [syncBounds, isOmniboxFocused]);
+
+  // Phase 3 Keyboard Shortcuts (Part A)
+  useEffect(() => {
+    const handleKeyDown = async (e: KeyboardEvent) => {
+      // Ctrl+T: New Tab
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        const newId = `tab_${Date.now().toString(36)}`;
+        await browserController.createTab(newId, 'https://example.com');
+        setInspectTabId(newId);
+        return;
+      }
+
+      // Ctrl+Shift+T: Reopen Last Closed Tab
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 't') {
+        e.preventDefault();
+        const restored = await browserController.reopenLastClosedTab();
+        if (restored) setInspectTabId(restored.id);
+        return;
+      }
+
+      // Ctrl+W: Close Current Tab
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'w') {
+        e.preventDefault();
+        if (browserState.active_tab_id) {
+          await browserController.closeTab(browserState.active_tab_id);
+        }
+        return;
+      }
+
+      // Ctrl+Tab / Ctrl+Shift+Tab: Cycle Tabs
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
+        e.preventDefault();
+        if (e.shiftKey) {
+          await browserController.switchToPrevTab();
+        } else {
+          await browserController.switchToNextTab();
+        }
+        return;
+      }
+
+      // Ctrl+L: Focus Omnibox
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+        e.preventDefault();
+        omniboxInputRef.current?.focus();
+        omniboxInputRef.current?.select();
+        return;
+      }
+
+      // Ctrl+R: Reload
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        await browserController.reload();
+        return;
+      }
+
+      // Alt+Left: Back
+      if (e.altKey && e.key === 'ArrowLeft') {
+        e.preventDefault();
+        await browserController.goBack();
+        return;
+      }
+
+      // Alt+Right: Forward
+      if (e.altKey && e.key === 'ArrowRight') {
+        e.preventDefault();
+        await browserController.goForward();
+        return;
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [browserState.active_tab_id]);
 
   const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
 
@@ -179,94 +264,58 @@ export const BrowserView: React.FC = () => {
       setInputUrl(navigatedUrl);
       setTimeout(async () => {
         if (browserState.active_tab_id) {
-          await browserController.getTabTitle(browserState.active_tab_id);
+          await browserController.observeTab(browserState.active_tab_id);
         }
       }, 1000);
     } catch (err: any) {
       console.error('Navigation error:', err);
     } finally {
       setIsLoading(false);
+      omniboxInputRef.current?.blur();
     }
   };
 
-  const handleGoBack = async () => {
-    try {
-      await browserController.goBack();
-      setTimeout(async () => {
-        if (browserState.active_tab_id) {
-          const u = await browserController.getTabUrl(browserState.active_tab_id);
-          setInputUrl(u);
-          await browserController.getTabTitle(browserState.active_tab_id);
-        }
-      }, 500);
-    } catch (err) {
-      console.error('Back error:', err);
+  const handleOmniboxKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'Escape') {
+      if (activeTab) {
+        setInputUrl(activeTab.url);
+      }
+      omniboxInputRef.current?.blur();
     }
   };
 
-  const handleGoForward = async () => {
-    try {
-      await browserController.goForward();
-      setTimeout(async () => {
-        if (browserState.active_tab_id) {
-          const u = await browserController.getTabUrl(browserState.active_tab_id);
-          setInputUrl(u);
-          await browserController.getTabTitle(browserState.active_tab_id);
-        }
-      }, 500);
-    } catch (err) {
-      console.error('Forward error:', err);
-    }
-  };
-
-  const handleReload = async () => {
-    setIsLoading(true);
-    try {
-      await browserController.reload();
-      setTimeout(async () => {
-        if (browserState.active_tab_id) {
-          const u = await browserController.getTabUrl(browserState.active_tab_id);
-          setInputUrl(u);
-          await browserController.getTabTitle(browserState.active_tab_id);
-        }
-        setIsLoading(false);
-      }, 800);
-    } catch (err) {
-      console.error('Reload error:', err);
-      setIsLoading(false);
-    }
-  };
-
-  // Scoped Observation Test across individual tabs
-  const handleObserveTab = async () => {
+  // Phase 3 Live DOM Observation Handler (Part I, J, K)
+  const handleObserveLiveTab = async () => {
     const targetId = inspectTabId || browserState.active_tab_id || 'tab_a';
     setIsObserving(true);
-    setObservationResult(null);
+    setLiveSnapshot(null);
 
     try {
-      const [url, title, text] = await Promise.all([
-        browserController.getTabUrl(targetId),
-        browserController.getTabTitle(targetId),
-        browserController.getTabVisibleText(targetId),
-      ]);
-
-      const summary = `### 🛰️ Scoped Tab Observation (Test 11 Verified)
-- **Observed Tab ID**: \`${targetId}\` (Native Label: \`edith_tab_${targetId}\`)
-- **Observed URL**: \`${url}\`
-- **Document Title**: \`${title}\`
-- **Extracted Visible Text (${text.length} chars)**:
-> ${text.slice(0, 400)}...`;
-
-      setObservationResult(summary);
+      const snapshot = await browserController.observeTab(targetId);
+      setLiveSnapshot(snapshot);
     } catch (err: any) {
-      setObservationResult(`Observation Error for ${targetId}: ${err.message || err}`);
+      console.error(`Live observation error for ${targetId}:`, err);
     } finally {
       setIsObserving(false);
     }
   };
 
+  // Phase 3 Native Viewport Screenshot Handler (Part N)
+  const handleCaptureScreenshot = async () => {
+    const targetId = browserState.active_tab_id || 'tab_a';
+    setIsCapturingScreen(true);
+    try {
+      const res = await browserController.screenshotTab(targetId);
+      setScreenshotPreview(res);
+    } catch (err) {
+      console.error('Screenshot error:', err);
+    } finally {
+      setIsCapturingScreen(false);
+    }
+  };
+
   return (
-    <div className="flex flex-col h-full w-full bg-[#000000] text-slate-100 select-none overflow-hidden">
+    <div className="flex flex-col h-full w-full bg-[#000000] text-slate-100 select-none overflow-hidden font-sans">
       {/* Tactical Multi-Tab Strip */}
       <div className="h-9 bg-[#040711] border-b border-white/[0.08] px-2 flex items-center gap-1.5 shrink-0 z-10 overflow-x-auto">
         <div className="flex items-center gap-1">
@@ -276,21 +325,34 @@ export const BrowserView: React.FC = () => {
               <div
                 key={tab.id}
                 onClick={() => handleSwitchTab(tab.id)}
-                className={`group relative flex items-center gap-2 h-7 px-3 rounded-lg text-xs font-mono transition-all cursor-pointer select-none max-w-[200px] min-w-[120px] ${
+                className={`group relative flex items-center gap-2 h-7 px-3 rounded-lg text-xs font-mono transition-all cursor-pointer select-none max-w-[200px] min-w-[130px] ${
                   isActive
                     ? 'bg-[#091122] text-cyan-300 border border-cyan-500/40 shadow-cyan-glow-xs'
                     : 'bg-white/[0.03] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] border border-transparent'
                 }`}
               >
-                <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
+                {tab.is_loading ? (
+                  <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" />
+                ) : tab.favicon ? (
+                  <img
+                    src={tab.favicon}
+                    alt=""
+                    className="w-3.5 h-3.5 shrink-0 rounded-sm"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
+                )}
                 <span className="truncate flex-1 text-[11px]">
-                  {tab.title || tab.url || 'Tab'}
+                  {tab.title || tab.url || 'New Tab'}
                 </span>
                 {browserState.tabs.length > 1 && (
                   <button
                     onClick={(e) => handleCloseTab(e, tab.id)}
                     className="opacity-0 group-hover:opacity-100 hover:text-red-400 p-0.5 rounded transition"
-                    title="Close Tab"
+                    title="Close Tab (Ctrl+W)"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -301,37 +363,37 @@ export const BrowserView: React.FC = () => {
           <button
             onClick={handleCreateNewTab}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition"
-            title="New Tab"
+            title="New Tab (Ctrl+T)"
           >
             <Plus className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
 
-      {/* Tactical Browser HUD Toolbar */}
+      {/* Tactical Browser HUD Toolbar & Omnibox */}
       <div className="h-11 bg-[#050914] border-b border-white/[0.08] px-3 flex items-center gap-2 shrink-0 z-10">
         {/* Navigation Controls */}
         <div className="flex items-center space-x-1">
           <button
-            onClick={handleGoBack}
+            onClick={() => browserController.goBack()}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition"
-            title="Back"
+            title="Back (Alt+Left)"
           >
             <ArrowLeft className="w-4 h-4" />
           </button>
           <button
-            onClick={handleGoForward}
+            onClick={() => browserController.goForward()}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition"
-            title="Forward"
+            title="Forward (Alt+Right)"
           >
             <ArrowRight className="w-4 h-4" />
           </button>
           <button
-            onClick={handleReload}
+            onClick={() => browserController.reload()}
             className={`w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition ${
               isLoading ? 'animate-spin text-cyan-400' : ''
             }`}
-            title="Reload"
+            title="Reload (Ctrl+R)"
           >
             <RotateCw className="w-3.5 h-3.5" />
           </button>
@@ -339,13 +401,17 @@ export const BrowserView: React.FC = () => {
 
         {/* Omnibox URL / Search Bar */}
         <form onSubmit={handleNavigate} className="flex-1 flex items-center">
-          <div className="w-full flex items-center bg-[#090e1a] border border-white/[0.1] focus-within:border-cyan-500/50 rounded-xl px-3 py-1 transition shadow-inner">
+          <div className="w-full flex items-center bg-[#090e1a] border border-white/[0.1] focus-within:border-cyan-500/60 rounded-xl px-3 py-1 transition shadow-inner">
             <Lock className="w-3.5 h-3.5 text-emerald-400 mr-2 shrink-0" />
             <input
+              ref={omniboxInputRef}
               type="text"
               value={inputUrl}
+              onFocus={() => setIsOmniboxFocused(true)}
+              onBlur={() => setIsOmniboxFocused(false)}
               onChange={(e) => setInputUrl(e.target.value)}
-              placeholder="Search or enter HTTPS address..."
+              onKeyDown={handleOmniboxKeyDown}
+              placeholder="Search or enter HTTPS address (Ctrl+L)..."
               className="w-full bg-transparent text-xs text-slate-100 placeholder-slate-500 focus:outline-none font-mono"
             />
             {isLoading ? (
@@ -354,7 +420,7 @@ export const BrowserView: React.FC = () => {
               <button
                 type="submit"
                 className="text-slate-400 hover:text-cyan-400 transition shrink-0 ml-2"
-                title="Navigate"
+                title="Navigate (Enter)"
               >
                 <Search className="w-3.5 h-3.5" />
               </button>
@@ -362,7 +428,7 @@ export const BrowserView: React.FC = () => {
           </div>
         </form>
 
-        {/* Action Controls & Scoped Observation Inspector */}
+        {/* Action Controls: Live DOM Observer & Screenshot */}
         <div className="flex items-center space-x-1.5">
           <div className="flex items-center gap-1 bg-[#090e1a] border border-white/[0.08] rounded-xl px-2 py-0.5">
             <Layers className="w-3 h-3 text-cyan-400" />
@@ -370,36 +436,97 @@ export const BrowserView: React.FC = () => {
               value={inspectTabId}
               onChange={(e) => setInspectTabId(e.target.value)}
               className="bg-transparent text-[11px] font-mono text-cyan-300 focus:outline-none cursor-pointer"
-              title="Select Tab for Observation"
+              title="Select Tab for Live Observation"
             >
               {browserState.tabs.map((t) => (
                 <option key={t.id} value={t.id} className="bg-[#090e1a] text-slate-200">
-                  {t.id}: {t.title.slice(0, 18)}...
+                  {t.id}: {t.title.slice(0, 16)}...
                 </option>
               ))}
             </select>
           </div>
 
           <button
-            onClick={handleObserveTab}
+            onClick={handleObserveLiveTab}
             disabled={isObserving}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-950/60 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-900/50 hover:border-cyan-400 transition text-[11px] font-mono shadow-cyan-glow-xs"
-            title="Verify Scoped Multi-Tab Observation (Test 11)"
+            title="Inspect Live Rendered DOM & Elements (Phase 3)"
           >
-            <Eye className="w-3.5 h-3.5" />
-            <span className="hidden sm:inline">Observe</span>
+            {isObserving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">Observe DOM</span>
+          </button>
+
+          <button
+            onClick={handleCaptureScreenshot}
+            disabled={isCapturingScreen}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-400 transition text-[11px] font-mono shadow-emerald-glow-xs"
+            title="Capture Native Viewport Screenshot (Phase 3)"
+          >
+            {isCapturingScreen ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
+            <span className="hidden sm:inline">Capture</span>
           </button>
         </div>
       </div>
 
-      {/* Observation Drawer Banner */}
-      {observationResult && (
-        <div className="bg-[#091122] border-b border-cyan-500/30 p-3 text-xs text-cyan-200 flex items-start justify-between gap-3 shrink-0 z-10 animate-fadeIn">
-          <div className="flex-1 whitespace-pre-wrap font-mono leading-relaxed text-[11px]">
-            {observationResult}
+      {/* Live Observation Snapshot Drawer */}
+      {liveSnapshot && (
+        <div className="bg-[#070e1c] border-b border-cyan-500/30 p-3 text-xs text-cyan-200 flex flex-col gap-2 shrink-0 z-10 max-h-64 overflow-y-auto animate-fadeIn font-mono">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-cyan-300">
+              <Sparkles className="w-4 h-4 text-cyan-400" />
+              Live Rendered DOM Snapshot — Tab `{liveSnapshot.tab_id}`
+            </div>
+            <button
+              onClick={() => setLiveSnapshot(null)}
+              className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2 text-[11px]">
+            <div><span className="text-slate-400">Live URL:</span> <span className="text-white">{liveSnapshot.url}</span></div>
+            <div><span className="text-slate-400">Document Title:</span> <span className="text-cyan-300">{liveSnapshot.title}</span></div>
+            <div><span className="text-slate-400">Extracted Text Length:</span> <span className="text-emerald-400">{liveSnapshot.visible_text.length} characters</span></div>
+            <div><span className="text-slate-400">Discovered Interactive Elements:</span> <span className="text-yellow-400">{liveSnapshot.interactive_elements.length} elements</span></div>
+          </div>
+
+          {liveSnapshot.interactive_elements.length > 0 && (
+            <div className="border border-white/10 rounded-lg p-2 bg-black/40 overflow-x-auto">
+              <div className="text-[10px] text-slate-400 font-bold mb-1">Interactive Elements Sample (Tag, Text, Bounds):</div>
+              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
+                {liveSnapshot.interactive_elements.slice(0, 15).map((el, i) => (
+                  <span key={i} className="px-1.5 py-0.5 rounded bg-cyan-950/70 border border-cyan-500/20 text-[10px] text-cyan-200">
+                    &lt;{el.tag}&gt; &quot;{el.text || el.id || 'anonymous'}&quot; {el.bounding_box ? `[${Math.round(el.bounding_box.width)}x${Math.round(el.bounding_box.height)}]` : ''}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Screenshot Preview Modal / Drawer */}
+      {screenshotPreview && (
+        <div className="bg-[#050c18] border-b border-emerald-500/30 p-3 text-xs text-emerald-200 flex items-center justify-between gap-4 shrink-0 z-10 animate-fadeIn font-mono">
+          <div className="flex items-center gap-3">
+            <img
+              src={screenshotPreview.data_url}
+              alt="Screenshot Preview"
+              className="w-24 h-16 object-cover rounded-lg border border-emerald-500/40 shadow-lg"
+            />
+            <div>
+              <div className="font-bold text-emerald-300 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                Native Viewport Screenshot Captured
+              </div>
+              <div className="text-[11px] text-slate-400 mt-0.5">
+                Tab: <span className="text-white">{screenshotPreview.tab_id}</span> | Resolution: {screenshotPreview.width} x {screenshotPreview.height} px
+              </div>
+            </div>
           </div>
           <button
-            onClick={() => setObservationResult(null)}
+            onClick={() => setScreenshotPreview(null)}
             className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
           >
             Dismiss
@@ -424,7 +551,7 @@ export const BrowserView: React.FC = () => {
             </p>
             <div className="w-full bg-slate-900/90 rounded-xl p-3 border border-white/5 text-left font-mono text-[10px] space-y-2">
               <div className="text-emerald-400 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Topology: Main Window Child WebViews
+                <CheckCircle2 className="w-3.5 h-3.5" /> Phase 3 Live DOM Observation Active
               </div>
               <div className="text-cyan-300">
                 Active Tab: <span className="text-white font-bold">{activeTab?.id || 'None'}</span> ({activeTab?.label})
@@ -453,11 +580,9 @@ export const BrowserView: React.FC = () => {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-slate-500">Tabs: {browserState.tabs.length}</span>
+          <span className="text-slate-500">Shortcuts: Ctrl+T, Ctrl+W, Ctrl+Shift+T, Ctrl+Tab, Ctrl+L</span>
           <span className="text-slate-600">|</span>
-          <span className="text-slate-500">Session: Shared User-Data Environment</span>
-          <span className="text-slate-600">|</span>
-          <span className="text-cyan-400/80">Phase 2 Multi-WebView</span>
+          <span className="text-cyan-400/80">Phase 3 Hardened Core</span>
         </div>
       </div>
     </div>
