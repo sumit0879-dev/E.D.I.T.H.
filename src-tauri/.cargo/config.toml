@@ -1,0 +1,10 @@
+[build]
+jobs = 4
+
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=-crt-static"]
+
+[env]
+PROTOC = { value = "../protoc/bin/protoc.exe", relative = true }
+LIBCLANG_PATH = "D:/LLVM/bin"
+CMAKE = "D:/VStudio/Product/Common7/IDE/CommonExtensions/Microsoft/CMake/CMake/bin/cmake.exe"

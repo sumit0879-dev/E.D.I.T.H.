@@ -1,0 +1,125 @@
+# ==============================================================================
+# E.D.I.T.H. - Git Ignore Configuration
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Dependency Directories
+# ------------------------------------------------------------------------------
+node_modules/
+.pnpm-store/
+.yarn/
+.npm/
+
+# ------------------------------------------------------------------------------
+# 2. Frontend & JavaScript Build Outputs
+# ------------------------------------------------------------------------------
+dist/
+dist-ssr/
+build/
+coverage/
+*.local
+.vite/
+.eslintcache
+*.tsbuildinfo
+vite.config.js.timestamp-*
+vite.config.ts.timestamp-*
+
+# ------------------------------------------------------------------------------
+# 3. Tauri & Rust Build Outputs
+# ------------------------------------------------------------------------------
+target/
+src-tauri/target/
+src-tauri/gen/schemas/
+gen/schemas/
+**/*.rs.bk
+*.pdb
+
+# ------------------------------------------------------------------------------
+# 4. Environment Variables & Secrets (CRITICAL)
+# ------------------------------------------------------------------------------
+.env
+.env.*
+*.env
+!.env.example
+*.pem
+*.key
+*.cert
+*.crt
+*.pfx
+*.p12
+credentials.json
+token.json
+secrets/
+
+# ------------------------------------------------------------------------------
+# 5. Local Databases & Vector Memory
+# ------------------------------------------------------------------------------
+*.db
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+E.D.I.T.H.db
+data/
+*.lance/
+lancedb/
+_lance/
+
+# ------------------------------------------------------------------------------
+# 6. AI Model Weights & Heavy Binary Files
+# ------------------------------------------------------------------------------
+AI Engines/Kokoro/models/*
+!AI Engines/Kokoro/models/.gitkeep
+AI Engines/Kokoro/voices/*
+!AI Engines/Kokoro/voices/.gitkeep
+Llama/*
+!Llama/.gitkeep
+*.onnx
+*.safetensors
+*.gguf
+*.pt
+*.pth
+*.ckpt
+
+# ------------------------------------------------------------------------------
+# 7. Local Logs, Test Runs & Scratch Scripts
+# ------------------------------------------------------------------------------
+*.log
+logs/
+dev_output.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+*.tmp
+*.temp
+take_screenshots.js
+take_playwright_screenshots.js
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/
+
+# ------------------------------------------------------------------------------
+# 8. Operating System & IDE Files
+# ------------------------------------------------------------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.swp
+*.swo
+*~
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/settings.json

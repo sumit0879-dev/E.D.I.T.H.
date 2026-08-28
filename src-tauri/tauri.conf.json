@@ -1,0 +1,47 @@
+{
+    "$schema": "https://schema.tauri.app/config/2",
+    "productName": "E.D.I.T.H",
+    "version": "0.1.0",
+    "identifier": "com.sumit-solanki.E.D.I.T.H",
+    "build": {
+        "beforeDevCommand": "npm run dev",
+        "devUrl": "http://localhost:1420",
+        "beforeBuildCommand": "npm run build",
+        "frontendDist": "../build"
+    },
+    "app": {
+        "windows": [
+            {
+                "title": "E.D.I.T.H. - AI Assistant",
+                "width": 1280,
+                "height": 780,
+                "minWidth": 900,
+                "minHeight": 600
+            }
+        ],
+        "security": {
+            "csp": "default-src 'self' asset: blob:; connect-src 'self' asset: blob: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:* https://api.groq.com https://api.openai.com https://generativelanguage.googleapis.com https://api-inference.huggingface.co https://api.tavily.com; img-src 'self' asset: blob: data: https://api-inference.huggingface.co https://*.githubusercontent.com; style-src 'self' asset: blob: 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' asset: blob: https://fonts.gstatic.com; script-src 'self' asset: blob:; object-src 'none'; frame-src 'none'; base-uri 'self'",
+            "assetProtocol": {
+                "enable": true,
+                "scope": [
+                    "data/images/**",
+                    "$RESOURCE/**"
+                ]
+            }
+        }
+    },
+    "bundle": {
+        "active": true,
+        "targets": ["nsis"],
+        "icon": [
+            "icons/32x32.png",
+            "icons/128x128.png",
+            "icons/128x128@2x.png",
+            "icons/icon.icns",
+            "icons/icon.ico"
+        ],
+        "resources": {
+            "../Llama": "Llama"
+        }
+    }
+}

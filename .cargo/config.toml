@@ -1,0 +1,5 @@
+[build]
+jobs = 2
+
+[env]
+PROTOC = { value = "protoc/bin/protoc.exe", relative = true }

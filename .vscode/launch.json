@@ -1,0 +1,12 @@
+﻿{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Miko (Play Button)",
+            "type": "node-terminal",
+            "request": "launch",
+            "command": "npm run tauri dev",
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}
