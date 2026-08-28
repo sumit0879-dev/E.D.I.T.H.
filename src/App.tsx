@@ -6,15 +6,26 @@ import { TelemetryDock } from './components/TelemetryDock';
 import { ToastContainer } from './components/Toast';
 
 import { ChatView } from './views/ChatView';
+import { BrowserView } from './views/BrowserView';
 import { DevAgentView } from './views/DevAgentView';
 import { MemoryBankView } from './views/MemoryBankView';
 import { PluginsView } from './views/PluginsView';
 import { SettingsView } from './views/SettingsView';
+import { browserController } from './services/browserController';
 
 const MainLayout: React.FC = () => {
   const { activeTab, setActiveTab, isTelemetryOpen, toggleTelemetry } = useApp();
 
-  // Global Keyboard Shortcuts (Ctrl+B for Telemetry Dock, Alt+1..5 for Tab navigation)
+  // Browser WebView Visibility Lifecycle
+  React.useEffect(() => {
+    if (activeTab === 'browser') {
+      browserController.show().catch(() => {});
+    } else {
+      browserController.hide().catch(() => {});
+    }
+  }, [activeTab]);
+
+  // Global Keyboard Shortcuts (Ctrl+B for Telemetry Dock, Alt+1..6 for Tab navigation)
   React.useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Toggle Telemetry Dock: Ctrl+B / Cmd+B
@@ -24,14 +35,15 @@ const MainLayout: React.FC = () => {
         return;
       }
 
-      // Quick Tab Switching: Alt+1 through Alt+5
+      // Quick Tab Switching: Alt+1 through Alt+6
       if (e.altKey && !e.ctrlKey && !e.metaKey) {
         const tabMap: Record<string, typeof activeTab> = {
           '1': 'chat',
-          '2': 'dev_agent',
-          '3': 'memory_bank',
-          '4': 'plugins',
-          '5': 'settings',
+          '2': 'browser',
+          '3': 'dev_agent',
+          '4': 'memory_bank',
+          '5': 'plugins',
+          '6': 'settings',
         };
         if (tabMap[e.key]) {
           e.preventDefault();
@@ -60,6 +72,7 @@ const MainLayout: React.FC = () => {
         {/* Column 2: Adaptive Center Stage Viewport */}
         <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden relative bg-[#000000]">
           {activeTab === 'chat' && <ChatView />}
+          {activeTab === 'browser' && <BrowserView />}
           {activeTab === 'dev_agent' && <DevAgentView />}
           {activeTab === 'memory_bank' && <MemoryBankView />}
           {activeTab === 'plugins' && <PluginsView />}

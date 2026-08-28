@@ -238,7 +238,11 @@ You can only use one tool at a time. Do not write anything after the tool block.
                     };
 
                     // SEC-03 Hardening: Enforce exact PathSandbox containment validation
-                    let allowed_roots = crate::file_manager::get_allowed_roots();
+                    let allowed_roots = if !project_path.is_empty() {
+                        vec![std::path::PathBuf::from(&project_path)]
+                    } else {
+                        vec![std::env::current_dir().unwrap_or_default()]
+                    };
                     let res_str = match crate::security::PathSandbox::verify_containment(&target_path.to_string_lossy(), &allowed_roots) {
                         Ok(safe_path) => {
                             match std::fs::read_to_string(&safe_path) {

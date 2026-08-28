@@ -13,6 +13,7 @@ mod memory;
 pub mod embedding;
 pub mod screen;
 pub mod windows;
+pub mod browser;
 pub mod weather;
 
 use db::DbState;
@@ -187,6 +188,7 @@ pub fn run() {
             app.manage(agent::AgentState {
                 path: std::sync::Mutex::new(String::new()),
             });
+            app.manage(browser::BrowserState::default());
             Ok(())
         })
         .on_window_event(|_window, event| match event {
@@ -200,6 +202,18 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
+            browser::browser_create,
+            browser::browser_destroy,
+            browser::browser_show,
+            browser::browser_hide,
+            browser::browser_navigate,
+            browser::browser_go_back,
+            browser::browser_go_forward,
+            browser::browser_reload,
+            browser::browser_set_bounds,
+            browser::browser_get_url,
+            browser::browser_get_title,
+            browser::browser_get_visible_text,
             agent::agent_status,
             agent::agent_chat,
             agent::agent_set_path,

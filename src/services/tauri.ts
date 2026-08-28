@@ -12,6 +12,8 @@ import type {
   WeatherResult,
   MemoryChunk,
   AgentStatus,
+  BrowserViewportBounds,
+  BrowserInfo,
 } from '../types';
 
 export const isTauri = () => {
@@ -761,3 +763,75 @@ export async function onModelProgress(callback: (msg: string) => void): Promise<
     return () => {};
   }
 }
+
+// --- Browser Webview2 Controller Methods ---
+export async function browserCreate(url?: string, bounds?: BrowserViewportBounds): Promise<BrowserInfo> {
+  if (!isTauri()) {
+    return {
+      is_created: true,
+      is_visible: true,
+      current_url: url || 'https://example.com',
+      title: 'Example Domain (Simulated)',
+      bounds,
+    };
+  }
+  return await invoke<BrowserInfo>('browser_create', { url, bounds });
+}
+
+export async function browserDestroy(): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_destroy');
+}
+
+export async function browserShow(): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_show');
+}
+
+export async function browserHide(): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_hide');
+}
+
+export async function browserNavigate(url: string): Promise<string> {
+  if (!isTauri()) return url;
+  return await invoke<string>('browser_navigate', { url });
+}
+
+export async function browserGoBack(): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_go_back');
+}
+
+export async function browserGoForward(): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_go_forward');
+}
+
+export async function browserReload(): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_reload');
+}
+
+export async function browserSetBounds(bounds: BrowserViewportBounds): Promise<void> {
+  if (!isTauri()) return;
+  return await invoke('browser_set_bounds', { bounds });
+}
+
+export async function browserGetUrl(): Promise<string> {
+  if (!isTauri()) return 'https://example.com';
+  return await invoke<string>('browser_get_url');
+}
+
+export async function browserGetTitle(): Promise<string> {
+  if (!isTauri()) return 'Example Domain';
+  return await invoke<string>('browser_get_title');
+}
+
+export async function browserGetVisibleText(): Promise<string> {
+  if (!isTauri()) {
+    return 'Example Domain. This domain is for use in illustrative examples in documents.';
+  }
+  return await invoke<string>('browser_get_visible_text');
+}
+

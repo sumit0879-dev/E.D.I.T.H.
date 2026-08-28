@@ -101,9 +101,26 @@ export interface AppSettings {
   [key: string]: string | undefined;
 }
 
+export interface BrowserViewportBounds {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+export interface BrowserInfo {
+  is_created: boolean;
+  is_visible: boolean;
+  current_url: string;
+  title: string;
+  bounds?: BrowserViewportBounds;
+}
+
 export type ViewTab = 
   | 'chat' 
+  | 'browser'
   | 'dev_agent' 
   | 'memory_bank' 
   | 'plugins' 
   | 'settings';
+

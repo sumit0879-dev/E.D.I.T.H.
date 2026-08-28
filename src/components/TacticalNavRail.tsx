@@ -3,6 +3,7 @@ import { useApp } from '../context/AppContext';
 import type { ViewTab } from '../types';
 import {
   MessageSquare,
+  Globe,
   Terminal,
   Database,
   Cpu,
@@ -21,10 +22,11 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { id: 'chat', label: 'Tactical AI Chat', sublabel: 'E.D.I.T.H. Core', icon: MessageSquare, shortcut: 'Alt+1' },
-  { id: 'dev_agent', label: 'E.D.I.T.H. Dev Agent', sublabel: 'Autonomous Coder', icon: Terminal, badge: 'AGENT', shortcut: 'Alt+2' },
-  { id: 'memory_bank', label: 'Vector Memory', sublabel: 'LanceDB RAG Bank', icon: Database, shortcut: 'Alt+3' },
-  { id: 'plugins', label: 'Cyber Tools', sublabel: 'System & Web Tools', icon: Cpu, shortcut: 'Alt+4' },
-  { id: 'settings', label: 'Config Suite', sublabel: 'Models & Endpoints', icon: Sliders, shortcut: 'Alt+5' },
+  { id: 'browser', label: 'E.D.I.T.H. Browser', sublabel: 'WebView2 Engine', icon: Globe, badge: 'FEASIBILITY', shortcut: 'Alt+2' },
+  { id: 'dev_agent', label: 'E.D.I.T.H. Dev Agent', sublabel: 'Autonomous Coder', icon: Terminal, badge: 'AGENT', shortcut: 'Alt+3' },
+  { id: 'memory_bank', label: 'Vector Memory', sublabel: 'LanceDB RAG Bank', icon: Database, shortcut: 'Alt+4' },
+  { id: 'plugins', label: 'Cyber Tools', sublabel: 'System & Web Tools', icon: Cpu, shortcut: 'Alt+5' },
+  { id: 'settings', label: 'Config Suite', sublabel: 'Models & Endpoints', icon: Sliders, shortcut: 'Alt+6' },
 ];
 
 export const TacticalNavRail: React.FC = () => {
