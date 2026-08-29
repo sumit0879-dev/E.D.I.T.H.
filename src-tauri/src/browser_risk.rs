@@ -351,6 +351,37 @@ impl BrowserRiskEngine {
             };
         }
 
+        // Phase 5.6A: Browser History & Bookmarks Risk Policies (Part M)
+        if tool == "browser_history_recent" || tool == "browser_history_search" || tool == "browser_bookmarks_list" || tool == "browser_bookmarks_search" || tool == "browser_bookmark_add" || tool == "browser_bookmark_open" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Low,
+                decision: BrowserRiskDecision::Allow,
+                policy_code: "SAFE_STORAGE_READ_WRITE".to_string(),
+                reason: "Standard history/bookmark query or safe bookmark addition permitted.".to_string(),
+                user_explanation: "Action permitted.".to_string(),
+            };
+        }
+
+        if tool == "browser_history_delete" || tool == "browser_bookmark_remove" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Medium,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "STORAGE_DELETE_APPROVAL".to_string(),
+                reason: "Deleting history items or bookmarks requires human operator approval.".to_string(),
+                user_explanation: "Approval required: this action removes a saved browser history or bookmark record.".to_string(),
+            };
+        }
+
+        if tool == "browser_history_clear" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::High,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "STORAGE_CLEAR_APPROVAL".to_string(),
+                reason: "Wiping all browsing history is a high-consequence action requiring operator approval.".to_string(),
+                user_explanation: "Approval required: this action will permanently clear all browsing history.".to_string(),
+            };
+        }
+
         // 5. Download / Upload Risk Assessment (Step 9)
         if tool.contains("download") {
             return BrowserRiskAssessment {

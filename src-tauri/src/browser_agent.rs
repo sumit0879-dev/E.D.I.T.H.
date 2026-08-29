@@ -391,6 +391,12 @@ AVAILABLE TOOLS:
 - browser_press_key: {{\"tab_id\": \"<tab_id>\", \"key\": \"Enter\"}}
 - browser_focus: {{\"tab_id\": \"<tab_id>\", \"element_id\": \"<eid>\"}}
 - browser_wait: {{\"tab_id\": \"<tab_id>\", \"condition\": \"timeout\", \"timeout_ms\": 2000}}
+- browser_history_recent: {{\"limit\": 20}}
+- browser_history_search: {{\"query\": \"<search_term>\"}}
+- browser_bookmarks_list: {{}}
+- browser_bookmarks_search: {{\"query\": \"<search_term>\"}}
+- browser_bookmark_add: {{\"title\": \"<title>\", \"url\": \"https://...\"}}
+- browser_bookmark_open: {{\"tab_id\": \"<tab_id>\", \"url\": \"https://...\"}}
 
 Output ONLY ONE tool call per turn. Wait for the tool result before taking the next action.",
         goal, initial_tab_id

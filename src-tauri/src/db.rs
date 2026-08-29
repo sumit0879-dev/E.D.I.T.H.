@@ -36,6 +36,37 @@ pub struct CustomApp {
     pub keywords: String,
 }
 
+// Phase 5.6A: Browser History & Bookmarks Models
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserHistoryEntry {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub visited_at: u64,
+    pub tab_id: Option<String>,
+    pub visit_count: u32,
+    pub last_visited_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserBookmarkFolder {
+    pub id: String,
+    pub name: String,
+    pub parent_id: Option<String>,
+    pub created_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserBookmark {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub folder_id: Option<String>,
+    pub favicon: Option<String>,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
 pub struct DbState {
     pub conn: Mutex<Connection>,
 }
@@ -69,6 +100,38 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
             id TEXT PRIMARY KEY,
             enabled INTEGER NOT NULL DEFAULT 1
         );
+
+        -- Phase 5.6A: Browser History & Bookmarks Persistent Storage
+        CREATE TABLE IF NOT EXISTS browser_history (
+            id TEXT PRIMARY KEY,
+            url TEXT NOT NULL,
+            title TEXT NOT NULL,
+            visited_at INTEGER NOT NULL,
+            tab_id TEXT,
+            visit_count INTEGER DEFAULT 1,
+            last_visited_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_browser_history_visited_at ON browser_history(last_visited_at DESC);
+        CREATE INDEX IF NOT EXISTS idx_browser_history_url ON browser_history(url);
+
+        CREATE TABLE IF NOT EXISTS browser_bookmark_folders (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            parent_id TEXT,
+            created_at INTEGER NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS browser_bookmarks (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            url TEXT NOT NULL,
+            folder_id TEXT,
+            favicon TEXT,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_browser_bookmarks_url ON browser_bookmarks(url);
+        CREATE INDEX IF NOT EXISTS idx_browser_bookmarks_folder ON browser_bookmarks(folder_id);
         "
     )?;
 
@@ -362,5 +425,291 @@ pub fn set_plugin_state(conn: &Connection, plugin_id: &str, enabled: bool) -> Re
         params![plugin_id, enabled as i32],
     )?;
     Ok(())
+}
+
+// ============================================================================
+// Phase 5.6A: Browser History Database Helpers
+// ============================================================================
+
+pub fn add_browser_history_entry(
+    conn: &Connection,
+    url: &str,
+    title: &str,
+    tab_id: Option<&str>,
+) -> Result<BrowserHistoryEntry> {
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    let url_trimmed = url.trim();
+    let title_trimmed = if title.trim().is_empty() { url_trimmed } else { title.trim() };
+
+    // Dedup Policy: Check if same URL was visited within the last 15 seconds (15000 ms)
+    let mut check_stmt = conn.prepare(
+        "SELECT id, url, title, visited_at, tab_id, visit_count, last_visited_at 
+         FROM browser_history 
+         WHERE url = ?1 
+         ORDER BY last_visited_at DESC 
+         LIMIT 1"
+    )?;
+
+    let mut rows = check_stmt.query(params![url_trimmed])?;
+    if let Some(row) = rows.next()? {
+        let last_visited: u64 = row.get(6)?;
+        if now.saturating_sub(last_visited) < 15_000 {
+            let id: String = row.get(0)?;
+            let current_count: u32 = row.get(5)?;
+            let new_count = current_count + 1;
+            conn.execute(
+                "UPDATE browser_history SET title = ?1, visit_count = ?2, last_visited_at = ?3 WHERE id = ?4",
+                params![title_trimmed, new_count, now, id],
+            )?;
+            return Ok(BrowserHistoryEntry {
+                id,
+                url: url_trimmed.to_string(),
+                title: title_trimmed.to_string(),
+                visited_at: row.get(3)?,
+                tab_id: tab_id.map(|s| s.to_string()),
+                visit_count: new_count,
+                last_visited_at: now,
+            });
+        }
+    }
+
+    let new_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO browser_history (id, url, title, visited_at, tab_id, visit_count, last_visited_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, 1, ?4)",
+        params![new_id, url_trimmed, title_trimmed, now, tab_id],
+    )?;
+
+    Ok(BrowserHistoryEntry {
+        id: new_id,
+        url: url_trimmed.to_string(),
+        title: title_trimmed.to_string(),
+        visited_at: now,
+        tab_id: tab_id.map(|s| s.to_string()),
+        visit_count: 1,
+        last_visited_at: now,
+    })
+}
+
+pub fn get_recent_browser_history(conn: &Connection, limit: Option<u32>) -> Result<Vec<BrowserHistoryEntry>> {
+    let lim = limit.unwrap_or(50).clamp(1, 200);
+    let mut stmt = conn.prepare(
+        "SELECT id, url, title, visited_at, tab_id, visit_count, last_visited_at 
+         FROM browser_history 
+         ORDER BY last_visited_at DESC 
+         LIMIT ?1"
+    )?;
+
+    let rows = stmt.query_map(params![lim], |row| {
+        Ok(BrowserHistoryEntry {
+            id: row.get(0)?,
+            url: row.get(1)?,
+            title: row.get(2)?,
+            visited_at: row.get(3)?,
+            tab_id: row.get(4)?,
+            visit_count: row.get(5)?,
+            last_visited_at: row.get(6)?,
+        })
+    })?;
+
+    let mut entries = Vec::new();
+    for r in rows {
+        entries.push(r?);
+    }
+    Ok(entries)
+}
+
+pub fn search_browser_history(conn: &Connection, query: &str, limit: Option<u32>) -> Result<Vec<BrowserHistoryEntry>> {
+    let lim = limit.unwrap_or(50).clamp(1, 200);
+    let pattern = format!("%{}%", query.trim().to_lowercase());
+    let mut stmt = conn.prepare(
+        "SELECT id, url, title, visited_at, tab_id, visit_count, last_visited_at 
+         FROM browser_history 
+         WHERE LOWER(url) LIKE ?1 OR LOWER(title) LIKE ?1 
+         ORDER BY last_visited_at DESC 
+         LIMIT ?2"
+    )?;
+
+    let rows = stmt.query_map(params![pattern, lim], |row| {
+        Ok(BrowserHistoryEntry {
+            id: row.get(0)?,
+            url: row.get(1)?,
+            title: row.get(2)?,
+            visited_at: row.get(3)?,
+            tab_id: row.get(4)?,
+            visit_count: row.get(5)?,
+            last_visited_at: row.get(6)?,
+        })
+    })?;
+
+    let mut entries = Vec::new();
+    for r in rows {
+        entries.push(r?);
+    }
+    Ok(entries)
+}
+
+pub fn delete_browser_history_entry(conn: &Connection, id: &str) -> Result<bool> {
+    let count = conn.execute("DELETE FROM browser_history WHERE id = ?1", params![id])?;
+    Ok(count > 0)
+}
+
+pub fn clear_browser_history(conn: &Connection) -> Result<usize> {
+    let count = conn.execute("DELETE FROM browser_history", [])?;
+    Ok(count)
+}
+
+// ============================================================================
+// Phase 5.6A: Browser Bookmarks Database Helpers
+// ============================================================================
+
+pub fn add_browser_bookmark(
+    conn: &Connection,
+    title: &str,
+    url: &str,
+    folder_id: Option<&str>,
+    favicon: Option<&str>,
+) -> Result<BrowserBookmark> {
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    let url_trimmed = url.trim();
+    let title_trimmed = if title.trim().is_empty() { url_trimmed } else { title.trim() };
+
+    let mut check_stmt = conn.prepare("SELECT id, created_at FROM browser_bookmarks WHERE url = ?1 LIMIT 1")?;
+    let mut rows = check_stmt.query(params![url_trimmed])?;
+    if let Some(row) = rows.next()? {
+        let existing_id: String = row.get(0)?;
+        let created_at: u64 = row.get(1)?;
+        conn.execute(
+            "UPDATE browser_bookmarks SET title = ?1, folder_id = ?2, favicon = ?3, updated_at = ?4 WHERE id = ?5",
+            params![title_trimmed, folder_id, favicon, now, existing_id],
+        )?;
+        return Ok(BrowserBookmark {
+            id: existing_id,
+            title: title_trimmed.to_string(),
+            url: url_trimmed.to_string(),
+            folder_id: folder_id.map(|s| s.to_string()),
+            favicon: favicon.map(|s| s.to_string()),
+            created_at,
+            updated_at: now,
+        });
+    }
+
+    let new_id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO browser_bookmarks (id, title, url, folder_id, favicon, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
+        params![new_id, title_trimmed, url_trimmed, folder_id, favicon, now],
+    )?;
+
+    Ok(BrowserBookmark {
+        id: new_id,
+        title: title_trimmed.to_string(),
+        url: url_trimmed.to_string(),
+        folder_id: folder_id.map(|s| s.to_string()),
+        favicon: favicon.map(|s| s.to_string()),
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+pub fn update_browser_bookmark(
+    conn: &Connection,
+    id: &str,
+    title: &str,
+    url: &str,
+    folder_id: Option<&str>,
+) -> Result<bool> {
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    let count = conn.execute(
+        "UPDATE browser_bookmarks SET title = ?1, url = ?2, folder_id = ?3, updated_at = ?4 WHERE id = ?5",
+        params![title.trim(), url.trim(), folder_id, now, id],
+    )?;
+    Ok(count > 0)
+}
+
+pub fn delete_browser_bookmark(conn: &Connection, id: &str) -> Result<bool> {
+    let count = conn.execute("DELETE FROM browser_bookmarks WHERE id = ?1", params![id])?;
+    Ok(count > 0)
+}
+
+pub fn get_all_browser_bookmarks(conn: &Connection) -> Result<Vec<BrowserBookmark>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, url, folder_id, favicon, created_at, updated_at 
+         FROM browser_bookmarks 
+         ORDER BY created_at DESC"
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(BrowserBookmark {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            url: row.get(2)?,
+            folder_id: row.get(3)?,
+            favicon: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })?;
+
+    let mut bookmarks = Vec::new();
+    for r in rows {
+        bookmarks.push(r?);
+    }
+    Ok(bookmarks)
+}
+
+pub fn search_browser_bookmarks(conn: &Connection, query: &str) -> Result<Vec<BrowserBookmark>> {
+    let pattern = format!("%{}%", query.trim().to_lowercase());
+    let mut stmt = conn.prepare(
+        "SELECT id, title, url, folder_id, favicon, created_at, updated_at 
+         FROM browser_bookmarks 
+         WHERE LOWER(title) LIKE ?1 OR LOWER(url) LIKE ?1 
+         ORDER BY updated_at DESC"
+    )?;
+
+    let rows = stmt.query_map(params![pattern], |row| {
+        Ok(BrowserBookmark {
+            id: row.get(0)?,
+            title: row.get(1)?,
+            url: row.get(2)?,
+            folder_id: row.get(3)?,
+            favicon: row.get(4)?,
+            created_at: row.get(5)?,
+            updated_at: row.get(6)?,
+        })
+    })?;
+
+    let mut bookmarks = Vec::new();
+    for r in rows {
+        bookmarks.push(r?);
+    }
+    Ok(bookmarks)
+}
+
+pub fn is_url_bookmarked(conn: &Connection, url: &str) -> Result<bool> {
+    let mut stmt = conn.prepare("SELECT COUNT(*) FROM browser_bookmarks WHERE url = ?1")?;
+    let count: i64 = stmt.query_row(params![url.trim()], |row| row.get(0))?;
+    Ok(count > 0)
+}
+
+pub fn create_bookmark_folder(conn: &Connection, name: &str, parent_id: Option<&str>) -> Result<BrowserBookmarkFolder> {
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    let id = uuid::Uuid::new_v4().to_string();
+    conn.execute(
+        "INSERT INTO browser_bookmark_folders (id, name, parent_id, created_at) VALUES (?1, ?2, ?3, ?4)",
+        params![id, name.trim(), parent_id, now],
+    )?;
+    Ok(BrowserBookmarkFolder {
+        id,
+        name: name.trim().to_string(),
+        parent_id: parent_id.map(|s| s.to_string()),
+        created_at: now,
+    })
+}
+
+pub fn delete_bookmark_folder(conn: &Connection, folder_id: &str) -> Result<bool> {
+    conn.execute("UPDATE browser_bookmarks SET folder_id = NULL WHERE folder_id = ?1", params![folder_id])?;
+    let count = conn.execute("DELETE FROM browser_bookmark_folders WHERE id = ?1", params![folder_id])?;
+    Ok(count > 0)
 }
 

@@ -21,6 +21,9 @@ import type {
   BrowserOrchestrationResult,
   BrowserControlState,
   TabControlInfo,
+  BrowserHistoryEntry,
+  BrowserBookmarkFolder,
+  BrowserBookmark,
 } from '../types';
 
 /**
@@ -474,6 +477,65 @@ class BrowserController {
 
   public async getAllTabControls(): Promise<TabControlInfo[]> {
     return await tauriService.browserGetAllTabControls();
+  }
+
+  // --- Phase 5.6A Browser History & Bookmarks APIs ---
+  public async getRecentHistory(limit?: number): Promise<BrowserHistoryEntry[]> {
+    return await tauriService.browserHistoryGetRecent(limit);
+  }
+
+  public async searchHistory(query: string, limit?: number): Promise<BrowserHistoryEntry[]> {
+    return await tauriService.browserHistorySearch(query, limit);
+  }
+
+  public async deleteHistory(id: string): Promise<boolean> {
+    return await tauriService.browserHistoryDelete(id);
+  }
+
+  public async clearHistory(): Promise<number> {
+    return await tauriService.browserHistoryClear();
+  }
+
+  public async addBookmark(
+    title: string,
+    url: string,
+    folderId?: string,
+    favicon?: string
+  ): Promise<BrowserBookmark> {
+    return await tauriService.browserBookmarkAdd(title, url, folderId, favicon);
+  }
+
+  public async updateBookmark(
+    id: string,
+    title: string,
+    url: string,
+    folderId?: string
+  ): Promise<boolean> {
+    return await tauriService.browserBookmarkUpdate(id, title, url, folderId);
+  }
+
+  public async deleteBookmark(id: string): Promise<boolean> {
+    return await tauriService.browserBookmarkDelete(id);
+  }
+
+  public async getBookmarks(): Promise<BrowserBookmark[]> {
+    return await tauriService.browserBookmarksList();
+  }
+
+  public async searchBookmarks(query: string): Promise<BrowserBookmark[]> {
+    return await tauriService.browserBookmarksSearch(query);
+  }
+
+  public async isBookmarked(url: string): Promise<boolean> {
+    return await tauriService.browserBookmarkIsBookmarked(url);
+  }
+
+  public async createBookmarkFolder(name: string, parentId?: string): Promise<BrowserBookmarkFolder> {
+    return await tauriService.browserBookmarkCreateFolder(name, parentId);
+  }
+
+  public async deleteBookmarkFolder(folderId: string): Promise<boolean> {
+    return await tauriService.browserBookmarkDeleteFolder(folderId);
   }
 }
 

@@ -19,6 +19,7 @@ pub mod browser_agent;
 pub mod browser_risk;
 pub mod browser_orchestrator;
 pub mod browser_control;
+pub mod browser_storage;
 pub mod weather;
 
 use db::DbState;
@@ -247,6 +248,19 @@ pub fn run() {
             browser_control::browser_resume_ai_control,
             browser_control::browser_get_tab_control_info,
             browser_control::browser_get_all_tab_controls,
+            browser_storage::browser_history_add,
+            browser_storage::browser_history_get_recent,
+            browser_storage::browser_history_search,
+            browser_storage::browser_history_delete,
+            browser_storage::browser_history_clear,
+            browser_storage::browser_bookmark_add,
+            browser_storage::browser_bookmark_update,
+            browser_storage::browser_bookmark_delete,
+            browser_storage::browser_bookmarks_list,
+            browser_storage::browser_bookmarks_search,
+            browser_storage::browser_bookmark_is_bookmarked,
+            browser_storage::browser_bookmark_create_folder,
+            browser_storage::browser_bookmark_delete_folder,
             browser::browser_get_tab_url,
             browser::browser_get_tab_title,
             browser::browser_get_tab_visible_text,

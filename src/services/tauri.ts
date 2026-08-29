@@ -34,6 +34,9 @@ import type {
   BrowserOrchestrationResult,
   BrowserControlState,
   TabControlInfo,
+  BrowserHistoryEntry,
+  BrowserBookmarkFolder,
+  BrowserBookmark,
 } from '../types';
 
 export const isTauri = () => {
@@ -1391,5 +1394,112 @@ export async function browserGetTabControlInfo(tabId: string): Promise<TabContro
 export async function browserGetAllTabControls(): Promise<TabControlInfo[]> {
   if (!isTauri()) return [];
   return await invoke<TabControlInfo[]>('browser_get_all_tab_controls');
+}
+
+// --- Phase 5.6A Browser History & Bookmarks APIs ---
+export async function browserHistoryAdd(
+  url: string,
+  title: string,
+  tabId?: string
+): Promise<BrowserHistoryEntry> {
+  if (!isTauri()) {
+    return {
+      id: 'mock-' + Date.now(),
+      url,
+      title: title || url,
+      visited_at: Date.now(),
+      tab_id: tabId,
+      visit_count: 1,
+      last_visited_at: Date.now(),
+    };
+  }
+  return await invoke<BrowserHistoryEntry>('browser_history_add', { url, title, tabId });
+}
+
+export async function browserHistoryGetRecent(limit?: number): Promise<BrowserHistoryEntry[]> {
+  if (!isTauri()) return [];
+  return await invoke<BrowserHistoryEntry[]>('browser_history_get_recent', { limit });
+}
+
+export async function browserHistorySearch(query: string, limit?: number): Promise<BrowserHistoryEntry[]> {
+  if (!isTauri()) return [];
+  return await invoke<BrowserHistoryEntry[]>('browser_history_search', { query, limit });
+}
+
+export async function browserHistoryDelete(id: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_history_delete', { id });
+}
+
+export async function browserHistoryClear(): Promise<number> {
+  if (!isTauri()) return 0;
+  return await invoke<number>('browser_history_clear');
+}
+
+export async function browserBookmarkAdd(
+  title: string,
+  url: string,
+  folderId?: string,
+  favicon?: string
+): Promise<BrowserBookmark> {
+  if (!isTauri()) {
+    return {
+      id: 'bm-' + Date.now(),
+      title,
+      url,
+      folder_id: folderId,
+      favicon,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+  }
+  return await invoke<BrowserBookmark>('browser_bookmark_add', { title, url, folderId, favicon });
+}
+
+export async function browserBookmarkUpdate(
+  id: string,
+  title: string,
+  url: string,
+  folderId?: string
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_bookmark_update', { id, title, url, folderId });
+}
+
+export async function browserBookmarkDelete(id: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_bookmark_delete', { id });
+}
+
+export async function browserBookmarksList(): Promise<BrowserBookmark[]> {
+  if (!isTauri()) return [];
+  return await invoke<BrowserBookmark[]>('browser_bookmarks_list');
+}
+
+export async function browserBookmarksSearch(query: string): Promise<BrowserBookmark[]> {
+  if (!isTauri()) return [];
+  return await invoke<BrowserBookmark[]>('browser_bookmarks_search', { query });
+}
+
+export async function browserBookmarkIsBookmarked(url: string): Promise<boolean> {
+  if (!isTauri()) return false;
+  return await invoke<boolean>('browser_bookmark_is_bookmarked', { url });
+}
+
+export async function browserBookmarkCreateFolder(name: string, parentId?: string): Promise<BrowserBookmarkFolder> {
+  if (!isTauri()) {
+    return {
+      id: 'folder-' + Date.now(),
+      name,
+      parent_id: parentId,
+      created_at: Date.now(),
+    };
+  }
+  return await invoke<BrowserBookmarkFolder>('browser_bookmark_create_folder', { name, parentId });
+}
+
+export async function browserBookmarkDeleteFolder(folderId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_bookmark_delete_folder', { folderId });
 }
 

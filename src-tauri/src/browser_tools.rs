@@ -1,14 +1,14 @@
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Instant;
-use tauri::AppHandle;
+use tauri::{AppHandle, Manager};
 use crate::browser::{
     BrowserState,
     browser_observe_tab, browser_screenshot_tab, browser_click_element,
     browser_type_element, browser_scroll, browser_press_key, browser_focus_element,
     browser_wait, browser_create_tab, browser_switch_tab,
     browser_close_tab, browser_go_back_tab, browser_go_forward_tab, browser_reload_tab,
-    browser_get_multi_state,
+    browser_get_multi_state, browser_navigate_tab,
 };
 use crate::browser_risk::{BrowserRiskEngine, BrowserActionContext, BrowserRiskDecision};
 
@@ -344,6 +344,155 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
                     }
                 },
                 "required": ["tab_id", "condition"]
+            }),
+        },
+
+        // --- Phase 5.6A: Browser History & Bookmarks Tools (Part L) ---
+        ToolDefinition {
+            name: "browser_history_recent".to_string(),
+            description: "Retrieve recent browser history entries (newest first).".to_string(),
+            category: "storage".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum number of history items to return (default 20, max 100)."
+                    }
+                }
+            }),
+        },
+        ToolDefinition {
+            name: "browser_history_search".to_string(),
+            description: "Search browsing history by URL or page title query.".to_string(),
+            category: "storage".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query matching against history URL or title."
+                    },
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum number of results (default 20, max 100)."
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_history_delete".to_string(),
+            description: "Delete a specific browser history record by its ID. Requires operator approval.".to_string(),
+            category: "storage".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Unique identifier of the history record to delete."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_history_clear".to_string(),
+            description: "Permanently wipe all browser history. High consequence action requiring operator approval.".to_string(),
+            category: "storage".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "browser_bookmarks_list".to_string(),
+            description: "Retrieve all saved browser bookmarks.".to_string(),
+            category: "storage".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "browser_bookmarks_search".to_string(),
+            description: "Search saved bookmarks by title or URL.".to_string(),
+            category: "storage".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search term matching title or URL."
+                    }
+                },
+                "required": ["query"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_bookmark_add".to_string(),
+            description: "Save a new bookmark with title and URL (only http:// and https:// allowed).".to_string(),
+            category: "storage".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Bookmark display title."
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "Target web page URL."
+                    },
+                    "folder_id": {
+                        "type": "string",
+                        "description": "Optional folder ID to organize bookmark."
+                    }
+                },
+                "required": ["title", "url"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_bookmark_remove".to_string(),
+            description: "Remove a saved bookmark by ID. Requires operator confirmation.".to_string(),
+            category: "storage".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "id": {
+                        "type": "string",
+                        "description": "Bookmark ID to remove."
+                    }
+                },
+                "required": ["id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_bookmark_open".to_string(),
+            description: "Open a saved bookmark in a browser tab.".to_string(),
+            category: "storage".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target browser tab ID."
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "Bookmark URL to navigate to."
+                    }
+                },
+                "required": ["tab_id", "url"]
             }),
         },
     ]
@@ -903,6 +1052,272 @@ pub async fn execute_browser_tool(
                     data: None,
                     error: Some(e),
                     error_code: Some("WAIT_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        // --- Phase 5.6A: Browser History & Bookmarks Tool Execution ---
+        "browser_history_recent" => {
+            let limit = args.get("limit").and_then(|v| v.as_u64()).map(|u| u as u32);
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::get_recent_browser_history(&conn, limit) {
+                Ok(entries) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "count": entries.len(), "entries": entries })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_history_search" => {
+            let query = args.get("query").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'query'.".to_string())?;
+            let limit = args.get("limit").and_then(|v| v.as_u64()).map(|u| u as u32);
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::search_browser_history(&conn, query, limit) {
+                Ok(entries) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "query": query, "count": entries.len(), "entries": entries })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_history_delete" => {
+            let id = args.get("id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'id'.".to_string())?;
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::delete_browser_history_entry(&conn, id) {
+                Ok(deleted) => Ok(BrowserToolExecutionResult {
+                    success: deleted,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "id": id, "deleted": deleted })),
+                    error: if deleted { None } else { Some("Record not found".to_string()) },
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_history_clear" => {
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::clear_browser_history(&conn) {
+                Ok(count) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "cleared_count": count })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_bookmarks_list" => {
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::get_all_browser_bookmarks(&conn) {
+                Ok(bookmarks) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "count": bookmarks.len(), "bookmarks": bookmarks })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_bookmarks_search" => {
+            let query = args.get("query").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'query'.".to_string())?;
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::search_browser_bookmarks(&conn, query) {
+                Ok(bookmarks) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "query": query, "count": bookmarks.len(), "bookmarks": bookmarks })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_bookmark_add" => {
+            let title = args.get("title").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'title'.".to_string())?;
+            let url = args.get("url").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'url'.".to_string())?;
+            let folder_id = args.get("folder_id").and_then(|v| v.as_str());
+
+            let url_trimmed = url.trim();
+            if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
+                return Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some("INVALID_URL: Only standard http:// and https:// URLs can be bookmarked.".to_string()),
+                    error_code: Some("INVALID_URL_SCHEME".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                });
+            }
+
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::add_browser_bookmark(&conn, title, url_trimmed, folder_id, None) {
+                Ok(bm) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!(bm)),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_bookmark_remove" => {
+            let id = args.get("id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'id'.".to_string())?;
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::delete_browser_bookmark(&conn, id) {
+                Ok(deleted) => Ok(BrowserToolExecutionResult {
+                    success: deleted,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "id": id, "deleted": deleted })),
+                    error: if deleted { None } else { Some("Bookmark not found".to_string()) },
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_bookmark_open" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+            let url = args.get("url").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'url'.".to_string())?;
+
+            match browser_navigate_tab(app, tab_id.to_string(), url.to_string(), state).await {
+                Ok(loaded_url) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "url": loaded_url })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("NAVIGATION_FAILED".to_string()),
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
             }

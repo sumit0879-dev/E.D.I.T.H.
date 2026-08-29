@@ -471,3 +471,31 @@ export interface TabControlInfo {
   ai_task_id?: string;
   reason?: string;
 }
+
+// --- Phase 5.6A Browser History & Bookmarks Types ---
+export interface BrowserHistoryEntry {
+  id: string;
+  url: string;
+  title: string;
+  visited_at: number;
+  tab_id?: string;
+  visit_count: number;
+  last_visited_at: number;
+}
+
+export interface BrowserBookmarkFolder {
+  id: string;
+  name: string;
+  parent_id?: string;
+  created_at: number;
+}
+
+export interface BrowserBookmark {
+  id: string;
+  title: string;
+  url: string;
+  folder_id?: string;
+  favicon?: string;
+  created_at: number;
+  updated_at: number;
+}

@@ -44,8 +44,10 @@ import type {
   BrowserOrchestrationTask,
   TabControlInfo,
   BrowserControlState,
+  BrowserHistoryEntry,
+  BrowserBookmark,
 } from '../types';
-import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User } from 'lucide-react';
+import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2 } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -129,6 +131,83 @@ export const BrowserView: React.FC = () => {
       setTabControls((prev) => ({ ...prev, [tabId]: res }));
     } catch (e) {
       console.error('Grant AI failed', e);
+    }
+  };
+
+  // Phase 5.6A History & Bookmarks States
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [historyList, setHistoryList] = useState<BrowserHistoryEntry[]>([]);
+  const [historySearchQuery, setHistorySearchQuery] = useState('');
+  const [isFetchingHistory, setIsFetchingHistory] = useState(false);
+
+  const [showBookmarksPanel, setShowBookmarksPanel] = useState(false);
+  const [bookmarksList, setBookmarksList] = useState<BrowserBookmark[]>([]);
+  const [bookmarkSearchQuery, setBookmarkSearchQuery] = useState('');
+  const [isFetchingBookmarks, setIsFetchingBookmarks] = useState(false);
+  const [isActiveTabBookmarked, setIsActiveTabBookmarked] = useState(false);
+
+  const fetchHistory = useCallback(async (query?: string) => {
+    setIsFetchingHistory(true);
+    try {
+      if (query && query.trim()) {
+        const res = await browserController.searchHistory(query.trim());
+        setHistoryList(res);
+      } else {
+        const res = await browserController.getRecentHistory(50);
+        setHistoryList(res);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch history', e);
+    } finally {
+      setIsFetchingHistory(false);
+    }
+  }, []);
+
+  const fetchBookmarks = useCallback(async (query?: string) => {
+    setIsFetchingBookmarks(true);
+    try {
+      if (query && query.trim()) {
+        const res = await browserController.searchBookmarks(query.trim());
+        setBookmarksList(res);
+      } else {
+        const res = await browserController.getBookmarks();
+        setBookmarksList(res);
+      }
+    } catch (e) {
+      console.warn('Failed to fetch bookmarks', e);
+    } finally {
+      setIsFetchingBookmarks(false);
+    }
+  }, []);
+
+  const checkActiveTabBookmark = useCallback(async (url: string) => {
+    try {
+      const bookmarked = await browserController.isBookmarked(url);
+      setIsActiveTabBookmarked(bookmarked);
+    } catch (e) {
+      console.warn('Failed to check bookmark status', e);
+    }
+  }, []);
+
+  const handleToggleBookmarkActiveTab = async () => {
+    const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
+    if (!activeTab || !activeTab.url) return;
+
+    try {
+      if (isActiveTabBookmarked) {
+        const all = await browserController.getBookmarks();
+        const found = all.find((b) => b.url === activeTab.url);
+        if (found) {
+          await browserController.deleteBookmark(found.id);
+        }
+        setIsActiveTabBookmarked(false);
+      } else {
+        await browserController.addBookmark(activeTab.title || activeTab.url, activeTab.url, undefined, activeTab.favicon);
+        setIsActiveTabBookmarked(true);
+      }
+      fetchBookmarks();
+    } catch (e) {
+      console.error('Failed to toggle bookmark', e);
     }
   };
 
@@ -696,6 +775,17 @@ export const BrowserView: React.FC = () => {
               placeholder="Search or enter HTTPS address (Ctrl+L)..."
               className="w-full bg-transparent text-xs text-slate-100 placeholder-slate-500 focus:outline-none font-mono"
             />
+            {/* Phase 5.6A: Bookmark Star Toggle */}
+            <button
+              type="button"
+              onClick={handleToggleBookmarkActiveTab}
+              className={`transition shrink-0 ml-1.5 p-0.5 rounded hover:bg-white/[0.08] ${
+                isActiveTabBookmarked ? 'text-amber-400' : 'text-slate-500 hover:text-amber-400'
+              }`}
+              title={isActiveTabBookmarked ? 'Bookmarked (Click to remove)' : 'Bookmark this tab'}
+            >
+              <Star className={`w-3.5 h-3.5 ${isActiveTabBookmarked ? 'fill-current' : ''}`} />
+            </button>
             {isLoading ? (
               <div className="w-3.5 h-3.5 border-2 border-cyan-400 border-t-transparent rounded-full animate-spin shrink-0 ml-2" />
             ) : (
@@ -710,8 +800,44 @@ export const BrowserView: React.FC = () => {
           </div>
         </form>
 
-        {/* Action Controls: AI Agent (4C), Actions (4A), Live DOM Observer, & Screenshot */}
+        {/* Action Controls: Bookmarks (5.6A), History (5.6A), AI Agent (4C), Actions (4A), Live DOM Observer, & Screenshot */}
         <div className="flex items-center space-x-1.5">
+          {/* Phase 5.6A Bookmarks Button */}
+          <button
+            onClick={() => {
+              setShowBookmarksPanel(!showBookmarksPanel);
+              setShowHistoryPanel(false);
+              if (!showBookmarksPanel) fetchBookmarks();
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
+              showBookmarksPanel
+                ? 'bg-amber-500/20 border-amber-400 text-amber-300 shadow-amber-glow-xs'
+                : 'bg-[#090e1a] border-white/[0.08] text-slate-300 hover:text-amber-300'
+            }`}
+            title="Toggle Bookmarks (5.6A)"
+          >
+            <Bookmark className="w-3.5 h-3.5 text-amber-400" />
+            <span className="hidden sm:inline">Bookmarks</span>
+          </button>
+
+          {/* Phase 5.6A History Button */}
+          <button
+            onClick={() => {
+              setShowHistoryPanel(!showHistoryPanel);
+              setShowBookmarksPanel(false);
+              if (!showHistoryPanel) fetchHistory();
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
+              showHistoryPanel
+                ? 'bg-blue-500/20 border-blue-400 text-blue-300 shadow-blue-glow-xs'
+                : 'bg-[#090e1a] border-white/[0.08] text-slate-300 hover:text-blue-300'
+            }`}
+            title="Toggle History (5.6A)"
+          >
+            <History className="w-3.5 h-3.5 text-blue-400" />
+            <span className="hidden sm:inline">History</span>
+          </button>
+
           <button
             onClick={() => setShowAgentPanel(!showAgentPanel)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
@@ -788,6 +914,169 @@ export const BrowserView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Phase 5.6A Bookmarks Drawer */}
+      {showBookmarksPanel && (
+        <div className="bg-[#0b0903] border-b border-amber-500/30 p-3 text-xs text-amber-200 flex flex-col gap-2.5 shrink-0 z-10 max-h-72 overflow-y-auto animate-fadeIn font-mono">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-amber-300">
+              <Bookmark className="w-4 h-4 text-amber-400" />
+              Phase 5.6A Saved Bookmarks ({bookmarksList.length})
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={bookmarkSearchQuery}
+                onChange={(e) => {
+                  setBookmarkSearchQuery(e.target.value);
+                  fetchBookmarks(e.target.value);
+                }}
+                placeholder="Search bookmarks..."
+                className="bg-black/60 border border-white/10 rounded px-2 py-0.5 text-[11px] text-amber-200 placeholder-slate-500 focus:outline-none w-44"
+              />
+              <button
+                onClick={() => setShowBookmarksPanel(false)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+          {bookmarksList.length === 0 ? (
+            <div className="text-slate-400 text-center py-4 text-[11px]">No bookmarks saved yet. Click the star icon in the address bar to bookmark any page.</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 max-h-48 overflow-y-auto">
+              {bookmarksList.map((bm) => (
+                <div
+                  key={bm.id}
+                  className="flex items-center justify-between bg-black/40 border border-white/5 hover:border-amber-500/30 p-1.5 rounded-lg text-[11px] group transition"
+                >
+                  <div
+                    onClick={() => {
+                      if (browserState.active_tab_id) {
+                        browserController.navigateTab(browserState.active_tab_id, bm.url);
+                        setShowBookmarksPanel(false);
+                      }
+                    }}
+                    className="flex items-center gap-2 truncate cursor-pointer flex-1"
+                    title={`Open: ${bm.url}`}
+                  >
+                    <Bookmark className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    <div className="truncate">
+                      <div className="text-amber-200 font-bold truncate">{bm.title}</div>
+                      <div className="text-[10px] text-slate-400 truncate">{bm.url}</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={async () => {
+                      await browserController.deleteBookmark(bm.id);
+                      fetchBookmarks(bookmarkSearchQuery);
+                      if (browserState.tabs.find((t) => t.id === browserState.active_tab_id)?.url === bm.url) {
+                        setIsActiveTabBookmarked(false);
+                      }
+                    }}
+                    className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-400 p-1 rounded transition"
+                    title="Delete bookmark"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phase 5.6A History Drawer */}
+      {showHistoryPanel && (
+        <div className="bg-[#030814] border-b border-blue-500/30 p-3 text-xs text-blue-200 flex flex-col gap-2.5 shrink-0 z-10 max-h-80 overflow-y-auto animate-fadeIn font-mono">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-blue-300">
+              <History className="w-4 h-4 text-blue-400" />
+              Phase 5.6A Browsing History ({historyList.length} items)
+            </div>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={historySearchQuery}
+                onChange={(e) => {
+                  setHistorySearchQuery(e.target.value);
+                  fetchHistory(e.target.value);
+                }}
+                placeholder="Search history..."
+                className="bg-black/60 border border-white/10 rounded px-2 py-0.5 text-[11px] text-blue-200 placeholder-slate-500 focus:outline-none w-44"
+              />
+              <button
+                onClick={async () => {
+                  if (confirm('Clear all browsing history?')) {
+                    await browserController.clearHistory();
+                    fetchHistory();
+                  }
+                }}
+                className="flex items-center gap-1 text-[10px] text-red-300 hover:text-red-200 bg-red-950/40 hover:bg-red-900/60 border border-red-500/30 px-2 py-0.5 rounded transition"
+                title="Clear All History"
+              >
+                <Trash2 className="w-3 h-3" />
+                Clear All
+              </button>
+              <button
+                onClick={() => setShowHistoryPanel(false)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+          {historyList.length === 0 ? (
+            <div className="text-slate-400 text-center py-4 text-[11px]">No history entries found.</div>
+          ) : (
+            <div className="flex flex-col gap-1 max-h-56 overflow-y-auto">
+              {historyList.map((entry) => (
+                <div
+                  key={entry.id}
+                  className="flex items-center justify-between bg-black/40 border border-white/5 hover:border-blue-500/30 p-1.5 rounded-lg text-[11px] group transition"
+                >
+                  <div
+                    onClick={() => {
+                      if (browserState.active_tab_id) {
+                        browserController.navigateTab(browserState.active_tab_id, entry.url);
+                        setShowHistoryPanel(false);
+                      }
+                    }}
+                    className="flex items-center gap-2 truncate cursor-pointer flex-1"
+                    title={`Open: ${entry.url}`}
+                  >
+                    <Globe className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                    <div className="truncate flex-1">
+                      <div className="text-blue-200 font-bold truncate">{entry.title}</div>
+                      <div className="text-[10px] text-slate-400 truncate">{entry.url}</div>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-2 shrink-0 text-[10px] text-slate-400 font-mono">
+                    {entry.visit_count > 1 && (
+                      <span className="px-1.5 py-0.5 rounded bg-blue-950/80 border border-blue-500/30 text-blue-300">
+                        {entry.visit_count}x
+                      </span>
+                    )}
+                    <span>{new Date(entry.last_visited_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                    <button
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await browserController.deleteHistory(entry.id);
+                        fetchHistory(historySearchQuery);
+                      }}
+                      className="opacity-0 group-hover:opacity-100 text-slate-400 hover:text-red-400 p-1 rounded transition"
+                      title="Delete history item"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Phase 5.3 Browser Action Risk & Safety Audit Drawer */}
       {showRiskPanel && (

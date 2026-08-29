@@ -614,6 +614,13 @@ pub async fn browser_create_tab(
         *state.is_visible.lock().unwrap() = true;
     }
 
+    // Phase 5.6A: Automatic History Recording on Navigation
+    if let Some(db_state) = app.try_state::<crate::db::DbState>() {
+        if let Ok(conn) = db_state.conn.lock() {
+            let _ = crate::db::add_browser_history_entry(&conn, &new_tab.url, &new_tab.title, Some(&new_tab.id));
+        }
+    }
+
     Ok(new_tab)
 }
 
@@ -775,6 +782,14 @@ pub async fn browser_navigate_tab(
             tab.is_loading = true;
             tab.error = None;
         }
+
+        // Phase 5.6A: Automatic History Recording on Navigation
+        if let Some(db_state) = app.try_state::<crate::db::DbState>() {
+            if let Ok(conn) = db_state.conn.lock() {
+                let _ = crate::db::add_browser_history_entry(&conn, &normalized, &normalized, Some(&tab_id));
+            }
+        }
+
         Ok(normalized)
     } else {
         Err(format!("Native browser webview '{}' not found.", label))
