@@ -98,7 +98,7 @@ pub struct BrowserProfileRecord {
     pub is_active: bool,
 }
 
-// Phase 5.6D: Browser Tab Session Model
+// Phase 5.6D: Browser Tab Session Model & Phase 5.6F-C Tab Group Association
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BrowserTabRecord {
     pub id: String,
@@ -108,6 +108,20 @@ pub struct BrowserTabRecord {
     pub is_pinned: bool,
     pub is_active: bool,
     pub position: i64,
+    pub group_id: Option<String>,
+}
+
+// Phase 5.6F-C: Tab Groups Model
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserTabGroupRecord {
+    pub id: String,
+    pub profile_id: String,
+    pub name: String,
+    pub color: String, // "blue", "purple", "green", "yellow", "orange", "red", "gray"
+    pub is_collapsed: bool,
+    pub position: i64,
+    pub created_at: u64,
+    pub updated_at: u64,
 }
 
 // Phase 5.6E: Privacy & Content Blocking Models
@@ -319,12 +333,27 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
             rule_count INTEGER NOT NULL,
             updated_at INTEGER NOT NULL
         );
+
+        -- Phase 5.6F-C: Tab Groups Storage
+        CREATE TABLE IF NOT EXISTS browser_tab_groups (
+            id TEXT PRIMARY KEY,
+            profile_id TEXT NOT NULL,
+            name TEXT NOT NULL,
+            color TEXT NOT NULL,
+            is_collapsed INTEGER NOT NULL DEFAULT 0,
+            position INTEGER NOT NULL DEFAULT 0,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_tab_groups_profile ON browser_tab_groups(profile_id);
         "
     )?;
 
     // Non-destructive migrations for profile-scoping history & bookmarks (Step 24 & 25)
     let _ = conn.execute("ALTER TABLE browser_history ADD COLUMN profile_id TEXT DEFAULT 'profile_default';", []);
     let _ = conn.execute("ALTER TABLE browser_bookmarks ADD COLUMN profile_id TEXT DEFAULT 'profile_default';", []);
+    // Phase 5.6F-C: Non-destructive migration for tab group association
+    let _ = conn.execute("ALTER TABLE browser_tabs ADD COLUMN group_id TEXT;", []);
 
     Ok(conn)
 }
@@ -1118,8 +1147,8 @@ pub fn save_browser_tabs(conn: &Connection, tabs: &[BrowserTabRecord]) -> Result
     conn.execute("DELETE FROM browser_tabs", [])?;
     for (i, tab) in tabs.iter().enumerate() {
         conn.execute(
-            "INSERT INTO browser_tabs (id, url, title, profile_id, is_pinned, is_active, position)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO browser_tabs (id, url, title, profile_id, is_pinned, is_active, position, group_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             params![
                 tab.id,
                 tab.url,
@@ -1127,7 +1156,8 @@ pub fn save_browser_tabs(conn: &Connection, tabs: &[BrowserTabRecord]) -> Result
                 tab.profile_id,
                 if tab.is_pinned { 1 } else { 0 },
                 if tab.is_active { 1 } else { 0 },
-                i as i64
+                i as i64,
+                tab.group_id,
             ],
         )?;
     }
@@ -1136,7 +1166,7 @@ pub fn save_browser_tabs(conn: &Connection, tabs: &[BrowserTabRecord]) -> Result
 
 pub fn load_browser_tabs(conn: &Connection) -> Result<Vec<BrowserTabRecord>> {
     let mut stmt = conn.prepare(
-        "SELECT id, url, title, profile_id, is_pinned, is_active, position
+        "SELECT id, url, title, profile_id, is_pinned, is_active, position, group_id
          FROM browser_tabs
          ORDER BY position ASC"
     )?;
@@ -1150,6 +1180,7 @@ pub fn load_browser_tabs(conn: &Connection) -> Result<Vec<BrowserTabRecord>> {
             is_pinned: row.get::<_, i64>(4)? != 0,
             is_active: row.get::<_, i64>(5)? != 0,
             position: row.get(6)?,
+            group_id: row.get(7)?,
         })
     })?;
 
@@ -1163,6 +1194,124 @@ pub fn load_browser_tabs(conn: &Connection) -> Result<Vec<BrowserTabRecord>> {
 pub fn clear_browser_tabs(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM browser_tabs", [])?;
     Ok(())
+}
+
+// ============================================================================
+// Phase 5.6F-C: Tab Groups Database Helpers
+// ============================================================================
+
+pub fn upsert_browser_tab_group(conn: &Connection, group: &BrowserTabGroupRecord) -> Result<()> {
+    conn.execute(
+        "INSERT INTO browser_tab_groups (
+            id, profile_id, name, color, is_collapsed, position, created_at, updated_at
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(id) DO UPDATE SET
+            profile_id = excluded.profile_id,
+            name = excluded.name,
+            color = excluded.color,
+            is_collapsed = excluded.is_collapsed,
+            position = excluded.position,
+            updated_at = excluded.updated_at;",
+        params![
+            group.id,
+            group.profile_id,
+            group.name,
+            group.color,
+            if group.is_collapsed { 1 } else { 0 },
+            group.position,
+            group.created_at,
+            group.updated_at,
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_browser_tab_group(conn: &Connection, id: &str) -> Result<Option<BrowserTabGroupRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, profile_id, name, color, is_collapsed, position, created_at, updated_at
+         FROM browser_tab_groups
+         WHERE id = ?1 LIMIT 1"
+    )?;
+
+    let mut rows = stmt.query(params![id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(BrowserTabGroupRecord {
+            id: row.get(0)?,
+            profile_id: row.get(1)?,
+            name: row.get(2)?,
+            color: row.get(3)?,
+            is_collapsed: row.get::<_, i64>(4)? != 0,
+            position: row.get(5)?,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn list_browser_tab_groups(conn: &Connection, profile_id: Option<&str>) -> Result<Vec<BrowserTabGroupRecord>> {
+    let mut list = Vec::new();
+    if let Some(pid) = profile_id {
+        let mut stmt = conn.prepare(
+            "SELECT id, profile_id, name, color, is_collapsed, position, created_at, updated_at
+             FROM browser_tab_groups
+             WHERE profile_id = ?1
+             ORDER BY position ASC, created_at ASC"
+        )?;
+        let rows = stmt.query_map(params![pid], |row| {
+            Ok(BrowserTabGroupRecord {
+                id: row.get(0)?,
+                profile_id: row.get(1)?,
+                name: row.get(2)?,
+                color: row.get(3)?,
+                is_collapsed: row.get::<_, i64>(4)? != 0,
+                position: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?;
+        for r in rows {
+            list.push(r?);
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, profile_id, name, color, is_collapsed, position, created_at, updated_at
+             FROM browser_tab_groups
+             ORDER BY position ASC, created_at ASC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(BrowserTabGroupRecord {
+                id: row.get(0)?,
+                profile_id: row.get(1)?,
+                name: row.get(2)?,
+                color: row.get(3)?,
+                is_collapsed: row.get::<_, i64>(4)? != 0,
+                position: row.get(5)?,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?;
+        for r in rows {
+            list.push(r?);
+        }
+    }
+    Ok(list)
+}
+
+pub fn delete_browser_tab_group(conn: &Connection, id: &str) -> Result<bool> {
+    // Ungroup all associated tabs without deleting them (Step 5)
+    let _ = conn.execute("UPDATE browser_tabs SET group_id = NULL WHERE group_id = ?1", params![id]);
+    let count = conn.execute("DELETE FROM browser_tab_groups WHERE id = ?1", params![id])?;
+    Ok(count > 0)
+}
+
+pub fn set_browser_tab_group_collapsed(conn: &Connection, id: &str, is_collapsed: bool) -> Result<bool> {
+    let count = conn.execute(
+        "UPDATE browser_tab_groups SET is_collapsed = ?1, updated_at = ?2 WHERE id = ?3",
+        params![if is_collapsed { 1 } else { 0 }, chrono::Utc::now().timestamp_millis() as u64, id],
+    )?;
+    Ok(count > 0)
 }
 
 // ============================================================================

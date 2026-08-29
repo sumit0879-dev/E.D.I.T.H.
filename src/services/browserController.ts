@@ -786,6 +786,64 @@ class BrowserController {
   public async readerExtract(tabId: string) {
     return await tauriService.browserReaderExtract(tabId);
   }
+
+  // --- Phase 5.6F-C: Tab Groups & Advanced Tab Management ---
+  public async createTabGroup(name: string, profileId?: string, color?: string) {
+    return await tauriService.browserTabGroupCreate(name, profileId, color);
+  }
+
+  public async renameTabGroup(groupId: string, name: string, color?: string) {
+    return await tauriService.browserTabGroupRename(groupId, name, color);
+  }
+
+  public async deleteTabGroup(groupId: string) {
+    const res = await tauriService.browserTabGroupDelete(groupId);
+    for (const t of this.tabs) {
+      if (t.group_id === groupId) {
+        t.group_id = null;
+      }
+    }
+    this.notify();
+    return res;
+  }
+
+  public async listTabGroups(profileId?: string) {
+    return await tauriService.browserTabGroupList(profileId);
+  }
+
+  public async setTabGroupCollapsed(groupId: string, isCollapsed: boolean) {
+    return await tauriService.browserTabGroupSetCollapsed(groupId, isCollapsed);
+  }
+
+  public async moveTabToGroup(tabId: string, groupId: string) {
+    const updated = await tauriService.browserTabGroupMoveTab(tabId, groupId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) tab.group_id = groupId;
+    this.notify();
+    return updated;
+  }
+
+  public async removeTabFromGroup(tabId: string) {
+    const updated = await tauriService.browserTabGroupRemoveTab(tabId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) tab.group_id = null;
+    this.notify();
+    return updated;
+  }
+
+  public async reorderTabGroups(groupIds: string[]) {
+    return await tauriService.browserTabGroupReorder(groupIds);
+  }
+
+  public async closeTabGroup(groupId: string) {
+    const closedIds = await tauriService.browserTabGroupCloseTabs(groupId);
+    this.tabs = this.tabs.filter((t) => !closedIds.includes(t.id));
+    if (this.activeTabId && closedIds.includes(this.activeTabId)) {
+      this.activeTabId = this.tabs.length > 0 ? this.tabs[0].id : null;
+    }
+    this.notify();
+    return closedIds;
+  }
 }
 
 export const browserController = new BrowserController();

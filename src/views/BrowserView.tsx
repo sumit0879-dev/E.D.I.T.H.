@@ -54,8 +54,9 @@ import type {
   TabPrivacyStats,
   FindResult,
   ReaderDocument,
+  BrowserTabGroup,
 } from '../types';
-import { Shield, ShieldOff, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu, Printer, ZoomIn, ZoomOut, ChevronUp, ChevronDown, Type, BookOpen, FileDown } from 'lucide-react';
+import { Shield, ShieldOff, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu, Printer, ZoomIn, ZoomOut, ChevronUp, ChevronDown, Type, BookOpen, FileDown, FolderPlus, Tag, ChevronRight } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -566,6 +567,184 @@ export const BrowserView: React.FC = () => {
     }
   };
 
+  // Phase 5.6F-C Tab Groups & Tab Search States
+  const [tabGroups, setTabGroups] = useState<BrowserTabGroup[]>([]);
+  const [isFetchingGroups, setIsFetchingGroups] = useState(false);
+  const [showCreateGroupModal, setShowCreateGroupModal] = useState(false);
+  const [targetTabForGroup, setTargetTabForGroup] = useState<string | null>(null);
+  const [newGroupName, setNewGroupName] = useState('');
+  const [newGroupColor, setNewGroupColor] = useState('blue');
+  const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
+  const [editingGroupName, setEditingGroupName] = useState('');
+  const [editingGroupColor, setEditingGroupColor] = useState('blue');
+  const [groupContextMenu, setGroupContextMenu] = useState<{ groupId: string; x: number; y: number } | null>(null);
+  const [showTabSearchModal, setShowTabSearchModal] = useState(false);
+  const [tabSearchQuery, setTabSearchQuery] = useState('');
+  const [tabSearchSelectedIndex, setTabSearchSelectedIndex] = useState(0);
+  const tabSearchInputRef = useRef<HTMLInputElement>(null);
+
+  const GROUP_COLORS: Record<string, { bg: string; text: string; border: string; badge: string; tabBorder: string; activeTab: string; dot: string }> = {
+    blue: {
+      bg: 'bg-blue-950/60 hover:bg-blue-900/60',
+      text: 'text-blue-300',
+      border: 'border-blue-500/40',
+      badge: 'bg-blue-500',
+      tabBorder: 'border-b-2 border-b-blue-400',
+      activeTab: 'bg-blue-950/50 border-blue-500/50 text-blue-200',
+      dot: '#3b82f6',
+    },
+    purple: {
+      bg: 'bg-purple-950/60 hover:bg-purple-900/60',
+      text: 'text-purple-300',
+      border: 'border-purple-500/40',
+      badge: 'bg-purple-500',
+      tabBorder: 'border-b-2 border-b-purple-400',
+      activeTab: 'bg-purple-950/50 border-purple-500/50 text-purple-200',
+      dot: '#a855f7',
+    },
+    green: {
+      bg: 'bg-emerald-950/60 hover:bg-emerald-900/60',
+      text: 'text-emerald-300',
+      border: 'border-emerald-500/40',
+      badge: 'bg-emerald-500',
+      tabBorder: 'border-b-2 border-b-emerald-400',
+      activeTab: 'bg-emerald-950/50 border-emerald-500/50 text-emerald-200',
+      dot: '#10b981',
+    },
+    yellow: {
+      bg: 'bg-amber-950/60 hover:bg-amber-900/60',
+      text: 'text-amber-300',
+      border: 'border-amber-500/40',
+      badge: 'bg-amber-500',
+      tabBorder: 'border-b-2 border-b-amber-400',
+      activeTab: 'bg-amber-950/50 border-amber-500/50 text-amber-200',
+      dot: '#f59e0b',
+    },
+    orange: {
+      bg: 'bg-orange-950/60 hover:bg-orange-900/60',
+      text: 'text-orange-300',
+      border: 'border-orange-500/40',
+      badge: 'bg-orange-500',
+      tabBorder: 'border-b-2 border-b-orange-400',
+      activeTab: 'bg-orange-950/50 border-orange-500/50 text-orange-200',
+      dot: '#f97316',
+    },
+    red: {
+      bg: 'bg-red-950/60 hover:bg-red-900/60',
+      text: 'text-red-300',
+      border: 'border-red-500/40',
+      badge: 'bg-red-500',
+      tabBorder: 'border-b-2 border-b-red-400',
+      activeTab: 'bg-red-950/50 border-red-500/50 text-red-200',
+      dot: '#ef4444',
+    },
+    gray: {
+      bg: 'bg-slate-900/80 hover:bg-slate-800/80',
+      text: 'text-slate-300',
+      border: 'border-slate-500/40',
+      badge: 'bg-slate-400',
+      tabBorder: 'border-b-2 border-b-slate-400',
+      activeTab: 'bg-slate-900/50 border-slate-500/50 text-slate-200',
+      dot: '#94a3b8',
+    },
+  };
+
+  const fetchTabGroups = useCallback(async (profileId?: string) => {
+    setIsFetchingGroups(true);
+    try {
+      const groups = await browserController.listTabGroups(profileId);
+      setTabGroups(groups);
+    } catch (e) {
+      console.warn('Failed to fetch tab groups:', e);
+    } finally {
+      setIsFetchingGroups(false);
+    }
+  }, []);
+
+  const handleCreateGroup = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!newGroupName.trim()) return;
+    try {
+      const activeTab = browserState.tabs.find((t) => t.id === (targetTabForGroup || browserState.active_tab_id));
+      const profileId = activeTab?.profile_id || 'profile_default';
+      const created = await browserController.createTabGroup(newGroupName.trim(), profileId, newGroupColor);
+      if (targetTabForGroup) {
+        await browserController.moveTabToGroup(targetTabForGroup, created.id);
+      }
+      setNewGroupName('');
+      setTargetTabForGroup(null);
+      setShowCreateGroupModal(false);
+      fetchTabGroups(profileId);
+    } catch (err) {
+      console.error('Failed to create tab group:', err);
+    }
+  };
+
+  const handleRenameGroup = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    if (!editingGroupId || !editingGroupName.trim()) return;
+    try {
+      await browserController.renameTabGroup(editingGroupId, editingGroupName.trim(), editingGroupColor);
+      setEditingGroupId(null);
+      setEditingGroupName('');
+      fetchTabGroups();
+    } catch (err) {
+      console.error('Failed to rename tab group:', err);
+    }
+  };
+
+  const handleDeleteGroup = async (groupId: string) => {
+    try {
+      await browserController.deleteTabGroup(groupId);
+      setGroupContextMenu(null);
+      fetchTabGroups();
+    } catch (err) {
+      console.error('Failed to delete tab group:', err);
+    }
+  };
+
+  const handleToggleGroupCollapse = async (groupId: string, currentCollapsed: boolean) => {
+    try {
+      await browserController.setTabGroupCollapsed(groupId, !currentCollapsed);
+      setTabGroups((prev) =>
+        prev.map((g) => (g.id === groupId ? { ...g, is_collapsed: !currentCollapsed } : g))
+      );
+    } catch (err) {
+      console.error('Failed to toggle group collapse:', err);
+    }
+  };
+
+  const handleMoveTabToGroup = async (tabId: string, groupId: string) => {
+    try {
+      await browserController.moveTabToGroup(tabId, groupId);
+      setContextMenu(null);
+      fetchTabGroups();
+    } catch (err) {
+      console.error('Failed to move tab to group:', err);
+    }
+  };
+
+  const handleRemoveTabFromGroup = async (tabId: string) => {
+    try {
+      await browserController.removeTabFromGroup(tabId);
+      setContextMenu(null);
+      fetchTabGroups();
+    } catch (err) {
+      console.error('Failed to remove tab from group:', err);
+    }
+  };
+
+  const handleCloseGroupTabs = async (groupId: string) => {
+    try {
+      await browserController.closeTabGroup(groupId);
+      setGroupContextMenu(null);
+      setContextMenu(null);
+      fetchTabGroups();
+    } catch (err) {
+      console.error('Failed to close group tabs:', err);
+    }
+  };
+
   const fetchRiskAuditLogs = useCallback(async () => {
     setIsFetchingLogs(true);
     try {
@@ -700,6 +879,8 @@ export const BrowserView: React.FC = () => {
 
     window.addEventListener('resize', syncBounds);
 
+    fetchTabGroups();
+
     return () => {
       mounted = false;
       unsubscribe();
@@ -707,7 +888,7 @@ export const BrowserView: React.FC = () => {
       window.removeEventListener('resize', syncBounds);
       browserController.hideAll().catch(() => {});
     };
-  }, [syncBounds, isOmniboxFocused, fetchBookmarks, fetchHistory, fetchProfiles]);
+  }, [syncBounds, isOmniboxFocused, fetchBookmarks, fetchHistory, fetchProfiles, fetchTabGroups]);
 
   // Phase 5.6D Global Keyboard Shortcuts
   useEffect(() => {
@@ -807,7 +988,20 @@ export const BrowserView: React.FC = () => {
         return;
       }
 
+      // Phase 5.6F-C Shortcuts
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'a') {
+        e.preventDefault();
+        setShowTabSearchModal((prev) => !prev);
+        setTimeout(() => tabSearchInputRef.current?.focus(), 50);
+        return;
+      }
+
       if (e.key === 'Escape') {
+        if (showTabSearchModal) {
+          e.preventDefault();
+          setShowTabSearchModal(false);
+          return;
+        }
         const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
         if (activeTab?.is_reader_mode && !showFindHud) {
           e.preventDefault();
@@ -819,10 +1013,20 @@ export const BrowserView: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [browserState.active_tab_id, browserState.tabs, showFindHud]);
+  }, [browserState.active_tab_id, browserState.tabs, showFindHud, showTabSearchModal]);
 
   const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
   const isNewTab = !activeTab || !activeTab.url || activeTab.url === 'edith://newtab' || activeTab.url === 'about:blank';
+
+  // Phase 5.6F-C Step 9: Auto-expand collapsed group if active tab belongs to it
+  useEffect(() => {
+    if (activeTab?.group_id) {
+      const grp = tabGroups.find((g) => g.id === activeTab.group_id);
+      if (grp && grp.is_collapsed) {
+        handleToggleGroupCollapse(grp.id, true);
+      }
+    }
+  }, [activeTab?.id, activeTab?.group_id, tabGroups]);
 
   // Tab switching
   const handleSwitchTab = async (tabId: string) => {
@@ -1134,8 +1338,8 @@ export const BrowserView: React.FC = () => {
     <div className="flex flex-col h-full w-full bg-[#000000] text-slate-100 select-none overflow-hidden font-sans">
       {/* Tactical Multi-Tab Strip */}
       <div className="h-9 bg-[#040711] border-b border-white/[0.08] px-2 flex items-center gap-1.5 shrink-0 z-10 overflow-x-auto">
-        <div className="flex items-center gap-1">
-          {/* Pinned Tabs (Phase 5.6D) */}
+        <div className="flex items-center gap-1.5 flex-1 min-w-0">
+          {/* 1. Global Pinned Tabs (Phase 5.6D & 5.6F-C) */}
           {browserState.tabs.filter((t) => t.is_pinned).map((tab) => {
             const isActive = tab.id === browserState.active_tab_id;
             return (
@@ -1169,69 +1373,187 @@ export const BrowserView: React.FC = () => {
             );
           })}
 
-          {/* Regular Tabs */}
-          {browserState.tabs.filter((t) => !t.is_pinned).map((tab) => {
-            const isActive = tab.id === browserState.active_tab_id;
-            return (
-              <div
-                key={tab.id}
-                onClick={() => handleSwitchTab(tab.id)}
-                onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
-                className={`group relative flex items-center gap-2 h-7 px-3 rounded-lg text-xs font-mono transition-all cursor-pointer select-none max-w-[200px] min-w-[130px] ${
-                  isActive
-                    ? 'bg-[#091122] text-cyan-300 border border-cyan-500/40 shadow-cyan-glow-xs'
-                    : 'bg-white/[0.03] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] border border-transparent'
-                }`}
-              >
-                {tab.is_loading ? (
-                  <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" />
-                ) : tab.favicon ? (
-                  <img
-                    src={tab.favicon}
-                    alt=""
-                    className="w-3.5 h-3.5 shrink-0 rounded-sm"
-                    onError={(e) => {
-                      (e.target as HTMLElement).style.display = 'none';
+          {/* Divider between pinned and groups/tabs if pinned exist */}
+          {browserState.tabs.some((t) => t.is_pinned) && (
+            <div className="w-[1px] h-4 bg-white/10 mx-0.5 shrink-0" />
+          )}
+
+          {/* 2. Grouped Tabs (Phase 5.6F-C) */}
+          {tabGroups
+            .filter((g) => !activeTab?.profile_id || g.profile_id === activeTab.profile_id)
+            .map((group) => {
+              const colorDef = GROUP_COLORS[group.color] || GROUP_COLORS.blue;
+              const groupTabs = browserState.tabs.filter((t) => !t.is_pinned && t.group_id === group.id);
+
+              return (
+                <div key={group.id} className="flex items-center gap-1 shrink-0">
+                  {/* Group Header Pill */}
+                  <div
+                    onClick={() => handleToggleGroupCollapse(group.id, group.is_collapsed)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      setGroupContextMenu({ groupId: group.id, x: e.clientX, y: e.clientY });
                     }}
-                  />
-                ) : (
-                  <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
-                )}
-                <span className="truncate flex-1 text-[11px]">
-                  {tab.url === 'edith://newtab' ? 'New Tab' : (tab.title || tab.url || 'New Tab')}
-                </span>
-                {/* Phase 5.5 Control Pill */}
-                {tabControls[tab.id]?.control_state === 'AI_CONTROLLED' ? (
-                  <span className="px-1 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[9px] font-bold shrink-0" title="AI Controlled">🤖 AI</span>
-                ) : tabControls[tab.id]?.control_state === 'AI_PAUSED' ? (
-                  <span className="px-1 py-0.5 rounded bg-amber-500/30 text-amber-300 text-[9px] font-bold shrink-0" title="AI Paused">⏸️</span>
-                ) : (
-                  <span className="px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[9px] font-bold shrink-0" title="Human Controlled">👤</span>
-                )}
-                {/* Phase 5.6C Tab Profile Badge */}
-                {tab.profile_id && tab.profile_id !== 'profile_default' && (
-                  <span className="px-1 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30 text-cyan-300 text-[8px] font-mono shrink-0" title={`Profile: ${tab.profile_id}`}>
-                    {tab.profile_id.startsWith('agent_') ? 'AI' : tab.profile_id.replace('profile_', '')}
-                  </span>
-                )}
-                {browserState.tabs.length > 1 && (
-                  <button
-                    onClick={(e) => handleCloseTab(e, tab.id)}
-                    className="opacity-0 group-hover:opacity-100 hover:text-red-400 p-0.5 rounded transition"
-                    title="Close Tab (Ctrl+W)"
+                    className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg border text-xs font-mono font-bold cursor-pointer transition select-none ${colorDef.bg} ${colorDef.border} ${colorDef.text}`}
+                    title={`Tab Group: ${group.name} (${groupTabs.length} tabs) — Click to collapse/expand, right-click for options`}
                   >
-                    <X className="w-3 h-3" />
-                  </button>
-                )}
-              </div>
-            );
-          })}
+                    <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: colorDef.dot }} />
+                    <span className="text-[11px] tracking-wide uppercase max-w-[100px] truncate">{group.name}</span>
+                    <span className="text-[10px] opacity-75">({groupTabs.length})</span>
+                    {group.is_collapsed ? (
+                      <ChevronRight className="w-3 h-3 shrink-0 opacity-80" />
+                    ) : (
+                      <ChevronDown className="w-3 h-3 shrink-0 opacity-80" />
+                    )}
+                  </div>
+
+                  {/* Child Tabs in Group (Hidden when collapsed) */}
+                  {!group.is_collapsed &&
+                    groupTabs.map((tab) => {
+                      const isActive = tab.id === browserState.active_tab_id;
+                      return (
+                        <div
+                          key={tab.id}
+                          onClick={() => handleSwitchTab(tab.id)}
+                          onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
+                          className={`group relative flex items-center gap-2 h-7 px-3 rounded-lg text-xs font-mono transition-all cursor-pointer select-none max-w-[180px] min-w-[120px] shrink-0 border ${
+                            isActive
+                              ? `${colorDef.activeTab} shadow-sm`
+                              : 'bg-white/[0.03] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] border-transparent'
+                          } ${colorDef.tabBorder}`}
+                        >
+                          {tab.is_loading ? (
+                            <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" />
+                          ) : tab.favicon ? (
+                            <img
+                              src={tab.favicon}
+                              alt=""
+                              className="w-3.5 h-3.5 shrink-0 rounded-sm"
+                              onError={(e) => {
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
+                          )}
+                          <span className="truncate flex-1 text-[11px]">
+                            {tab.url === 'edith://newtab' ? 'New Tab' : (tab.title || tab.url || 'New Tab')}
+                          </span>
+                          {tabControls[tab.id]?.control_state === 'AI_CONTROLLED' ? (
+                            <span className="px-1 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[9px] font-bold shrink-0" title="AI Controlled">🤖</span>
+                          ) : tabControls[tab.id]?.control_state === 'AI_PAUSED' ? (
+                            <span className="px-1 py-0.5 rounded bg-amber-500/30 text-amber-300 text-[9px] font-bold shrink-0" title="AI Paused">⏸️</span>
+                          ) : null}
+                          {tab.is_pdf && (
+                            <span className="px-1 py-0.2 rounded bg-orange-950/80 text-orange-400 border border-orange-500/40 text-[8px] font-bold shrink-0">PDF</span>
+                          )}
+                          {browserState.tabs.length > 1 && (
+                            <button
+                              onClick={(e) => handleCloseTab(e, tab.id)}
+                              className="opacity-0 group-hover:opacity-100 hover:text-red-400 p-0.5 rounded transition"
+                              title="Close Tab (Ctrl+W)"
+                            >
+                              <X className="w-3 h-3" />
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })}
+                </div>
+              );
+            })}
+
+          {/* 3. Ungrouped Tabs (Phase 5.6F-C) */}
+          {browserState.tabs
+            .filter((t) => !t.is_pinned && (!t.group_id || !tabGroups.some((g) => g.id === t.group_id)))
+            .map((tab) => {
+              const isActive = tab.id === browserState.active_tab_id;
+              return (
+                <div
+                  key={tab.id}
+                  onClick={() => handleSwitchTab(tab.id)}
+                  onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
+                  className={`group relative flex items-center gap-2 h-7 px-3 rounded-lg text-xs font-mono transition-all cursor-pointer select-none max-w-[200px] min-w-[130px] shrink-0 ${
+                    isActive
+                      ? 'bg-[#091122] text-cyan-300 border border-cyan-500/40 shadow-cyan-glow-xs'
+                      : 'bg-white/[0.03] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] border border-transparent'
+                  }`}
+                >
+                  {tab.is_loading ? (
+                    <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" />
+                  ) : tab.favicon ? (
+                    <img
+                      src={tab.favicon}
+                      alt=""
+                      className="w-3.5 h-3.5 shrink-0 rounded-sm"
+                      onError={(e) => {
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                  ) : (
+                    <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
+                  )}
+                  <span className="truncate flex-1 text-[11px]">
+                    {tab.url === 'edith://newtab' ? 'New Tab' : (tab.title || tab.url || 'New Tab')}
+                  </span>
+                  {tabControls[tab.id]?.control_state === 'AI_CONTROLLED' ? (
+                    <span className="px-1 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[9px] font-bold shrink-0" title="AI Controlled">🤖 AI</span>
+                  ) : tabControls[tab.id]?.control_state === 'AI_PAUSED' ? (
+                    <span className="px-1 py-0.5 rounded bg-amber-500/30 text-amber-300 text-[9px] font-bold shrink-0" title="AI Paused">⏸️</span>
+                  ) : (
+                    <span className="px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[9px] font-bold shrink-0" title="Human Controlled">👤</span>
+                  )}
+                  {tab.profile_id && tab.profile_id !== 'profile_default' && (
+                    <span className="px-1 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30 text-cyan-300 text-[8px] font-mono shrink-0" title={`Profile: ${tab.profile_id}`}>
+                      {tab.profile_id.startsWith('agent_') ? 'AI' : tab.profile_id.replace('profile_', '')}
+                    </span>
+                  )}
+                  {tab.is_pdf && (
+                    <span className="px-1 py-0.2 rounded bg-orange-950/80 text-orange-400 border border-orange-500/40 text-[8px] font-bold shrink-0">PDF</span>
+                  )}
+                  {browserState.tabs.length > 1 && (
+                    <button
+                      onClick={(e) => handleCloseTab(e, tab.id)}
+                      className="opacity-0 group-hover:opacity-100 hover:text-red-400 p-0.5 rounded transition"
+                      title="Close Tab (Ctrl+W)"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+
+          {/* 4. Action Buttons */}
           <button
             onClick={() => handleCreateNewTab('edith://newtab')}
-            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition"
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition shrink-0"
             title="New Tab (Ctrl+T)"
           >
             <Plus className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={() => {
+              setTargetTabForGroup(null);
+              setShowCreateGroupModal(true);
+            }}
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition shrink-0"
+            title="New Tab Group"
+          >
+            <FolderPlus className="w-3.5 h-3.5" />
+          </button>
+
+          <button
+            onClick={() => {
+              setShowTabSearchModal(true);
+              setTimeout(() => tabSearchInputRef.current?.focus(), 50);
+            }}
+            className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition shrink-0"
+            title="Search Open Tabs (Ctrl+Shift+A)"
+          >
+            <Compass className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -1292,6 +1614,70 @@ export const BrowserView: React.FC = () => {
               </>
             )}
           </button>
+          {/* Phase 5.6F-C Tab Group Options */}
+          {(() => {
+            const targetTab = browserState.tabs.find((t) => t.id === contextMenu.tabId);
+            if (!targetTab || targetTab.is_pinned) return null;
+            const availableGroups = tabGroups.filter(
+              (g) => (!targetTab.profile_id || g.profile_id === targetTab.profile_id) && g.id !== targetTab.group_id
+            );
+            return (
+              <>
+                <div className="h-px bg-white/10 my-0.5" />
+                {targetTab.group_id && (
+                  <>
+                    <button
+                      onClick={() => {
+                        handleRemoveTabFromGroup(contextMenu.tabId);
+                        setContextMenu(null);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-300 text-left transition"
+                    >
+                      <Tag className="w-3.5 h-3.5 text-slate-400" />
+                      Remove from Group
+                    </button>
+                    <button
+                      onClick={() => {
+                        if (targetTab.group_id) handleCloseGroupTabs(targetTab.group_id);
+                        setContextMenu(null);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-red-500/20 hover:text-red-200 text-left transition"
+                    >
+                      <X className="w-3.5 h-3.5 text-red-400" />
+                      Close Group Tabs
+                    </button>
+                  </>
+                )}
+                {availableGroups.map((g) => {
+                  const cDef = GROUP_COLORS[g.color] || GROUP_COLORS.blue;
+                  return (
+                    <button
+                      key={g.id}
+                      onClick={() => {
+                        handleMoveTabToGroup(contextMenu.tabId, g.id);
+                        setContextMenu(null);
+                      }}
+                      className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-200 text-left transition"
+                    >
+                      <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: cDef.dot }} />
+                      <span className="truncate">Move to: {g.name}</span>
+                    </button>
+                  );
+                })}
+                <button
+                  onClick={() => {
+                    setTargetTabForGroup(contextMenu.tabId);
+                    setShowCreateGroupModal(true);
+                    setContextMenu(null);
+                  }}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+                >
+                  <FolderPlus className="w-3.5 h-3.5 text-cyan-400" />
+                  Add to New Group...
+                </button>
+              </>
+            );
+          })()}
           <div className="h-px bg-white/10 my-0.5" />
           <button
             onClick={() => {
@@ -1395,6 +1781,74 @@ export const BrowserView: React.FC = () => {
             <span className="flex items-center gap-2"><History className="w-3.5 h-3.5 text-blue-400" /> Reopen Closed</span>
             <span className="text-[10px] text-slate-500">Ctrl+Shift+T</span>
           </button>
+        </div>
+      )}
+
+      {/* Phase 5.6F-C Group Context Menu Popup */}
+      {groupContextMenu && (
+        <div
+          style={{ top: `${groupContextMenu.y}px`, left: `${groupContextMenu.x}px` }}
+          className="fixed z-50 bg-[#091122] border border-cyan-500/30 shadow-2xl rounded-xl p-1 text-xs text-slate-200 font-mono flex flex-col gap-0.5 min-w-[180px] backdrop-blur-md animate-fadeIn"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {(() => {
+            const group = tabGroups.find((g) => g.id === groupContextMenu.groupId);
+            if (!group) return null;
+            return (
+              <>
+                <div className="px-2.5 py-1 text-[10px] font-bold text-slate-400 border-b border-white/10 uppercase tracking-wider">
+                  Group: {group.name}
+                </div>
+                <button
+                  onClick={() => {
+                    setEditingGroupId(group.id);
+                    setEditingGroupName(group.name);
+                    setEditingGroupColor(group.color);
+                    setGroupContextMenu(null);
+                  }}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+                >
+                  <Edit2 className="w-3.5 h-3.5 text-cyan-400" />
+                  Rename / Recolor Group...
+                </button>
+                <button
+                  onClick={() => {
+                    handleToggleGroupCollapse(group.id, group.is_collapsed);
+                    setGroupContextMenu(null);
+                  }}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-300 text-left transition"
+                >
+                  {group.is_collapsed ? (
+                    <>
+                      <ChevronDown className="w-3.5 h-3.5 text-emerald-400" />
+                      Expand Group
+                    </>
+                  ) : (
+                    <>
+                      <ChevronRight className="w-3.5 h-3.5 text-amber-400" />
+                      Collapse Group
+                    </>
+                  )}
+                </button>
+                <div className="h-px bg-white/10 my-0.5" />
+                <button
+                  onClick={() => handleCloseGroupTabs(group.id)}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-red-500/20 hover:text-red-200 text-left transition"
+                >
+                  <X className="w-3.5 h-3.5 text-red-400" />
+                  Close Group Tabs
+                </button>
+                <button
+                  onClick={() => handleDeleteGroup(group.id)}
+                  className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-red-500/20 hover:text-red-200 text-left transition"
+                  title="Ungroups tabs without closing them"
+                >
+                  <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                  Delete Group (Ungroup Tabs)
+                </button>
+              </>
+            );
+          })()}
         </div>
       )}
 
@@ -3460,6 +3914,318 @@ export const BrowserView: React.FC = () => {
         )}
       </div>
 
+      {/* Phase 5.6F-C Create Tab Group Modal */}
+      {showCreateGroupModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-[#070c18] border border-cyan-500/40 shadow-2xl rounded-2xl p-6 w-full max-w-md font-mono text-slate-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-cyan-300 flex items-center gap-2">
+                <FolderPlus className="w-4 h-4 text-cyan-400" />
+                Create Tab Group
+              </h3>
+              <button
+                onClick={() => {
+                  setShowCreateGroupModal(false);
+                  setTargetTabForGroup(null);
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleCreateGroup} className="space-y-4">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Group Name</label>
+                <input
+                  type="text"
+                  value={newGroupName}
+                  onChange={(e) => setNewGroupName(e.target.value)}
+                  placeholder="e.g. Research, Project Alpha, Work..."
+                  autoFocus
+                  className="w-full bg-black/60 border border-cyan-500/30 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Group Color</label>
+                <div className="flex items-center gap-2">
+                  {(['blue', 'purple', 'green', 'yellow', 'orange', 'red', 'gray'] as const).map((color) => {
+                    const cDef = GROUP_COLORS[color];
+                    return (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setNewGroupColor(color)}
+                        className={`w-7 h-7 rounded-full flex items-center justify-center transition border-2 ${
+                          newGroupColor === color ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-70 hover:opacity-100'
+                        }`}
+                        style={{ backgroundColor: cDef.dot }}
+                        title={color}
+                      >
+                        {newGroupColor === color && <Check className="w-3.5 h-3.5 text-white" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateGroupModal(false);
+                    setTargetTabForGroup(null);
+                  }}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs text-slate-300 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!newGroupName.trim()}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-xs font-bold text-white transition shadow-cyan-glow-xs"
+                >
+                  Create Group
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 5.6F-C Edit Tab Group Modal */}
+      {editingGroupId && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm animate-fadeIn">
+          <div className="bg-[#070c18] border border-cyan-500/40 shadow-2xl rounded-2xl p-6 w-full max-w-md font-mono text-slate-200">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-sm font-bold text-cyan-300 flex items-center gap-2">
+                <Edit2 className="w-4 h-4 text-cyan-400" />
+                Edit Tab Group
+              </h3>
+              <button
+                onClick={() => {
+                  setEditingGroupId(null);
+                  setEditingGroupName('');
+                }}
+                className="text-slate-400 hover:text-white"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <form onSubmit={handleRenameGroup} className="space-y-4">
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Group Name</label>
+                <input
+                  type="text"
+                  value={editingGroupName}
+                  onChange={(e) => setEditingGroupName(e.target.value)}
+                  placeholder="Group name..."
+                  autoFocus
+                  className="w-full bg-black/60 border border-cyan-500/30 rounded-xl px-3 py-2 text-xs text-white focus:outline-none focus:border-cyan-400"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-slate-400 mb-1.5">Group Color</label>
+                <div className="flex items-center gap-2">
+                  {(['blue', 'purple', 'green', 'yellow', 'orange', 'red', 'gray'] as const).map((color) => {
+                    const cDef = GROUP_COLORS[color];
+                    return (
+                      <button
+                        key={color}
+                        type="button"
+                        onClick={() => setEditingGroupColor(color)}
+                        className={`w-7 h-7 rounded-full flex items-center justify-center transition border-2 ${
+                          editingGroupColor === color ? 'border-white scale-110 shadow-lg' : 'border-transparent opacity-70 hover:opacity-100'
+                        }`}
+                        style={{ backgroundColor: cDef.dot }}
+                        title={color}
+                      >
+                        {editingGroupColor === color && <Check className="w-3.5 h-3.5 text-white" />}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingGroupId(null);
+                    setEditingGroupName('');
+                  }}
+                  className="px-4 py-2 rounded-xl bg-white/5 hover:bg-white/10 text-xs text-slate-300 transition"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!editingGroupName.trim()}
+                  className="px-4 py-2 rounded-xl bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-xs font-bold text-white transition shadow-cyan-glow-xs"
+                >
+                  Save Changes
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Phase 5.6F-C Tab Search HUD Modal (Ctrl+Shift+A) */}
+      {showTabSearchModal && (
+        <div
+          className="fixed inset-0 z-50 flex items-start justify-center pt-20 bg-black/60 backdrop-blur-sm animate-fadeIn"
+          onClick={() => setShowTabSearchModal(false)}
+        >
+          <div
+            className="bg-[#070c18] border border-cyan-500/40 shadow-2xl rounded-2xl p-4 w-full max-w-xl font-mono text-slate-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-2 px-3 py-2 bg-black/60 border border-cyan-500/30 rounded-xl mb-3">
+              <Compass className="w-4 h-4 text-cyan-400 shrink-0" />
+              <input
+                ref={tabSearchInputRef}
+                type="text"
+                value={tabSearchQuery}
+                onChange={(e) => {
+                  setTabSearchQuery(e.target.value);
+                  setTabSearchSelectedIndex(0);
+                }}
+                onKeyDown={(e) => {
+                  const filtered = browserState.tabs.filter((t) => {
+                    const q = tabSearchQuery.toLowerCase();
+                    const groupName = tabGroups.find((g) => g.id === t.group_id)?.name.toLowerCase() || '';
+                    return (
+                      (t.title && t.title.toLowerCase().includes(q)) ||
+                      (t.url && t.url.toLowerCase().includes(q)) ||
+                      groupName.includes(q)
+                    );
+                  });
+
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setTabSearchSelectedIndex((prev) => (prev + 1) % (filtered.length || 1));
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setTabSearchSelectedIndex((prev) => (prev - 1 + (filtered.length || 1)) % (filtered.length || 1));
+                  } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    if (filtered[tabSearchSelectedIndex]) {
+                      handleSwitchTab(filtered[tabSearchSelectedIndex].id);
+                      setShowTabSearchModal(false);
+                    }
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setShowTabSearchModal(false);
+                  }
+                }}
+                placeholder="Search tabs by title, URL, or group (Ctrl+Shift+A)..."
+                autoFocus
+                className="w-full bg-transparent border-none text-xs text-white placeholder-slate-500 focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-500 px-1.5 py-0.5 rounded bg-white/5">ESC</span>
+            </div>
+
+            {/* Results List */}
+            {(() => {
+              const filtered = browserState.tabs.filter((t) => {
+                const q = tabSearchQuery.toLowerCase();
+                const groupName = tabGroups.find((g) => g.id === t.group_id)?.name.toLowerCase() || '';
+                return (
+                  (t.title && t.title.toLowerCase().includes(q)) ||
+                  (t.url && t.url.toLowerCase().includes(q)) ||
+                  groupName.includes(q)
+                );
+              });
+
+              if (filtered.length === 0) {
+                return (
+                  <div className="py-8 text-center text-xs text-slate-500">
+                    No open tabs match &quot;{tabSearchQuery}&quot;
+                  </div>
+                );
+              }
+
+              return (
+                <div className="max-h-72 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                  {filtered.map((tab, idx) => {
+                    const isSelected = idx === tabSearchSelectedIndex;
+                    const isActive = tab.id === browserState.active_tab_id;
+                    const group = tabGroups.find((g) => g.id === tab.group_id);
+                    const cDef = group ? GROUP_COLORS[group.color] || GROUP_COLORS.blue : null;
+
+                    return (
+                      <div
+                        key={tab.id}
+                        onClick={() => {
+                          handleSwitchTab(tab.id);
+                          setShowTabSearchModal(false);
+                        }}
+                        onMouseEnter={() => setTabSearchSelectedIndex(idx)}
+                        className={`flex items-center justify-between p-2.5 rounded-xl cursor-pointer transition select-none ${
+                          isSelected
+                            ? 'bg-cyan-950/60 border border-cyan-500/40 text-cyan-200'
+                            : 'hover:bg-white/5 border border-transparent text-slate-300'
+                        }`}
+                      >
+                        <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                          {tab.favicon ? (
+                            <img
+                              src={tab.favicon}
+                              alt=""
+                              className="w-4 h-4 shrink-0 rounded-sm"
+                              onError={(e) => {
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <Globe className="w-4 h-4 shrink-0 text-slate-400" />
+                          )}
+                          <div className="min-w-0 flex-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-xs font-bold truncate">
+                                {tab.title || tab.url || 'New Tab'}
+                              </span>
+                              {isActive && (
+                                <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">
+                                  CURRENT
+                                </span>
+                              )}
+                              {tab.is_pinned && (
+                                <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 shrink-0">
+                                  PINNED
+                                </span>
+                              )}
+                            </div>
+                            <div className="text-[10px] text-slate-500 truncate mt-0.5">
+                              {tab.url}
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Badges on Right */}
+                        <div className="flex items-center gap-1.5 shrink-0 ml-2">
+                          {group && cDef && (
+                            <span
+                              className={`flex items-center gap-1 px-2 py-0.5 rounded-lg text-[9px] font-bold border ${cDef.bg} ${cDef.border} ${cDef.text}`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: cDef.dot }} />
+                              {group.name}
+                            </span>
+                          )}
+                          {tab.profile_id && tab.profile_id !== 'profile_default' && (
+                            <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-700 text-slate-300 text-[9px] font-mono">
+                              {tab.profile_id.startsWith('agent_') ? 'AI' : tab.profile_id.replace('profile_', '')}
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              );
+            })()}
+          </div>
+        </div>
+      )}
+
       {/* Status Bar Footer */}
       <div className="h-6 bg-[#030712] border-t border-white/[0.06] px-3 flex items-center justify-between text-[10px] font-mono text-slate-400 shrink-0 select-none z-10">
         <div className="flex items-center gap-2">
@@ -3473,7 +4239,7 @@ export const BrowserView: React.FC = () => {
           </span>
         </div>
         <div className="flex items-center gap-3">
-          <span className="text-slate-500">Shortcuts: Ctrl+T, Ctrl+W, Ctrl+Shift+T, Ctrl+Tab, Ctrl+L</span>
+          <span className="text-slate-500">Shortcuts: Ctrl+T, Ctrl+W, Ctrl+Shift+T, Ctrl+Shift+A, Ctrl+Tab, Ctrl+L</span>
           <span className="text-slate-600">|</span>
           <span className="text-purple-400/80">Phase 4C Autonomous Agent Loop</span>
         </div>

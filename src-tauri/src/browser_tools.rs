@@ -829,6 +829,124 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["tab_id"]
             }),
         },
+        // Phase 5.6F-C: Tab Groups & Advanced Tab Management Tools
+        ToolDefinition {
+            name: "browser_tab_groups_list".to_string(),
+            description: "List all tab groups in current or specified profile.".to_string(),
+            category: "tab_groups".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Optional profile ID to filter groups."
+                    }
+                }
+            }),
+        },
+        ToolDefinition {
+            name: "browser_tab_group_create".to_string(),
+            description: "Create a new named and color-coded tab group within the active profile.".to_string(),
+            category: "tab_groups".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name for the tab group."
+                    },
+                    "color": {
+                        "type": "string",
+                        "enum": ["blue", "purple", "green", "yellow", "orange", "red", "gray"],
+                        "description": "Color identifier for the group header pill."
+                    },
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Optional profile ID (defaults to active profile)."
+                    }
+                },
+                "required": ["name"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_tab_group_rename".to_string(),
+            description: "Rename or recolor an existing tab group.".to_string(),
+            category: "tab_groups".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "group_id": {
+                        "type": "string",
+                        "description": "Target tab group ID."
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "New name for the tab group."
+                    },
+                    "color": {
+                        "type": "string",
+                        "enum": ["blue", "purple", "green", "yellow", "orange", "red", "gray"],
+                        "description": "Optional updated color identifier."
+                    }
+                },
+                "required": ["group_id", "name"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_tab_group_delete".to_string(),
+            description: "Delete a tab group. Tabs inside become ungrouped and are NOT closed. Requires approval.".to_string(),
+            category: "tab_groups".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "group_id": {
+                        "type": "string",
+                        "description": "Target tab group ID to delete."
+                    }
+                },
+                "required": ["group_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_tab_group_move_tab".to_string(),
+            description: "Move an open tab into a tab group of the same profile.".to_string(),
+            category: "tab_groups".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID to move."
+                    },
+                    "group_id": {
+                        "type": "string",
+                        "description": "Destination tab group ID."
+                    }
+                },
+                "required": ["tab_id", "group_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_tab_group_remove_tab".to_string(),
+            description: "Remove a tab from its group into the ungrouped tab area.".to_string(),
+            category: "tab_groups".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID to ungroup."
+                    }
+                },
+                "required": ["tab_id"]
+            }),
+        },
     ]
 }
 
@@ -2139,6 +2257,179 @@ pub async fn execute_browser_tool(
                     data: None,
                     error: Some(e),
                     error_code: Some("SAVE_PAGE_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        // --- Phase 5.6F-C: Tab Groups Tool Execution ---
+        "browser_tab_groups_list" => {
+            let profile_id = args.get("profile_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+
+            match crate::browser::browser_tab_group_list(profile_id, db_state).await {
+                Ok(groups) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "groups": groups })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("LIST_GROUPS_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_tab_group_create" => {
+            let name = args.get("name").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'name'.".to_string())?;
+            let color = args.get("color").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let profile_id = args.get("profile_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+
+            match crate::browser::browser_tab_group_create(name.to_string(), profile_id, color, db_state, state).await {
+                Ok(group) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "tab_group": group })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("CREATE_GROUP_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_tab_group_rename" => {
+            let group_id = args.get("group_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'group_id'.".to_string())?;
+            let name = args.get("name").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'name'.".to_string())?;
+            let color = args.get("color").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+
+            match crate::browser::browser_tab_group_rename(group_id.to_string(), name.to_string(), color, db_state).await {
+                Ok(group) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "tab_group": group })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("RENAME_GROUP_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_tab_group_delete" => {
+            let group_id = args.get("group_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'group_id'.".to_string())?;
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+
+            match crate::browser::browser_tab_group_delete(group_id.to_string(), db_state, state).await {
+                Ok(ok) => Ok(BrowserToolExecutionResult {
+                    success: ok,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "deleted": ok, "group_id": group_id })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("DELETE_GROUP_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_tab_group_move_tab" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+            let group_id = args.get("group_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'group_id'.".to_string())?;
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+
+            match crate::browser::browser_tab_group_move_tab(tab_id.to_string(), group_id.to_string(), db_state, state).await {
+                Ok(tab) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "tab": tab })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("MOVE_TO_GROUP_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_tab_group_remove_tab" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+
+            match crate::browser::browser_tab_group_remove_tab(tab_id.to_string(), state).await {
+                Ok(tab) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "tab": tab })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("REMOVE_FROM_GROUP_FAILED".to_string()),
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
             }

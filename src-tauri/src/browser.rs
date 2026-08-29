@@ -214,6 +214,18 @@ pub fn clear_global_reader_doc(tab_id: &str) {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserTabGroup {
+    pub id: String,
+    pub profile_id: String,
+    pub name: String,
+    pub color: String, // "blue", "purple", "green", "yellow", "orange", "red", "gray"
+    pub is_collapsed: bool,
+    pub position: i64,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserTabInfo {
     pub id: String,
     pub label: String,
@@ -231,6 +243,7 @@ pub struct BrowserTabInfo {
     pub zoom_level: f64,
     pub is_reader_mode: bool,
     pub is_pdf: bool,
+    pub group_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -750,6 +763,7 @@ pub async fn browser_create_tab(
         zoom_level: 1.0,
         is_reader_mode: false,
         is_pdf,
+        group_id: None,
     };
 
     {
@@ -901,7 +915,14 @@ pub async fn browser_reopen_last_closed_tab(
 
     if let Some(tab) = last_closed {
         let restored_id = format!("tab_{}", current_timestamp());
-        let res = browser_create_tab(app, restored_id, Some(tab.url), bounds, Some(tab.profile_id), state).await?;
+        let mut res = browser_create_tab(app, restored_id, Some(tab.url), bounds, Some(tab.profile_id), state.clone()).await?;
+        if let Some(gid) = tab.group_id {
+            let mut tabs = state.tabs.lock().unwrap();
+            if let Some(t) = tabs.iter_mut().find(|t| t.id == res.id) {
+                t.group_id = Some(gid.clone());
+                res.group_id = Some(gid);
+            }
+        }
         Ok(Some(res))
     } else {
         Ok(None)
@@ -922,7 +943,15 @@ pub async fn browser_duplicate_tab(
     }.ok_or_else(|| format!("Tab '{}' not found for duplication.", tab_id))?;
 
     let new_tab_id = format!("tab_{}", current_timestamp());
-    browser_create_tab(app, new_tab_id, Some(source_tab.url), bounds, Some(source_tab.profile_id), state).await
+    let mut new_tab = browser_create_tab(app, new_tab_id, Some(source_tab.url), bounds, Some(source_tab.profile_id), state.clone()).await?;
+    if let Some(gid) = source_tab.group_id {
+        let mut tabs = state.tabs.lock().unwrap();
+        if let Some(t) = tabs.iter_mut().find(|t| t.id == new_tab.id) {
+            t.group_id = Some(gid.clone());
+            new_tab.group_id = Some(gid);
+        }
+    }
+    Ok(new_tab)
 }
 
 #[tauri::command]
@@ -934,6 +963,9 @@ pub async fn browser_toggle_pin_tab(
     let tab = tabs.iter_mut().find(|t| t.id == tab_id)
         .ok_or_else(|| format!("Tab '{}' not found.", tab_id))?;
     tab.is_pinned = !tab.is_pinned;
+    if tab.is_pinned {
+        tab.group_id = None; // Pinned tabs cannot belong to ordinary tab groups (Step 12)
+    }
     Ok(tab.clone())
 }
 
@@ -1003,6 +1035,7 @@ pub async fn browser_save_session(
             is_pinned: t.is_pinned,
             is_active: t.is_active,
             position: i as i64,
+            group_id: t.group_id.clone(),
         }
     }).collect();
 
@@ -1033,6 +1066,7 @@ pub async fn browser_restore_session(
         let profile_id = tab.profile_id.clone();
         let url = tab.url.clone();
         let is_pinned = tab.is_pinned;
+        let group_id = tab.group_id.clone();
 
         match browser_create_tab(app.clone(), tab_id, Some(url), bounds.clone(), Some(profile_id), state.clone()).await {
             Ok(mut created) => {
@@ -1041,6 +1075,13 @@ pub async fn browser_restore_session(
                     if let Some(t) = tabs.iter_mut().find(|t| t.id == created.id) {
                         t.is_pinned = true;
                         created.is_pinned = true;
+                    }
+                }
+                if let Some(gid) = group_id {
+                    let mut tabs = state.tabs.lock().unwrap();
+                    if let Some(t) = tabs.iter_mut().find(|t| t.id == created.id) {
+                        t.group_id = Some(gid.clone());
+                        created.group_id = Some(gid);
                     }
                 }
                 restored.push(created);
@@ -2672,4 +2713,247 @@ pub async fn browser_reader_mode_get(
     tab_id: String,
 ) -> Result<Option<ReaderDocument>, String> {
     Ok(get_global_reader_doc(&tab_id))
+}
+
+// ============================================================================
+// Phase 5.6F-C: Tab Groups & Advanced Tab Management Commands
+// ============================================================================
+
+const ALLOWED_GROUP_COLORS: &[&str] = &["blue", "purple", "green", "yellow", "orange", "red", "gray"];
+
+fn validate_group_color(color: Option<&str>) -> String {
+    if let Some(c) = color {
+        let lower = c.trim().to_lowercase();
+        if ALLOWED_GROUP_COLORS.contains(&lower.as_str()) {
+            return lower;
+        }
+    }
+    "blue".to_string()
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_create(
+    name: String,
+    profile_id: Option<String>,
+    color: Option<String>,
+    db_state: tauri::State<'_, crate::db::DbState>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserTabGroup, String> {
+    let clean_name = name.trim().to_string();
+    if clean_name.is_empty() {
+        return Err("Tab group name cannot be empty.".to_string());
+    }
+
+    let target_profile = match profile_id {
+        Some(pid) if !pid.trim().is_empty() => pid.trim().to_string(),
+        _ => {
+            let tabs = state.tabs.lock().unwrap();
+            tabs.first().map(|t| t.profile_id.clone()).unwrap_or_else(|| "profile_default".to_string())
+        }
+    };
+
+    let group_color = validate_group_color(color.as_deref());
+    let now = current_timestamp();
+    let group_id = format!("group_{}_{}", now, now % 1000);
+
+    let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+    let existing = crate::db::list_browser_tab_groups(&conn, Some(&target_profile)).map_err(|e| e.to_string())?;
+    let next_pos = existing.len() as i64;
+
+    let record = crate::db::BrowserTabGroupRecord {
+        id: group_id.clone(),
+        profile_id: target_profile.clone(),
+        name: clean_name.clone(),
+        color: group_color.clone(),
+        is_collapsed: false,
+        position: next_pos,
+        created_at: now,
+        updated_at: now,
+    };
+
+    crate::db::upsert_browser_tab_group(&conn, &record).map_err(|e| e.to_string())?;
+
+    Ok(BrowserTabGroup {
+        id: group_id,
+        profile_id: target_profile,
+        name: clean_name,
+        color: group_color,
+        is_collapsed: false,
+        position: next_pos,
+        created_at: now,
+        updated_at: now,
+    })
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_rename(
+    group_id: String,
+    name: String,
+    color: Option<String>,
+    db_state: tauri::State<'_, crate::db::DbState>,
+) -> Result<BrowserTabGroup, String> {
+    let clean_name = name.trim().to_string();
+    if clean_name.is_empty() {
+        return Err("Tab group name cannot be empty.".to_string());
+    }
+
+    let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+    let mut group = crate::db::get_browser_tab_group(&conn, &group_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Tab group '{}' not found.", group_id))?;
+
+    group.name = clean_name;
+    if let Some(c) = color {
+        group.color = validate_group_color(Some(&c));
+    }
+    group.updated_at = current_timestamp();
+
+    crate::db::upsert_browser_tab_group(&conn, &group).map_err(|e| e.to_string())?;
+
+    Ok(BrowserTabGroup {
+        id: group.id,
+        profile_id: group.profile_id,
+        name: group.name,
+        color: group.color,
+        is_collapsed: group.is_collapsed,
+        position: group.position,
+        created_at: group.created_at,
+        updated_at: group.updated_at,
+    })
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_delete(
+    group_id: String,
+    db_state: tauri::State<'_, crate::db::DbState>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<bool, String> {
+    // 1. Ungroup all open tabs in memory without closing them (Step 5)
+    {
+        let mut tabs = state.tabs.lock().unwrap();
+        for t in tabs.iter_mut() {
+            if t.group_id.as_deref() == Some(&group_id) {
+                t.group_id = None;
+            }
+        }
+    }
+
+    // 2. Delete from DB
+    let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+    crate::db::delete_browser_tab_group(&conn, &group_id).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_list(
+    profile_id: Option<String>,
+    db_state: tauri::State<'_, crate::db::DbState>,
+) -> Result<Vec<BrowserTabGroup>, String> {
+    let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+    let records = crate::db::list_browser_tab_groups(&conn, profile_id.as_deref()).map_err(|e| e.to_string())?;
+    Ok(records.into_iter().map(|r| BrowserTabGroup {
+        id: r.id,
+        profile_id: r.profile_id,
+        name: r.name,
+        color: r.color,
+        is_collapsed: r.is_collapsed,
+        position: r.position,
+        created_at: r.created_at,
+        updated_at: r.updated_at,
+    }).collect())
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_set_collapsed(
+    group_id: String,
+    is_collapsed: bool,
+    db_state: tauri::State<'_, crate::db::DbState>,
+) -> Result<bool, String> {
+    let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+    crate::db::set_browser_tab_group_collapsed(&conn, &group_id, is_collapsed).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_move_tab(
+    tab_id: String,
+    group_id: String,
+    db_state: tauri::State<'_, crate::db::DbState>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserTabInfo, String> {
+    // 1. Verify group exists and get its profile_id
+    let group = {
+        let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+        crate::db::get_browser_tab_group(&conn, &group_id)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("Tab group '{}' not found.", group_id))?
+    };
+
+    // 2. Locate tab and enforce profile boundary & pinned restrictions (Step 3 & 12)
+    let mut tabs = state.tabs.lock().unwrap();
+    let tab = tabs.iter_mut().find(|t| t.id == tab_id)
+        .ok_or_else(|| format!("Tab '{}' not found.", tab_id))?;
+
+    if tab.is_pinned {
+        return Err("Pinned tabs cannot belong to a tab group.".to_string());
+    }
+
+    if tab.profile_id != group.profile_id {
+        return Err(format!(
+            "CROSS_PROFILE_MOVE_REJECTED: Tab profile '{}' does not match group profile '{}'.",
+            tab.profile_id, group.profile_id
+        ));
+    }
+
+    tab.group_id = Some(group_id);
+    Ok(tab.clone())
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_remove_tab(
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserTabInfo, String> {
+    let mut tabs = state.tabs.lock().unwrap();
+    let tab = tabs.iter_mut().find(|t| t.id == tab_id)
+        .ok_or_else(|| format!("Tab '{}' not found.", tab_id))?;
+
+    tab.group_id = None;
+    Ok(tab.clone())
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_reorder(
+    group_ids: Vec<String>,
+    db_state: tauri::State<'_, crate::db::DbState>,
+) -> Result<bool, String> {
+    let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+    for (i, gid) in group_ids.iter().enumerate() {
+        let _ = conn.execute(
+            "UPDATE browser_tab_groups SET position = ?1, updated_at = ?2 WHERE id = ?3",
+            rusqlite::params![i as i64, current_timestamp(), gid],
+        );
+    }
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn browser_tab_group_close_tabs(
+    app: AppHandle,
+    group_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<Vec<String>, String> {
+    let to_close: Vec<String> = {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter()
+            .filter(|t| t.group_id.as_deref() == Some(&group_id) && !t.is_pinned)
+            .map(|t| t.id.clone())
+            .collect()
+    };
+
+    let mut closed_ids = Vec::new();
+    for id in to_close {
+        let _ = browser_close_tab(app.clone(), id.clone(), state.clone()).await;
+        closed_ids.push(id);
+    }
+    Ok(closed_ids)
 }

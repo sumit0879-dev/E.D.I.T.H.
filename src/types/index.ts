@@ -249,6 +249,18 @@ export interface BrowserTabInfo {
   zoom_level?: number;
   is_reader_mode?: boolean;
   is_pdf?: boolean;
+  group_id?: string | null;
+}
+
+export interface BrowserTabGroup {
+  id: string;
+  profile_id: string;
+  name: string;
+  color: string;
+  is_collapsed: boolean;
+  position: number;
+  created_at: number;
+  updated_at: number;
 }
 
 export interface BrowserMultiStateInfo {

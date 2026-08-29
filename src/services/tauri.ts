@@ -44,6 +44,7 @@ import type {
   TabPrivacyStats,
   FindResult,
   ReaderDocument,
+  BrowserTabGroup,
 } from '../types';
 
 export const isTauri = () => {
@@ -1989,6 +1990,125 @@ export async function browserReaderModeGet(tabId: string): Promise<ReaderDocumen
     return null;
   }
   return await invoke<ReaderDocument | null>('browser_reader_mode_get', { tabId });
+}
+
+// --- Phase 5.6F-C: Tab Groups & Advanced Tab Management ---
+
+export async function browserTabGroupCreate(
+  name: string,
+  profileId?: string,
+  color?: string
+): Promise<BrowserTabGroup> {
+  if (!isTauri()) {
+    return {
+      id: `group_${Date.now()}`,
+      profile_id: profileId || 'profile_default',
+      name,
+      color: color || 'blue',
+      is_collapsed: false,
+      position: 0,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+  }
+  return await invoke<BrowserTabGroup>('browser_tab_group_create', { name, profileId, color });
+}
+
+export async function browserTabGroupRename(
+  groupId: string,
+  name: string,
+  color?: string
+): Promise<BrowserTabGroup> {
+  if (!isTauri()) {
+    return {
+      id: groupId,
+      profile_id: 'profile_default',
+      name,
+      color: color || 'blue',
+      is_collapsed: false,
+      position: 0,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+    };
+  }
+  return await invoke<BrowserTabGroup>('browser_tab_group_rename', { groupId, name, color });
+}
+
+export async function browserTabGroupDelete(groupId: string): Promise<boolean> {
+  if (!isTauri()) {
+    return true;
+  }
+  return await invoke<boolean>('browser_tab_group_delete', { groupId });
+}
+
+export async function browserTabGroupList(profileId?: string): Promise<BrowserTabGroup[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  return await invoke<BrowserTabGroup[]>('browser_tab_group_list', { profileId });
+}
+
+export async function browserTabGroupSetCollapsed(
+  groupId: string,
+  isCollapsed: boolean
+): Promise<boolean> {
+  if (!isTauri()) {
+    return true;
+  }
+  return await invoke<boolean>('browser_tab_group_set_collapsed', { groupId, isCollapsed });
+}
+
+export async function browserTabGroupMoveTab(
+  tabId: string,
+  groupId: string
+): Promise<BrowserTabInfo> {
+  if (!isTauri()) {
+    return {
+      id: tabId,
+      label: 'tab_sim',
+      url: 'https://example.com',
+      title: 'Example',
+      is_active: true,
+      is_loading: false,
+      can_go_back: false,
+      can_go_forward: false,
+      created_at: Date.now(),
+      group_id: groupId,
+    };
+  }
+  return await invoke<BrowserTabInfo>('browser_tab_group_move_tab', { tabId, groupId });
+}
+
+export async function browserTabGroupRemoveTab(tabId: string): Promise<BrowserTabInfo> {
+  if (!isTauri()) {
+    return {
+      id: tabId,
+      label: 'tab_sim',
+      url: 'https://example.com',
+      title: 'Example',
+      is_active: true,
+      is_loading: false,
+      can_go_back: false,
+      can_go_forward: false,
+      created_at: Date.now(),
+      group_id: null,
+    };
+  }
+  return await invoke<BrowserTabInfo>('browser_tab_group_remove_tab', { tabId });
+}
+
+export async function browserTabGroupReorder(groupIds: string[]): Promise<boolean> {
+  if (!isTauri()) {
+    return true;
+  }
+  return await invoke<boolean>('browser_tab_group_reorder', { groupIds });
+}
+
+export async function browserTabGroupCloseTabs(groupId: string): Promise<string[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  return await invoke<string[]>('browser_tab_group_close_tabs', { groupId });
 }
 
 

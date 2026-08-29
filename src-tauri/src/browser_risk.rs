@@ -517,6 +517,37 @@ impl BrowserRiskEngine {
             };
         }
 
+        // Phase 5.6F-C: Tab Groups & Advanced Tab Management Risk Rules
+        if tool == "browser_tab_groups_list" || tool == "browser_tab_group_create" || tool == "browser_tab_group_rename" || tool == "browser_tab_group_move_tab" || tool == "browser_tab_group_remove_tab" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Low,
+                decision: BrowserRiskDecision::Allow,
+                policy_code: "SAFE_TAB_GROUP_ACTION".to_string(),
+                reason: "Creating, renaming, moving, and organizing tab groups is a safe metadata operation.".to_string(),
+                user_explanation: "Action permitted.".to_string(),
+            };
+        }
+
+        if tool == "browser_tab_group_delete" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Medium,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "TAB_GROUP_DELETE_APPROVAL".to_string(),
+                reason: "Deleting a user tab group requires confirmation (tabs will be ungrouped).".to_string(),
+                user_explanation: "Approval required: the agent requests to delete a tab group.".to_string(),
+            };
+        }
+
+        if tool == "browser_tab_group_close_tabs" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::High,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "CLOSE_GROUP_TABS_APPROVAL".to_string(),
+                reason: "Bulk closing all tabs in a group is a high-consequence action requiring operator approval.".to_string(),
+                user_explanation: "Approval required: this action will close all tabs inside the specified group.".to_string(),
+            };
+        }
+
         if tool.contains("cookie") || tool.contains("credential") || tool.contains("password") || tool.contains("export_storage") {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Blocked,
