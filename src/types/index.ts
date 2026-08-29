@@ -438,6 +438,8 @@ export interface BrowserSubtaskResult {
   summary: string;
   evidence: string[];
   steps_taken: number;
+  started_at: number;
+  completed_at: number;
   duration_ms: number;
   error?: string;
 }

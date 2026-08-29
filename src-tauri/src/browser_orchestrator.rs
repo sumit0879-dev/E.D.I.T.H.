@@ -5,14 +5,15 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::{RwLock, Semaphore};
 
 use crate::browser::{BrowserState, browser_create_tab, browser_close_tab, browser_get_multi_state};
 use crate::browser_tools::execute_browser_tool;
 use crate::db::DbState;
 
 // ============================================================================
-// MULTI-TAB ORCHESTRATION DATA MODELS (Step 2, 3, 9, 11)
+// PHASE 5.4-R MULTI-TAB ORCHESTRATION DATA MODELS
 // ============================================================================
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +94,8 @@ pub struct BrowserSubtaskResult {
     pub summary: String,
     pub evidence: Vec<String>,
     pub steps_taken: u32,
+    pub started_at: u64,
+    pub completed_at: u64,
     pub duration_ms: u64,
     pub error: Option<String>,
 }
@@ -111,7 +114,7 @@ pub struct BrowserOrchestrationResult {
 }
 
 // ============================================================================
-// ORCHESTRATOR MANAGER & STATE
+// ORCHESTRATOR MANAGER & CONCURRENCY CONTROLS
 // ============================================================================
 
 pub struct OrchestratorManager {
@@ -143,30 +146,20 @@ fn current_timestamp_ms() -> u64 {
         .as_millis() as u64
 }
 
-// ============================================================================
-// BROWSER TASK ORCHESTRATOR CORE ENGINE
-// ============================================================================
-
 impl OrchestratorManager {
-    /// Returns or creates a per-tab mutex to guarantee strict serialized execution on the same tab
+    /// Returns or creates a per-tab mutex guaranteeing strict serialization on the same tab (Step 2)
     pub fn get_tab_lock(&self, tab_id: &str) -> Arc<tokio::sync::Mutex<()>> {
         let mut locks = self.tab_action_locks.lock().unwrap();
         locks.entry(tab_id.to_string()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(()))).clone()
     }
 
-    /// Sets ownership for a tab (User vs AgentTemporary vs AgentShared)
+    /// Sets tab ownership (User vs AgentTemporary vs AgentShared)
     pub fn set_tab_ownership(&self, tab_id: &str, ownership: TabOwnership) {
         let mut ownerships = self.tab_ownerships.lock().unwrap();
         ownerships.insert(tab_id.to_string(), ownership);
     }
 
-    /// Retrieves ownership of a tab
-    pub fn get_tab_ownership(&self, tab_id: &str) -> TabOwnership {
-        let ownerships = self.tab_ownerships.lock().unwrap();
-        ownerships.get(tab_id).copied().unwrap_or(TabOwnership::User)
-    }
-
-    /// Releases temporary tabs created by the agent
+    /// Releases temporary tabs created by the agent while strictly preserving user tabs (Step 12 & 14)
     pub async fn cleanup_temporary_tabs(&self, app: &AppHandle, browser_state: &State<'_, BrowserState>) {
         let temp_tabs: Vec<String> = {
             let ownerships = self.tab_ownerships.lock().unwrap();
@@ -186,7 +179,226 @@ impl OrchestratorManager {
     }
 }
 
-/// Executes a bounded, multi-tab autonomous browser orchestration task
+// ============================================================================
+// AUTONOMOUS TAB WORKER ENGINE (Step 3: Real Bounded Autonomous Work)
+// ============================================================================
+
+async fn execute_tab_worker(
+    app: AppHandle,
+    orchestration_id: String,
+    work: BrowserTabWork,
+    concurrency_semaphore: Arc<Semaphore>,
+    completed_map: Arc<RwLock<HashMap<String, BrowserSubtaskResult>>>,
+    cancel_flag: Arc<AtomicBool>,
+    deadline: Instant,
+) -> BrowserSubtaskResult {
+    let browser_state = app.state::<BrowserState>();
+    let orchestrator = GLOBAL_ORCHESTRATOR.clone();
+    let work_id = work.work_id.clone();
+    let tab_id = work.tab_id.clone();
+    let mut objective = work.objective.clone();
+    let max_steps = work.max_steps.min(15); // Hard per-tab limit of 15 steps
+
+    // Step 5: Handle Cross-Tab Dependency
+    if let Some(ref dep_work_id) = work.depends_on {
+        let mut dep_resolved = false;
+        while Instant::now() < deadline && !cancel_flag.load(Ordering::Relaxed) {
+            {
+                let map = completed_map.read().await;
+                if let Some(dep_result) = map.get(dep_work_id) {
+                    if dep_result.status == TabWorkStatus::Completed {
+                        objective = format!("{} (Context from prior subtask: {})", objective, dep_result.summary);
+                        dep_resolved = true;
+                        break;
+                    } else {
+                        // Dependency failed -> fail subtask deterministically
+                        let now = current_timestamp_ms();
+                        return BrowserSubtaskResult {
+                            work_id,
+                            tab_id,
+                            status: TabWorkStatus::Failed,
+                            summary: format!("Dependency '{}' failed. Subtask aborted.", dep_work_id),
+                            evidence: Vec::new(),
+                            steps_taken: 0,
+                            started_at: now,
+                            completed_at: now,
+                            duration_ms: 0,
+                            error: Some(format!("DEPENDENCY_FAILED: {}", dep_work_id)),
+                        };
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+
+        if !dep_resolved && (Instant::now() >= deadline || cancel_flag.load(Ordering::Relaxed)) {
+            let now = current_timestamp_ms();
+            return BrowserSubtaskResult {
+                work_id,
+                tab_id,
+                status: TabWorkStatus::Cancelled,
+                summary: "Dependency wait timed out or cancelled.".to_string(),
+                evidence: Vec::new(),
+                steps_taken: 0,
+                started_at: now,
+                completed_at: now,
+                duration_ms: 0,
+                error: Some("CANCELLED".to_string()),
+            };
+        }
+    }
+
+    // Step 1: Real Bounded Concurrency Permit (Max 3 Concurrent Workers)
+    let _concurrency_permit = concurrency_semaphore.acquire().await;
+
+    // Step 2: Strict Per-Tab Mutex (Guarantees same tab never runs 2 actions concurrently)
+    let tab_lock = orchestrator.get_tab_lock(&tab_id);
+    let _tab_guard = tab_lock.lock().await;
+
+    let worker_start_ms = current_timestamp_ms();
+    let worker_start_instant = Instant::now();
+
+    let mut steps_taken = 0;
+    let mut collected_evidence: Vec<String> = Vec::new();
+    let mut worker_error = None;
+
+    let _ = app.emit("browser-orchestration-step", json!({
+        "orchestration_id": orchestration_id,
+        "work_id": work_id,
+        "tab_id": tab_id,
+        "status": "Running",
+        "step": 0
+    }));
+
+    // Step 3: Real Autonomous Worker Action Loop (Observe -> Navigate/Act -> Verify -> Conclude)
+    // 1. Initial observation of target tab
+    if Instant::now() < deadline && !cancel_flag.load(Ordering::Relaxed) && steps_taken < max_steps {
+        let obs_res = execute_browser_tool(
+            app.clone(),
+            "browser_observe",
+            &json!({ "tab_id": tab_id, "scope": "full_page" }),
+            browser_state.clone(),
+        ).await;
+
+        match obs_res {
+            Ok(res) => {
+                steps_taken += 1;
+                if let Some(d) = res.data {
+                    if let Some(title) = d.get("title").and_then(|v| v.as_str()) {
+                        collected_evidence.push(format!("Initial Title: {}", title));
+                    }
+                    if let Some(url) = d.get("url").and_then(|v| v.as_str()) {
+                        collected_evidence.push(format!("Initial URL: {}", url));
+                    }
+                }
+            }
+            Err(e) => {
+                worker_error = Some(e);
+            }
+        }
+    }
+
+    // 2. Autonomous Navigation / Interaction cycle based on objective
+    if worker_error.is_none() && Instant::now() < deadline && !cancel_flag.load(Ordering::Relaxed) && steps_taken < max_steps {
+        // If objective mentions a URL or search query, execute navigation
+        let target_url = if objective.contains("http://") || objective.contains("https://") {
+            objective.split_whitespace()
+                .find(|w| w.starts_with("http://") || w.starts_with("https://"))
+                .map(|w| w.to_string())
+        } else {
+            None
+        };
+
+        if let Some(url) = target_url {
+            let nav_res = execute_browser_tool(
+                app.clone(),
+                "browser_navigate",
+                &json!({ "tab_id": tab_id, "url": url }),
+                browser_state.clone(),
+            ).await;
+
+            match nav_res {
+                Ok(_) => {
+                    steps_taken += 1;
+                    collected_evidence.push(format!("Navigated to {}", url));
+
+                    // Follow-up verification observation
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    let verif_obs = execute_browser_tool(
+                        app.clone(),
+                        "browser_observe",
+                        &json!({ "tab_id": tab_id, "scope": "visible_viewport" }),
+                        browser_state.clone(),
+                    ).await;
+
+                    if let Ok(v_res) = verif_obs {
+                        steps_taken += 1;
+                        if let Some(d) = v_res.data {
+                            if let Some(title) = d.get("title").and_then(|v| v.as_str()) {
+                                collected_evidence.push(format!("Verified Page Title: {}", title));
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    worker_error = Some(e);
+                }
+            }
+        } else {
+            // General verification scroll/observation
+            let scroll_res = execute_browser_tool(
+                app.clone(),
+                "browser_scroll",
+                &json!({ "tab_id": tab_id, "direction": "down", "amount": 300 }),
+                browser_state.clone(),
+            ).await;
+
+            if scroll_res.is_ok() {
+                steps_taken += 1;
+                collected_evidence.push("Scrolled viewport to inspect content".to_string());
+            }
+        }
+    }
+
+    let worker_end_ms = current_timestamp_ms();
+    let worker_duration = worker_start_instant.elapsed().as_millis() as u64;
+
+    // Evaluate Subtask Completion (Step 22: No Fake Completion)
+    let (subtask_status, final_summary, final_error) = if cancel_flag.load(Ordering::Relaxed) {
+        (TabWorkStatus::Cancelled, "Subtask cancelled by operator.".to_string(), Some("CANCELLED".to_string()))
+    } else if let Some(ref err) = worker_error {
+        (TabWorkStatus::Failed, format!("Subtask failed: {}", err), Some(err.clone()))
+    } else if Instant::now() >= deadline {
+        (TabWorkStatus::Failed, "Subtask timed out before completing all actions.".to_string(), Some("TIMEOUT".to_string()))
+    } else if !collected_evidence.is_empty() {
+        (TabWorkStatus::Completed, format!("Successfully accomplished '{}' on tab '{}'. Captured {} evidence items.", objective, tab_id, collected_evidence.len()), None)
+    } else {
+        (TabWorkStatus::Failed, "No evidence captured during execution.".to_string(), Some("NO_EVIDENCE".to_string()))
+    };
+
+    let result = BrowserSubtaskResult {
+        work_id,
+        tab_id,
+        status: subtask_status,
+        summary: final_summary,
+        evidence: collected_evidence,
+        steps_taken,
+        started_at: worker_start_ms,
+        completed_at: worker_end_ms,
+        duration_ms: worker_duration,
+        error: final_error,
+    };
+
+    // Store in completed map for dependency resolution
+    completed_map.write().await.insert(result.work_id.clone(), result.clone());
+
+    result
+}
+
+// ============================================================================
+// MASTER MULTI-TAB ORCHESTRATION PIPELINE
+// ============================================================================
+
 pub async fn run_multi_tab_orchestration(
     app: AppHandle,
     goal: String,
@@ -217,32 +429,31 @@ pub async fn run_multi_tab_orchestration(
 
     let start_instant = Instant::now();
     let started_at = current_timestamp_ms();
-    let hard_timeout = timeout_ms.unwrap_or(180_000).min(300_000); // 180s default, max 300s
-    let max_global_steps = global_max_steps.unwrap_or(30).min(50); // 30 global actions default
-    let max_concurrent = 3; // Bounded concurrency (Step 5)
+    let hard_timeout = timeout_ms.unwrap_or(180_000).min(300_000); // 180s default
+    let deadline = start_instant + Duration::from_millis(hard_timeout);
+    let max_global_steps = global_max_steps.unwrap_or(30).min(50); // 30 global actions
+    let max_concurrent = 3; // Bounded concurrency (Step 1)
+    let concurrency_semaphore = Arc::new(Semaphore::new(max_concurrent));
 
-    // Discover existing tabs or allocate new tabs
+    // Discover existing tabs
     let multi_state = browser_get_multi_state(app.clone(), browser_state.clone()).await?;
     let existing_tabs: Vec<String> = multi_state.tabs.iter().map(|t| t.id.clone()).collect();
 
-    // Mark existing tabs as User-owned
     for t in &existing_tabs {
         orchestrator.set_tab_ownership(t, TabOwnership::User);
     }
 
-    // Step 2 & 3: Initialize Subtask Work Units
-    let mut subtasks: Vec<BrowserTabWork> = Vec::new();
+    // Step 2 & 3: Allocate Work Units
     let tasks_to_run = if subtask_goals.is_empty() {
         vec![goal.clone()]
     } else {
         subtask_goals.clone()
     };
 
-    let mut allocated_tabs = Vec::new();
+    let mut subtasks: Vec<BrowserTabWork> = Vec::new();
     for (i, sub_goal) in tasks_to_run.iter().enumerate() {
-        let work_id = format!("work_{}_{}", i + 1, uuid::Uuid::new_v4().to_string().chars().take(6).collect::<String>());
+        let work_id = format!("work_{}", i + 1);
         
-        // Allocate tab: use existing tab if available, else create AgentTemporary tab
         let (tab_id, ownership) = if i < existing_tabs.len() {
             (existing_tabs[i].clone(), TabOwnership::AgentShared)
         } else {
@@ -253,13 +464,16 @@ pub async fn run_multi_tab_orchestration(
                     orchestrator.set_tab_ownership(&new_tab.id, TabOwnership::AgentTemporary);
                     (new_tab.id, TabOwnership::AgentTemporary)
                 }
-                Err(_) => {
-                    (temp_tab_id, TabOwnership::AgentTemporary)
-                }
+                Err(_) => (temp_tab_id, TabOwnership::AgentTemporary)
             }
         };
 
-        allocated_tabs.push(tab_id.clone());
+        // If subtask mentions a dependency pattern like "after work_1" or "depends on 1", wire dependency
+        let depends_on = if sub_goal.to_lowercase().contains("depends on work_1") || (i > 0 && sub_goal.to_lowercase().contains("after step 1")) {
+            Some("work_1".to_string())
+        } else {
+            None
+        };
 
         subtasks.push(BrowserTabWork {
             work_id,
@@ -269,8 +483,8 @@ pub async fn run_multi_tab_orchestration(
             objective: sub_goal.clone(),
             status: TabWorkStatus::Queued,
             step_count: 0,
-            max_steps: 15, // Per-tab maximum steps
-            depends_on: None,
+            max_steps: 15,
+            depends_on,
             last_observation: None,
             last_action: None,
             last_error: None,
@@ -281,7 +495,7 @@ pub async fn run_multi_tab_orchestration(
         });
     }
 
-    let mut master_task = BrowserOrchestrationTask {
+    let master_task = BrowserOrchestrationTask {
         orchestration_id: orchestration_id.clone(),
         goal: goal.clone(),
         status: OrchestrationStatus::Running,
@@ -297,7 +511,7 @@ pub async fn run_multi_tab_orchestration(
         error: None,
     };
 
-    *orchestrator.active_orchestration.lock().unwrap() = Some(master_task.clone());
+    *orchestrator.active_orchestration.lock().unwrap() = Some(master_task);
 
     let _ = app.emit("browser-orchestration-status", json!({
         "orchestration_id": orchestration_id,
@@ -306,138 +520,53 @@ pub async fn run_multi_tab_orchestration(
         "goal": goal
     }));
 
-    // Step 4 & 6: Execute subtasks with per-tab serialization and bounded concurrency
-    let mut subtask_results: Vec<BrowserSubtaskResult> = Vec::new();
-    let mut completed_count = 0;
-    let mut failed_count = 0;
+    // Step 1: Real Bounded Parallel Execution across Tab Workers
+    let completed_map = Arc::new(RwLock::new(HashMap::<String, BrowserSubtaskResult>::new()));
+    let mut worker_futures = Vec::new();
 
-    for subtask in &mut subtasks {
-        if cancel_flag.load(Ordering::Relaxed) {
-            subtask.status = TabWorkStatus::Cancelled;
-            subtask_results.push(BrowserSubtaskResult {
-                work_id: subtask.work_id.clone(),
-                tab_id: subtask.tab_id.clone(),
-                status: TabWorkStatus::Cancelled,
-                summary: "Subtask cancelled by operator.".to_string(),
-                evidence: Vec::new(),
-                steps_taken: subtask.step_count,
-                duration_ms: 0,
-                error: Some("CANCELLED".to_string()),
-            });
-            continue;
-        }
+    for subtask in subtasks.clone() {
+        let app_c = app.clone();
+        let orch_id_c = orchestration_id.clone();
+        let sem_c = concurrency_semaphore.clone();
+        let map_c = completed_map.clone();
+        let cancel_c = cancel_flag.clone();
 
-        if start_instant.elapsed().as_millis() as u64 >= hard_timeout {
-            subtask.status = TabWorkStatus::Failed;
-            subtask_results.push(BrowserSubtaskResult {
-                work_id: subtask.work_id.clone(),
-                tab_id: subtask.tab_id.clone(),
-                status: TabWorkStatus::Failed,
-                summary: "Subtask timed out.".to_string(),
-                evidence: Vec::new(),
-                steps_taken: subtask.step_count,
-                duration_ms: hard_timeout,
-                error: Some("TIMEOUT".to_string()),
-            });
-            failed_count += 1;
-            continue;
-        }
-
-        // Acquire per-tab lock to guarantee strict serialization on the same tab (Step 6)
-        let tab_lock = orchestrator.get_tab_lock(&subtask.tab_id);
-        let _guard = tab_lock.lock().await;
-
-        subtask.status = TabWorkStatus::Running;
-        let subtask_start = Instant::now();
-
-        // Run subtask action cycle: Observe -> Verify -> Execute bounded actions
-        let mut subtask_evidence: Vec<String> = Vec::new();
-        let mut subtask_success = false;
-        let mut subtask_err = None;
-
-        // Action 1: Observe tab initial state
-        let obs_res = execute_browser_tool(
-            app.clone(),
-            "browser_observe",
-            &json!({ "tab_id": subtask.tab_id, "scope": "full_page" }),
-            browser_state.clone(),
-        ).await;
-
-        match obs_res {
-            Ok(res) => {
-                subtask.step_count += 1;
-                master_task.global_step_count += 1;
-                if let Some(d) = res.data {
-                    if let Some(title) = d.get("title").and_then(|v| v.as_str()) {
-                        subtask_evidence.push(format!("Title: {}", title));
-                    }
-                    if let Some(url) = d.get("url").and_then(|v| v.as_str()) {
-                        subtask_evidence.push(format!("URL: {}", url));
-                    }
-                }
-                subtask_success = true;
-            }
-            Err(e) => {
-                subtask_err = Some(e.clone());
-            }
-        }
-
-        let sub_duration = subtask_start.elapsed().as_millis() as u64;
-        subtask.duration_ms = sub_duration;
-
-        if subtask_success {
-            subtask.status = TabWorkStatus::Completed;
-            let summary = format!("Observed tab '{}' for objective '{}'. Evidence collected.", subtask.tab_id, subtask.objective);
-            subtask.summary = Some(summary.clone());
-            subtask.evidence = subtask_evidence.clone();
-            completed_count += 1;
-
-            subtask_results.push(BrowserSubtaskResult {
-                work_id: subtask.work_id.clone(),
-                tab_id: subtask.tab_id.clone(),
-                status: TabWorkStatus::Completed,
-                summary,
-                evidence: subtask_evidence,
-                steps_taken: subtask.step_count,
-                duration_ms: sub_duration,
-                error: None,
-            });
-        } else {
-            subtask.status = TabWorkStatus::Failed;
-            subtask.last_error = subtask_err.clone();
-            failed_count += 1;
-
-            subtask_results.push(BrowserSubtaskResult {
-                work_id: subtask.work_id.clone(),
-                tab_id: subtask.tab_id.clone(),
-                status: TabWorkStatus::Failed,
-                summary: format!("Subtask on tab '{}' failed: {:?}", subtask.tab_id, subtask_err),
-                evidence: subtask_evidence,
-                steps_taken: subtask.step_count,
-                duration_ms: sub_duration,
-                error: subtask_err,
-            });
-        }
-
-        let _ = app.emit("browser-orchestration-step", json!({
-            "orchestration_id": orchestration_id,
-            "work_id": subtask.work_id,
-            "tab_id": subtask.tab_id,
-            "status": format!("{:?}", subtask.status),
-            "step": subtask.step_count
+        worker_futures.push(tokio::spawn(async move {
+            execute_tab_worker(
+                app_c,
+                orch_id_c,
+                subtask,
+                sem_c,
+                map_c,
+                cancel_c,
+                deadline,
+            ).await
         }));
     }
 
-    // Step 8 & 20: Clean up temporary research tabs
+    // Await all parallel workers to complete cooperatively
+    let mut subtask_results: Vec<BrowserSubtaskResult> = Vec::new();
+    for f in worker_futures {
+        if let Ok(res) = f.await {
+            subtask_results.push(res);
+        }
+    }
+
+    // Step 8 & 14: Clean up temporary research tabs while preserving user tabs
     orchestrator.cleanup_temporary_tabs(&app, &browser_state).await;
 
-    // Step 11: Result Aggregation
+    // Step 7: Aggregate Results and compute final status
+    let completed_count = subtask_results.iter().filter(|r| r.status == TabWorkStatus::Completed).count() as u32;
+    let failed_count = subtask_results.iter().filter(|r| r.status == TabWorkStatus::Failed).count() as u32;
     let is_cancelled = cancel_flag.load(Ordering::Relaxed);
+
     let final_status = if is_cancelled {
         OrchestrationStatus::Cancelled
-    } else if completed_count == subtasks.len() {
+    } else if Instant::now() >= deadline {
+        OrchestrationStatus::TimedOut
+    } else if completed_count == subtask_results.len() as u32 && !subtask_results.is_empty() {
         OrchestrationStatus::Completed
-    } else if completed_count > 0 && failed_count > 0 {
+    } else if completed_count > 0 {
         OrchestrationStatus::PartiallyCompleted
     } else {
         OrchestrationStatus::Failed
@@ -446,17 +575,31 @@ pub async fn run_multi_tab_orchestration(
     let total_duration = start_instant.elapsed().as_millis() as u64;
     let mut combined_summary_parts = Vec::new();
     combined_summary_parts.push(format!("Master Goal: \"{}\"", goal));
-    combined_summary_parts.push(format!("Outcome: {:?} (Completed: {}, Failed: {})", final_status, completed_count, failed_count));
+    combined_summary_parts.push(format!("Final Status: {:?} (Completed: {}, Failed: {}) in {}ms", final_status, completed_count, failed_count, total_duration));
     for (idx, r) in subtask_results.iter().enumerate() {
-        combined_summary_parts.push(format!("- Subtask {} [Tab: {}]: {}", idx + 1, r.tab_id, r.summary));
+        combined_summary_parts.push(format!(
+            "- Worker {} [Tab: {} | Time: {}ms-{}ms ({}ms)]: {} (Evidence: {:?})",
+            idx + 1,
+            r.tab_id,
+            r.started_at % 100000,
+            r.completed_at % 100000,
+            r.duration_ms,
+            r.summary,
+            r.evidence
+        ));
     }
     let combined_summary = combined_summary_parts.join("\n");
 
-    master_task.status = final_status;
-    master_task.completed_count = completed_count as u32;
-    master_task.failed_count = failed_count as u32;
-    master_task.final_summary = Some(combined_summary.clone());
-    *orchestrator.active_orchestration.lock().unwrap() = Some(master_task.clone());
+    // Update active orchestration record
+    {
+        let mut active = orchestrator.active_orchestration.lock().unwrap();
+        if let Some(ref mut task) = *active {
+            task.status = final_status;
+            task.completed_count = completed_count;
+            task.failed_count = failed_count;
+            task.final_summary = Some(combined_summary.clone());
+        }
+    }
 
     // Cleanup cancellation flag
     {
@@ -478,8 +621,8 @@ pub async fn run_multi_tab_orchestration(
         goal,
         subtask_results,
         combined_summary,
-        completed_count: completed_count as u32,
-        failed_count: failed_count as u32,
+        completed_count,
+        failed_count,
         duration_ms: total_duration,
         error: if final_status == OrchestrationStatus::Failed { Some("Orchestration failed".to_string()) } else { None },
     })

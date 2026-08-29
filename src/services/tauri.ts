@@ -1278,6 +1278,8 @@ export async function browserOrchestratorRunTask(
           summary: 'Simulated subtask 1 completed.',
           evidence: ['Title: Simulated'],
           steps_taken: 1,
+          started_at: Date.now() - 50,
+          completed_at: Date.now(),
           duration_ms: 50,
         },
       ],
