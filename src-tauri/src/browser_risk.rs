@@ -362,7 +362,7 @@ impl BrowserRiskEngine {
             };
         }
 
-        if tool == "browser_history_delete" || tool == "browser_bookmark_remove" {
+        if tool == "browser_history_delete" || tool == "browser_bookmark_remove" || tool == "browser_bookmark_delete" || tool == "browser_bookmarks_delete" || tool == "browser_bookmark_folder_delete" || tool == "browser_bookmarks_delete_folder" || (tool.contains("bookmark") && tool.contains("delete")) || (tool.contains("bookmark") && tool.contains("remove")) {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Medium,
                 decision: BrowserRiskDecision::RequireApproval,
