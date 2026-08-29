@@ -403,16 +403,6 @@ impl BrowserRiskEngine {
             };
         }
 
-        if tool == "browser_download_start" || tool.contains("download") {
-            return BrowserRiskAssessment {
-                risk_level: BrowserRiskLevel::Medium,
-                decision: BrowserRiskDecision::RequireApproval,
-                policy_code: "FILE_DOWNLOAD_ACTION".to_string(),
-                reason: "File download requires operator confirmation to prevent untrusted payload retrieval.".to_string(),
-                user_explanation: "Approval required: the agent requests to download an external file to disk.".to_string(),
-            };
-        }
-
         if tool.contains("execute") || tool.contains("run_download") {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Blocked,
@@ -420,6 +410,16 @@ impl BrowserRiskEngine {
                 policy_code: "BLOCKED_BINARY_EXECUTION".to_string(),
                 reason: "Automatic execution of downloaded binaries is strictly blocked for security.".to_string(),
                 user_explanation: "Blocked: autonomous execution of downloaded files is prohibited.".to_string(),
+            };
+        }
+
+        if tool == "browser_download_start" || tool.contains("download") {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Medium,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "FILE_DOWNLOAD_ACTION".to_string(),
+                reason: "File download requires operator confirmation to prevent untrusted payload retrieval.".to_string(),
+                user_explanation: "Approval required: the agent requests to download an external file to disk.".to_string(),
             };
         }
 
