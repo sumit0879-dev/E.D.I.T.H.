@@ -141,6 +141,14 @@ pub struct DownloadItemInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FindResult {
+    pub query: String,
+    pub match_found: bool,
+    pub matches_count: u32,
+    pub active_match_ordinal: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserTabInfo {
     pub id: String,
     pub label: String,
@@ -155,6 +163,7 @@ pub struct BrowserTabInfo {
     pub created_at: u64,
     pub profile_id: String,
     pub is_pinned: bool,
+    pub zoom_level: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -619,6 +628,7 @@ pub async fn browser_create_tab(
         created_at: current_timestamp(),
         profile_id: target_profile_id,
         is_pinned: false,
+        zoom_level: 1.0,
     };
 
     {
@@ -1993,4 +2003,195 @@ pub async fn browser_get_visible_text(
     };
     let obs = browser_observe_tab(app, active_id, None, state).await?;
     Ok(obs.visible_text)
+}
+
+// ============================================================================
+// Phase 5.6F-A: Advanced Browser Utilities (Find, Zoom, Print, Link Actions)
+// ============================================================================
+
+#[tauri::command]
+pub async fn browser_find_in_page(
+    app: AppHandle,
+    tab_id: String,
+    query: String,
+    forward: Option<bool>,
+    case_sensitive: Option<bool>,
+) -> Result<FindResult, String> {
+    let label = get_tab_label(&tab_id);
+    let wv = app.get_webview(&label)
+        .ok_or_else(|| format!("Webview '{}' not found for tab '{}'", label, tab_id))?;
+
+    let q = query.trim();
+    if q.is_empty() {
+        let _ = wv.eval("window.getSelection() && window.getSelection().removeAllRanges();");
+        return Ok(FindResult {
+            query: String::new(),
+            match_found: false,
+            matches_count: 0,
+            active_match_ordinal: 0,
+        });
+    }
+
+    let fwd = forward.unwrap_or(true);
+    let cs = case_sensitive.unwrap_or(false);
+    let escaped_q = serde_json::to_string(q).unwrap_or_else(|_| format!("\"{}\"", q));
+
+    let script = format!(
+        r#"
+        (function() {{
+            try {{
+                var q = {escaped_q};
+                var fwd = {fwd};
+                var cs = {cs};
+                var found = window.find(q, cs, !fwd, true, false, false, false);
+                var count = 0;
+                try {{
+                    var escaped = q.replace(/[.*+?^${{}}()|[\]\\]/g, '\\$&');
+                    var regex = new RegExp(escaped, cs ? 'g' : 'gi');
+                    var text = document.body ? (document.body.innerText || '') : '';
+                    var matches = text.match(regex);
+                    count = matches ? matches.length : (found ? 1 : 0);
+                }} catch(e) {{
+                    count = found ? 1 : 0;
+                }}
+                window.__EDITH_FIND_RESULT__ = {{
+                    query: q,
+                    match_found: found,
+                    matches_count: count,
+                    active_match_ordinal: found ? 1 : 0
+                }};
+            }} catch(e) {{
+                window.__EDITH_FIND_RESULT__ = {{
+                    query: {escaped_q},
+                    match_found: false,
+                    matches_count: 0,
+                    active_match_ordinal: 0
+                }};
+            }}
+        }})();
+        "#
+    );
+
+    wv.eval(&script).map_err(|e| format!("Failed to execute find: {}", e))?;
+
+    Ok(FindResult {
+        query: q.to_string(),
+        match_found: true,
+        matches_count: 1,
+        active_match_ordinal: 1,
+    })
+}
+
+#[tauri::command]
+pub async fn browser_clear_find(
+    app: AppHandle,
+    tab_id: String,
+) -> Result<bool, String> {
+    let label = get_tab_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        let _ = wv.eval("window.getSelection() && window.getSelection().removeAllRanges();");
+    }
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn browser_zoom_set(
+    app: AppHandle,
+    tab_id: String,
+    level: f64,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<f64, String> {
+    let clamped = level.max(0.5).min(2.0);
+    let label = get_tab_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        let script = format!(
+            "document.documentElement.style.zoom = '{:.2}'; document.body && (document.body.style.zoom = '{:.2}');",
+            clamped, clamped
+        );
+        let _ = wv.eval(&script);
+    }
+
+    {
+        let mut tabs = state.tabs.lock().unwrap();
+        if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.zoom_level = clamped;
+        }
+    }
+
+    Ok(clamped)
+}
+
+#[tauri::command]
+pub async fn browser_zoom_in(
+    app: AppHandle,
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<f64, String> {
+    let current = {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter().find(|t| t.id == tab_id).map(|t| t.zoom_level).unwrap_or(1.0)
+    };
+    let next = (current + 0.1).min(2.0);
+    browser_zoom_set(app, tab_id, next, state).await
+}
+
+#[tauri::command]
+pub async fn browser_zoom_out(
+    app: AppHandle,
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<f64, String> {
+    let current = {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter().find(|t| t.id == tab_id).map(|t| t.zoom_level).unwrap_or(1.0)
+    };
+    let next = (current - 0.1).max(0.5);
+    browser_zoom_set(app, tab_id, next, state).await
+}
+
+#[tauri::command]
+pub async fn browser_zoom_reset(
+    app: AppHandle,
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<f64, String> {
+    browser_zoom_set(app, tab_id, 1.0, state).await
+}
+
+#[tauri::command]
+pub async fn browser_print_tab(
+    app: AppHandle,
+    tab_id: String,
+) -> Result<bool, String> {
+    let label = get_tab_label(&tab_id);
+    let wv = app.get_webview(&label)
+        .ok_or_else(|| format!("Webview '{}' not found for tab '{}'", label, tab_id))?;
+
+    wv.eval("window.print();").map_err(|e| format!("Failed to initiate print: {}", e))?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn browser_open_link_tab(
+    app: AppHandle,
+    url: String,
+    source_tab_id: Option<String>,
+    bounds: Option<BrowserViewportBounds>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserTabInfo, String> {
+    let clean = url.trim();
+    let lower = clean.to_lowercase();
+    if lower.starts_with("javascript:") || lower.starts_with("file:") || lower.starts_with("data:text/html") {
+        return Err(format!("Unsafe link scheme blocked: '{}'", clean));
+    }
+
+    let profile_id = if let Some(sid) = source_tab_id {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter().find(|t| t.id == sid).map(|t| t.profile_id.clone())
+    } else {
+        None
+    };
+
+    let new_tab_id = format!("tab_{}", current_timestamp());
+    browser_create_tab(app, new_tab_id, Some(clean.to_string()), bounds, profile_id, state).await
 }

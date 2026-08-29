@@ -695,6 +695,71 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["domain"]
             }),
         },
+        // Phase 5.6F-A: Advanced Utilities Tools
+        ToolDefinition {
+            name: "browser_find".to_string(),
+            description: "Find text query within the current page DOM and scroll to match.".to_string(),
+            category: "utilities".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID."
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Text to find in page."
+                    },
+                    "forward": {
+                        "type": "boolean",
+                        "description": "Search direction (true for next, false for previous)."
+                    },
+                    "case_sensitive": {
+                        "type": "boolean",
+                        "description": "Whether to perform case-sensitive search."
+                    }
+                },
+                "required": ["tab_id", "query"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_zoom".to_string(),
+            description: "Adjust zoom scale of the target tab (range 0.5 to 2.0).".to_string(),
+            category: "utilities".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID."
+                    },
+                    "level": {
+                        "type": "number",
+                        "description": "Zoom factor (e.g. 1.0 = 100%, 1.25 = 125%, 0.8 = 80%)."
+                    }
+                },
+                "required": ["tab_id", "level"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_print".to_string(),
+            description: "Initiate print dialog for the target tab. Requires operator approval.".to_string(),
+            category: "utilities".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID to print."
+                    }
+                },
+                "required": ["tab_id"]
+            }),
+        },
     ]
 }
 
@@ -1817,6 +1882,91 @@ pub async fn execute_browser_tool(
                 error_code: None,
                 duration_ms: start.elapsed().as_millis() as u64,
             })
+        }
+
+        // Phase 5.6F-A: Advanced Utilities Execution
+        "browser_find" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+            let query = args.get("query").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'query'.".to_string())?;
+            let forward = args.get("forward").and_then(|v| v.as_bool());
+            let case_sensitive = args.get("case_sensitive").and_then(|v| v.as_bool());
+
+            match crate::browser::browser_find_in_page(app, tab_id.to_string(), query.to_string(), forward, case_sensitive).await {
+                Ok(res) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "find_result": res })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("FIND_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_zoom" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+            let level = args.get("level").and_then(|v| v.as_f64())
+                .ok_or_else(|| "Missing required parameter 'level'.".to_string())?;
+
+            match crate::browser::browser_zoom_set(app, tab_id.to_string(), level, state).await {
+                Ok(applied_level) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "zoom_level": applied_level })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("ZOOM_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_print" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+
+            match crate::browser::browser_print_tab(app, tab_id.to_string()).await {
+                Ok(ok) => Ok(BrowserToolExecutionResult {
+                    success: ok,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "status": "PRINT_INITIATED" })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("PRINT_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
         }
 
         _ => Err(format!("UNKNOWN_BROWSER_TOOL: Tool '{}' is not registered in the Browser Tool Layer.", tool_name)),

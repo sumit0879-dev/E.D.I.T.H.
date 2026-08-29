@@ -475,6 +475,27 @@ impl BrowserRiskEngine {
             };
         }
 
+        // Phase 5.6F-A: Advanced Browser Utilities Risk Rules
+        if tool == "browser_find" || tool == "browser_find_next" || tool == "browser_find_previous" || tool == "browser_zoom" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Low,
+                decision: BrowserRiskDecision::Allow,
+                policy_code: "SAFE_BROWSER_UTILITY".to_string(),
+                reason: "Finding text and adjusting zoom in page are safe non-mutating utilities.".to_string(),
+                user_explanation: "Action permitted.".to_string(),
+            };
+        }
+
+        if tool == "browser_print" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Medium,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "PRINT_ACTION_APPROVAL".to_string(),
+                reason: "Initiating a print job triggers an external physical or PDF dialog requiring confirmation.".to_string(),
+                user_explanation: "Approval required: the agent requests to print the active web page.".to_string(),
+            };
+        }
+
         if tool.contains("cookie") || tool.contains("credential") || tool.contains("password") || tool.contains("export_storage") {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Blocked,

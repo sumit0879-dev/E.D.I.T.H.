@@ -52,8 +52,9 @@ import type {
   PrivacyStatus,
   PrivacyRule,
   TabPrivacyStats,
+  FindResult,
 } from '../types';
-import { Shield, ShieldOff, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu } from 'lucide-react';
+import { Shield, ShieldOff, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu, Printer, ZoomIn, ZoomOut, ChevronUp, ChevronDown, Type } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -440,6 +441,86 @@ export const BrowserView: React.FC = () => {
     }
   };
 
+  // Phase 5.6F-A Advanced Browser Utilities States
+  const [showFindHud, setShowFindHud] = useState(false);
+  const [findQuery, setFindQuery] = useState('');
+  const [findResult, setFindResult] = useState<FindResult | null>(null);
+  const [findCaseSensitive, setFindCaseSensitive] = useState(false);
+  const [showZoomDropdown, setShowZoomDropdown] = useState(false);
+  const findInputRef = useRef<HTMLInputElement>(null);
+
+  const handleOpenFind = () => {
+    setShowFindHud(true);
+    setTimeout(() => {
+      findInputRef.current?.focus();
+      findInputRef.current?.select();
+    }, 50);
+  };
+
+  const handleCloseFind = async () => {
+    setShowFindHud(false);
+    setFindQuery('');
+    setFindResult(null);
+    if (browserState.active_tab_id) {
+      await browserController.clearFind(browserState.active_tab_id);
+    }
+  };
+
+  const handleFind = async (forward = true) => {
+    if (!browserState.active_tab_id || !findQuery.trim()) return;
+    try {
+      const res = await browserController.findInPage(
+        browserState.active_tab_id,
+        findQuery,
+        forward,
+        findCaseSensitive
+      );
+      setFindResult(res);
+    } catch (e) {
+      console.warn('Find execution failed:', e);
+    }
+  };
+
+  const handleZoomIn = async () => {
+    if (!browserState.active_tab_id) return;
+    await browserController.zoomIn(browserState.active_tab_id);
+  };
+
+  const handleZoomOut = async () => {
+    if (!browserState.active_tab_id) return;
+    await browserController.zoomOut(browserState.active_tab_id);
+  };
+
+  const handleZoomReset = async () => {
+    if (!browserState.active_tab_id) return;
+    await browserController.zoomReset(browserState.active_tab_id);
+  };
+
+  const handlePrint = async () => {
+    if (!browserState.active_tab_id) return;
+    try {
+      await browserController.printTab(browserState.active_tab_id);
+    } catch (e) {
+      console.error('Print failed:', e);
+    }
+  };
+
+  const handleOpenLinkInNewTab = async (url: string) => {
+    try {
+      await browserController.openLinkInNewTab(url, browserState.active_tab_id || undefined);
+    } catch (e) {
+      console.error('Open link in new tab failed:', e);
+    }
+  };
+
+  const handleCopyLink = async (url: string) => {
+    try {
+      await navigator.clipboard.writeText(url);
+    } catch (e) {
+      console.error('Copy link failed:', e);
+    }
+  };
+
   const fetchRiskAuditLogs = useCallback(async () => {
     setIsFetchingLogs(true);
     try {
@@ -640,6 +721,37 @@ export const BrowserView: React.FC = () => {
       if (e.altKey && e.key === 'ArrowRight' && !isInput) {
         e.preventDefault();
         await browserController.goForward();
+        return;
+      }
+
+      // Phase 5.6F-A Shortcuts
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        handleOpenFind();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && (e.key === '=' || e.key === '+')) {
+        e.preventDefault();
+        handleZoomIn();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key === '-') {
+        e.preventDefault();
+        handleZoomOut();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key === '0') {
+        e.preventDefault();
+        handleZoomReset();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+        e.preventDefault();
+        handlePrint();
         return;
       }
     };
@@ -1122,6 +1234,38 @@ export const BrowserView: React.FC = () => {
           <div className="h-px bg-white/10 my-0.5" />
           <button
             onClick={() => {
+              const targetTab = browserState.tabs.find((t) => t.id === contextMenu.tabId);
+              if (targetTab?.url) handleCopyLink(targetTab.url);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <Copy className="w-3.5 h-3.5 text-cyan-400" />
+            Copy Tab URL
+          </button>
+          <button
+            onClick={() => {
+              handleOpenFind();
+              setContextMenu(null);
+            }}
+            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <span className="flex items-center gap-2"><Search className="w-3.5 h-3.5 text-cyan-400" /> Find in Page...</span>
+            <span className="text-[10px] text-slate-500">Ctrl+F</span>
+          </button>
+          <button
+            onClick={() => {
+              handlePrint();
+              setContextMenu(null);
+            }}
+            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <span className="flex items-center gap-2"><Printer className="w-3.5 h-3.5 text-cyan-400" /> Print Tab...</span>
+            <span className="text-[10px] text-slate-500">Ctrl+P</span>
+          </button>
+          <div className="h-px bg-white/10 my-0.5" />
+          <button
+            onClick={() => {
               handleCloseTab(undefined, contextMenu.tabId);
               setContextMenu(null);
             }}
@@ -1451,6 +1595,53 @@ export const BrowserView: React.FC = () => {
           >
             {isCapturingScreen ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">Capture</span>
+          </button>
+
+          <div className="w-[1px] h-4 bg-white/10 mx-0.5" />
+
+          {/* Phase 5.6F-A: Find in Page Button */}
+          <button
+            onClick={handleOpenFind}
+            className={`p-1.5 rounded-xl border text-slate-300 hover:text-cyan-300 transition ${
+              showFindHud ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300' : 'bg-[#090e1a] border-white/[0.08]'
+            }`}
+            title="Find in Page (Ctrl+F)"
+          >
+            <Search className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Phase 5.6F-A: Zoom Controls */}
+          <div className="relative flex items-center bg-[#090e1a] border border-white/[0.08] rounded-xl text-[11px] font-mono">
+            <button
+              onClick={handleZoomOut}
+              className="px-1.5 py-1 text-slate-400 hover:text-white transition"
+              title="Zoom Out (Ctrl+-)"
+            >
+              -
+            </button>
+            <button
+              onClick={handleZoomReset}
+              className="px-1.5 py-1 text-slate-200 font-bold hover:text-cyan-300 transition"
+              title="Reset Zoom (Ctrl+0)"
+            >
+              {Math.round((activeTab?.zoom_level || 1.0) * 100)}%
+            </button>
+            <button
+              onClick={handleZoomIn}
+              className="px-1.5 py-1 text-slate-400 hover:text-white transition"
+              title="Zoom In (Ctrl++)"
+            >
+              +
+            </button>
+          </div>
+
+          {/* Phase 5.6F-A: Print Button */}
+          <button
+            onClick={handlePrint}
+            className="p-1.5 rounded-xl bg-[#090e1a] border border-white/[0.08] text-slate-300 hover:text-cyan-300 transition"
+            title="Print Page (Ctrl+P)"
+          >
+            <Printer className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -2886,6 +3077,85 @@ export const BrowserView: React.FC = () => {
             </div>
           </div>
         ) : null}
+
+        {/* Phase 5.6F-A Floating Find in Page HUD */}
+        {showFindHud && (
+          <div className="absolute top-2 right-4 z-40 bg-[#080d1a]/95 border border-cyan-500/40 backdrop-blur-xl shadow-2xl rounded-xl p-1.5 flex items-center gap-2 font-mono text-xs animate-fadeIn text-slate-200">
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-black/60 border border-white/10 rounded-lg">
+              <Search className="w-3.5 h-3.5 text-cyan-400" />
+              <input
+                ref={findInputRef}
+                type="text"
+                value={findQuery}
+                onChange={(e) => setFindQuery(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') {
+                    e.preventDefault();
+                    handleFind(!e.shiftKey);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    handleCloseFind();
+                  }
+                }}
+                placeholder="Find in page (Ctrl+F)..."
+                className="bg-transparent border-none text-xs text-white placeholder-slate-500 focus:outline-none w-44"
+              />
+              {findResult && findQuery && (
+                <span className={`text-[10px] px-1.5 py-0.5 rounded font-bold ${
+                  findResult.match_found
+                    ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/30'
+                    : 'bg-red-950 text-red-300 border border-red-500/30'
+                }`}>
+                  {findResult.match_found
+                    ? `${findResult.active_match_ordinal}/${findResult.matches_count}`
+                    : '0/0'}
+                </span>
+              )}
+            </div>
+
+            {/* Previous & Next Buttons */}
+            <button
+              onClick={() => handleFind(false)}
+              title="Previous Match (Shift+Enter)"
+              disabled={!findQuery}
+              className="p-1 rounded hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-30 transition"
+            >
+              <ChevronUp className="w-4 h-4" />
+            </button>
+            <button
+              onClick={() => handleFind(true)}
+              title="Next Match (Enter)"
+              disabled={!findQuery}
+              className="p-1 rounded hover:bg-white/10 text-slate-300 hover:text-white disabled:opacity-30 transition"
+            >
+              <ChevronDown className="w-4 h-4" />
+            </button>
+
+            {/* Case Sensitive Toggle */}
+            <button
+              onClick={() => setFindCaseSensitive(!findCaseSensitive)}
+              title="Match Case"
+              className={`px-1.5 py-0.5 rounded text-[10px] font-bold border transition ${
+                findCaseSensitive
+                  ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                  : 'bg-white/5 border-transparent text-slate-400 hover:text-slate-200'
+              }`}
+            >
+              Aa
+            </button>
+
+            <div className="w-[1px] h-4 bg-white/10 mx-0.5" />
+
+            {/* Close Find HUD */}
+            <button
+              onClick={handleCloseFind}
+              title="Close (Escape)"
+              className="p-1 rounded hover:bg-red-950/60 hover:text-red-300 text-slate-400 transition"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* Status Bar Footer */}

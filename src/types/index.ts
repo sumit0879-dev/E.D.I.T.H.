@@ -246,6 +246,7 @@ export interface BrowserTabInfo {
   created_at: number;
   profile_id?: string;
   is_pinned?: boolean;
+  zoom_level?: number;
 }
 
 export interface BrowserMultiStateInfo {
@@ -577,6 +578,14 @@ export interface PrivacyRule {
   profile_id: string;
   enabled: boolean;
   created_at: number;
+}
+
+// --- Phase 5.6F-A Advanced Browser Utilities Types ---
+export interface FindResult {
+  query: string;
+  match_found: boolean;
+  matches_count: number;
+  active_match_ordinal: number;
 }
 
 

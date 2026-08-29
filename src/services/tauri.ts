@@ -42,6 +42,7 @@ import type {
   PrivacyStatus,
   PrivacyRule,
   TabPrivacyStats,
+  FindResult,
 } from '../types';
 
 export const isTauri = () => {
@@ -1851,6 +1852,92 @@ export async function browserPrivacyResetStats(
 ): Promise<boolean> {
   if (!isTauri()) return true;
   return await invoke<boolean>('browser_privacy_reset_stats', { tabId });
+}
+
+// --- Phase 5.6F-A Advanced Browser Utilities IPC ---
+
+export async function browserFindInPage(
+  tabId: string,
+  query: string,
+  forward?: boolean,
+  caseSensitive?: boolean
+): Promise<FindResult> {
+  if (!isTauri()) {
+    return {
+      query,
+      match_found: !!query,
+      matches_count: query ? 1 : 0,
+      active_match_ordinal: query ? 1 : 0,
+    };
+  }
+  return await invoke<FindResult>('browser_find_in_page', {
+    tabId,
+    query,
+    forward,
+    caseSensitive,
+  });
+}
+
+export async function browserClearFind(tabId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_clear_find', { tabId });
+}
+
+export async function browserZoomSet(
+  tabId: string,
+  level: number
+): Promise<number> {
+  if (!isTauri()) return level;
+  return await invoke<number>('browser_zoom_set', { tabId, level });
+}
+
+export async function browserZoomIn(tabId: string): Promise<number> {
+  if (!isTauri()) return 1.1;
+  return await invoke<number>('browser_zoom_in', { tabId });
+}
+
+export async function browserZoomOut(tabId: string): Promise<number> {
+  if (!isTauri()) return 0.9;
+  return await invoke<number>('browser_zoom_out', { tabId });
+}
+
+export async function browserZoomReset(tabId: string): Promise<number> {
+  if (!isTauri()) return 1.0;
+  return await invoke<number>('browser_zoom_reset', { tabId });
+}
+
+export async function browserPrintTab(tabId: string): Promise<boolean> {
+  if (!isTauri()) {
+    window.print();
+    return true;
+  }
+  return await invoke<boolean>('browser_print_tab', { tabId });
+}
+
+export async function browserOpenLinkTab(
+  url: string,
+  sourceTabId?: string,
+  bounds?: BrowserViewportBounds
+): Promise<BrowserTabInfo> {
+  if (!isTauri()) {
+    return {
+      id: `tab_${Date.now()}`,
+      label: 'tab_link',
+      url,
+      title: url,
+      is_active: true,
+      is_loading: false,
+      can_go_back: false,
+      can_go_forward: false,
+      created_at: Date.now(),
+      zoom_level: 1.0,
+    };
+  }
+  return await invoke<BrowserTabInfo>('browser_open_link_tab', {
+    url,
+    sourceTabId,
+    bounds,
+  });
 }
 
 

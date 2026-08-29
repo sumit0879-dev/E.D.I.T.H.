@@ -704,6 +704,59 @@ class BrowserController {
   public async resetTabPrivacyStats(tabId: string) {
     return await tauriService.browserPrivacyResetStats(tabId);
   }
+
+  // --- Phase 5.6F-A Advanced Browser Utilities ---
+  public async findInPage(tabId: string, query: string, forward?: boolean, caseSensitive?: boolean) {
+    return await tauriService.browserFindInPage(tabId, query, forward, caseSensitive);
+  }
+
+  public async clearFind(tabId: string) {
+    return await tauriService.browserClearFind(tabId);
+  }
+
+  public async zoomSet(tabId: string, level: number) {
+    const res = await tauriService.browserZoomSet(tabId, level);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) tab.zoom_level = res;
+    this.notify();
+    return res;
+  }
+
+  public async zoomIn(tabId: string) {
+    const res = await tauriService.browserZoomIn(tabId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) tab.zoom_level = res;
+    this.notify();
+    return res;
+  }
+
+  public async zoomOut(tabId: string) {
+    const res = await tauriService.browserZoomOut(tabId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) tab.zoom_level = res;
+    this.notify();
+    return res;
+  }
+
+  public async zoomReset(tabId: string) {
+    const res = await tauriService.browserZoomReset(tabId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) tab.zoom_level = res;
+    this.notify();
+    return res;
+  }
+
+  public async printTab(tabId: string) {
+    return await tauriService.browserPrintTab(tabId);
+  }
+
+  public async openLinkInNewTab(url: string, sourceTabId?: string) {
+    const tab = await tauriService.browserOpenLinkTab(url, sourceTabId, this.currentBounds || undefined);
+    this.tabs.push(tab);
+    this.activeTabId = tab.id;
+    this.notify();
+    return tab;
+  }
 }
 
 export const browserController = new BrowserController();
