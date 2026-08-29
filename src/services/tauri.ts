@@ -24,6 +24,10 @@ import type {
   BrowserToolExecutionResult,
   BrowserTaskState,
   BrowserTaskResult,
+  BrowserActionContext,
+  BrowserRiskAssessment,
+  BrowserRiskAuditEntry,
+  PendingBrowserActionApproval,
 } from '../types';
 
 export const isTauri = () => {
@@ -1202,5 +1206,51 @@ export async function browserAgentCancelTask(taskId: string): Promise<boolean> {
 export async function browserAgentGetCurrentTask(): Promise<BrowserTaskState | null> {
   if (!isTauri()) return null;
   return await invoke<BrowserTaskState | null>('browser_agent_get_current_task');
+}
+
+// --- Phase 5.3 Browser Action Risk & Safety Engine APIs ---
+export async function browserAssessActionRisk(
+  context: BrowserActionContext
+): Promise<BrowserRiskAssessment> {
+  if (!isTauri()) {
+    return {
+      risk_level: 'LOW',
+      decision: 'ALLOW',
+      policy_code: 'SAFE_INTERACTION',
+      reason: 'Simulated assessment in web preview mode.',
+      user_explanation: 'Action permitted.',
+    };
+  }
+  return await invoke<BrowserRiskAssessment>('browser_assess_action_risk', { context });
+}
+
+export async function browserGetRiskAuditLog(): Promise<BrowserRiskAuditEntry[]> {
+  if (!isTauri()) return [];
+  return await invoke<BrowserRiskAuditEntry[]>('browser_get_risk_audit_log');
+}
+
+export async function browserResolveActionApproval(
+  approvalId: string,
+  decision: string
+): Promise<PendingBrowserActionApproval> {
+  if (!isTauri()) {
+    return {
+      approval_id: approvalId,
+      context: { tool_name: 'browser_click', tab_id: 'tab_a' },
+      assessment: {
+        risk_level: 'HIGH',
+        decision: 'REQUIRE_APPROVAL',
+        policy_code: 'DESTRUCTIVE_ACTION',
+        reason: 'Simulated',
+        user_explanation: 'Simulated approval resolution.',
+      },
+      created_at: Date.now(),
+      status: decision,
+    };
+  }
+  return await invoke<PendingBrowserActionApproval>('browser_resolve_action_approval', {
+    approvalId,
+    decision,
+  });
 }
 

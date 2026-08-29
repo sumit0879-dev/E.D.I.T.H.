@@ -16,6 +16,7 @@ pub mod windows;
 pub mod browser;
 pub mod browser_tools;
 pub mod browser_agent;
+pub mod browser_risk;
 pub mod weather;
 
 use db::DbState;
@@ -228,6 +229,9 @@ pub fn run() {
             browser::browser_select_option,
             browser_tools::browser_get_tool_definitions_cmd,
             browser_tools::browser_execute_tool_cmd,
+            browser_risk::browser_assess_action_risk,
+            browser_risk::browser_get_risk_audit_log,
+            browser_risk::browser_resolve_action_approval,
             browser_agent::browser_agent_run_task,
             browser_agent::browser_agent_cancel_task,
             browser_agent::browser_agent_get_current_task,

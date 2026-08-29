@@ -321,3 +321,55 @@ export interface BrowserTaskResult {
   final_tab_id: string;
   error?: string;
 }
+
+export type BrowserRiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'BLOCKED';
+export type BrowserRiskDecision = 'ALLOW' | 'REQUIRE_APPROVAL' | 'BLOCK';
+
+export interface BrowserActionContext {
+  tool_name: string;
+  tab_id: string;
+  url?: string;
+  title?: string;
+  element_id?: string;
+  element_tag?: string;
+  element_role?: string;
+  element_text?: string;
+  element_aria_label?: string;
+  element_href?: string;
+  input_type?: string;
+  placeholder?: string;
+  text_to_type?: string;
+  is_password?: boolean;
+  form_action?: string;
+  form_method?: string;
+  parent_region?: string;
+}
+
+export interface BrowserRiskAssessment {
+  risk_level: BrowserRiskLevel;
+  decision: BrowserRiskDecision;
+  policy_code: string;
+  reason: string;
+  user_explanation: string;
+}
+
+export interface BrowserRiskAuditEntry {
+  id: string;
+  timestamp: number;
+  task_id?: string;
+  tool_name: string;
+  tab_id: string;
+  risk_level: BrowserRiskLevel;
+  decision: BrowserRiskDecision;
+  policy_code: string;
+  reason: string;
+}
+
+export interface PendingBrowserActionApproval {
+  approval_id: string;
+  task_id?: string;
+  context: BrowserActionContext;
+  assessment: BrowserRiskAssessment;
+  created_at: number;
+  status: string;
+}

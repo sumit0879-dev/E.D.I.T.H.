@@ -10,6 +10,7 @@ use crate::browser::{
     browser_close_tab, browser_go_back_tab, browser_go_forward_tab, browser_reload_tab,
     browser_get_multi_state,
 };
+use crate::browser_risk::{BrowserRiskEngine, BrowserActionContext, BrowserRiskDecision};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
@@ -356,6 +357,64 @@ pub async fn execute_browser_tool(
     state: tauri::State<'_, BrowserState>,
 ) -> Result<BrowserToolExecutionResult, String> {
     let start = Instant::now();
+
+    // Phase 5.3: Centralized Host-Enforced Risk & Safety Assessment
+    let target_tab_id = args.get("tab_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let action_url = args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let action_element_id = args.get("element_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+    let action_text = args.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    let risk_ctx = BrowserActionContext {
+        tool_name: tool_name.to_string(),
+        tab_id: target_tab_id.clone(),
+        url: action_url,
+        title: None,
+        element_id: action_element_id.clone(),
+        element_tag: None,
+        element_role: None,
+        element_text: action_text.clone(),
+        element_aria_label: None,
+        element_href: None,
+        input_type: None,
+        placeholder: None,
+        text_to_type: action_text,
+        is_password: false,
+        form_action: None,
+        form_method: None,
+        parent_region: None,
+    };
+
+    let assessment = BrowserRiskEngine::assess_risk(&risk_ctx);
+    BrowserRiskEngine::record_audit_log(None, tool_name.to_string(), target_tab_id.clone(), &assessment);
+
+    if assessment.decision == BrowserRiskDecision::Block {
+        return Ok(BrowserToolExecutionResult {
+            success: false,
+            tool_name: tool_name.to_string(),
+            tab_id: if target_tab_id.is_empty() { None } else { Some(target_tab_id) },
+            data: None,
+            error: Some(assessment.user_explanation),
+            error_code: Some(assessment.policy_code),
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+    }
+
+    if assessment.decision == BrowserRiskDecision::RequireApproval {
+        let approval_id = BrowserRiskEngine::create_pending_approval(None, risk_ctx, assessment.clone());
+        return Ok(BrowserToolExecutionResult {
+            success: false,
+            tool_name: tool_name.to_string(),
+            tab_id: if target_tab_id.is_empty() { None } else { Some(target_tab_id) },
+            data: Some(json!({
+                "approval_required": true,
+                "approval_id": approval_id,
+                "policy_code": assessment.policy_code
+            })),
+            error: Some(format!("REQUIRE_APPROVAL: {}", assessment.user_explanation)),
+            error_code: Some("REQUIRE_APPROVAL".to_string()),
+            duration_ms: start.elapsed().as_millis() as u64,
+        });
+    }
 
     match tool_name {
         "browser_get_tabs" => {

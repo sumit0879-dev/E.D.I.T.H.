@@ -11,6 +11,10 @@ import type {
   BrowserToolExecutionResult,
   BrowserTaskState,
   BrowserTaskResult,
+  BrowserActionContext,
+  BrowserRiskAssessment,
+  BrowserRiskAuditEntry,
+  PendingBrowserActionApproval,
 } from '../types';
 
 /**
@@ -396,6 +400,22 @@ class BrowserController {
   public async getVisibleText(): Promise<string> {
     const targetId = this.activeTabId || 'tab_a';
     return await this.getTabVisibleText(targetId);
+  }
+
+  // --- Phase 5.3 Browser Action Risk & Safety Engine APIs ---
+  public async assessActionRisk(context: BrowserActionContext): Promise<BrowserRiskAssessment> {
+    return await tauriService.browserAssessActionRisk(context);
+  }
+
+  public async getRiskAuditLog(): Promise<BrowserRiskAuditEntry[]> {
+    return await tauriService.browserGetRiskAuditLog();
+  }
+
+  public async resolveActionApproval(
+    approvalId: string,
+    decision: string
+  ): Promise<PendingBrowserActionApproval> {
+    return await tauriService.browserResolveActionApproval(approvalId, decision);
   }
 }
 
