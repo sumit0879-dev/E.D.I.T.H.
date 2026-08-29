@@ -140,7 +140,7 @@ impl BrowserContentPolicyEngine {
             return true;
         }
         for item in set {
-            if clean.ends_with(&format!(".{}", item)) {
+            if clean.len() > item.len() && clean.ends_with(item) && clean.as_bytes()[clean.len() - item.len() - 1] == b'.' {
                 return true;
             }
         }

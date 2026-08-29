@@ -181,7 +181,12 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
     }
 
     let conn = Connection::open(&db_path)?;
-    conn.execute_batch("PRAGMA journal_mode=WAL;")?;
+    conn.execute_batch("
+        PRAGMA journal_mode = WAL;
+        PRAGMA synchronous = NORMAL;
+        PRAGMA cache_size = -64000;
+        PRAGMA temp_store = MEMORY;
+    ")?;
 
     conn.execute_batch(
         "
