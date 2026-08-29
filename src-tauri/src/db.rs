@@ -85,6 +85,19 @@ pub struct BrowserDownloadRecord {
     pub tab_id: Option<String>,
 }
 
+// Phase 5.6C: Browser Profile Model
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserProfileRecord {
+    pub id: String,
+    pub name: String,
+    pub profile_type: String,
+    pub user_data_dir: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+    pub is_default: bool,
+    pub is_active: bool,
+}
+
 pub struct DbState {
     pub conn: Mutex<Connection>,
 }
@@ -173,8 +186,28 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
         UPDATE browser_downloads 
         SET status = 'FAILED', error = 'Interrupted by application restart' 
         WHERE status IN ('DOWNLOADING', 'QUEUED');
+
+        -- Phase 5.6C: Browser Profiles Persistent Storage
+        CREATE TABLE IF NOT EXISTS browser_profiles (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            profile_type TEXT NOT NULL,
+            user_data_dir TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            is_default INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 0
+        );
+
+        -- Ensure default profile exists (Step 25)
+        INSERT OR IGNORE INTO browser_profiles (id, name, profile_type, user_data_dir, created_at, updated_at, is_default, is_active)
+        VALUES ('profile_default', 'Default Profile', 'DEFAULT', 'profiles/profile_default', 1700000000000, 1700000000000, 1, 1);
         "
     )?;
+
+    // Non-destructive migrations for profile-scoping history & bookmarks (Step 24 & 25)
+    let _ = conn.execute("ALTER TABLE browser_history ADD COLUMN profile_id TEXT DEFAULT 'profile_default';", []);
+    let _ = conn.execute("ALTER TABLE browser_bookmarks ADD COLUMN profile_id TEXT DEFAULT 'profile_default';", []);
 
     Ok(conn)
 }
@@ -866,4 +899,98 @@ pub fn clear_all_browser_download_records(conn: &Connection) -> Result<usize> {
     let count = conn.execute("DELETE FROM browser_downloads", [])?;
     Ok(count)
 }
+
+// ============================================================================
+// Phase 5.6C: Browser Profiles Database Helpers
+// ============================================================================
+
+pub fn upsert_browser_profile(conn: &Connection, profile: &BrowserProfileRecord) -> Result<()> {
+    conn.execute(
+        "INSERT INTO browser_profiles (
+            id, name, profile_type, user_data_dir, created_at, updated_at, is_default, is_active
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+        ON CONFLICT(id) DO UPDATE SET
+            name = excluded.name,
+            profile_type = excluded.profile_type,
+            user_data_dir = excluded.user_data_dir,
+            updated_at = excluded.updated_at,
+            is_active = excluded.is_active;",
+        params![
+            profile.id,
+            profile.name,
+            profile.profile_type,
+            profile.user_data_dir,
+            profile.created_at,
+            profile.updated_at,
+            if profile.is_default { 1 } else { 0 },
+            if profile.is_active { 1 } else { 0 }
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_browser_profile(conn: &Connection, id: &str) -> Result<Option<BrowserProfileRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, profile_type, user_data_dir, created_at, updated_at, is_default, is_active
+         FROM browser_profiles WHERE id = ?1 LIMIT 1"
+    )?;
+
+    let mut rows = stmt.query(params![id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(BrowserProfileRecord {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            profile_type: row.get(2)?,
+            user_data_dir: row.get(3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+            is_default: row.get::<_, i64>(6)? != 0,
+            is_active: row.get::<_, i64>(7)? != 0,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn list_browser_profiles(conn: &Connection) -> Result<Vec<BrowserProfileRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, name, profile_type, user_data_dir, created_at, updated_at, is_default, is_active
+         FROM browser_profiles
+         ORDER BY is_default DESC, created_at ASC"
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(BrowserProfileRecord {
+            id: row.get(0)?,
+            name: row.get(1)?,
+            profile_type: row.get(2)?,
+            user_data_dir: row.get(3)?,
+            created_at: row.get(4)?,
+            updated_at: row.get(5)?,
+            is_default: row.get::<_, i64>(6)? != 0,
+            is_active: row.get::<_, i64>(7)? != 0,
+        })
+    })?;
+
+    let mut list = Vec::new();
+    for r in rows {
+        list.push(r?);
+    }
+    Ok(list)
+}
+
+pub fn set_active_browser_profile(conn: &Connection, profile_id: &str) -> Result<bool> {
+    conn.execute("UPDATE browser_profiles SET is_active = 0", [])?;
+    let count = conn.execute("UPDATE browser_profiles SET is_active = 1 WHERE id = ?1", params![profile_id])?;
+    Ok(count > 0)
+}
+
+pub fn delete_browser_profile_record(conn: &Connection, profile_id: &str) -> Result<bool> {
+    if profile_id == "profile_default" {
+        return Err(rusqlite::Error::InvalidQuery);
+    }
+    let count = conn.execute("DELETE FROM browser_profiles WHERE id = ?1 AND is_default = 0", params![profile_id])?;
+    Ok(count > 0)
+}
+
 

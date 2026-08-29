@@ -47,8 +47,10 @@ import type {
   BrowserHistoryEntry,
   BrowserBookmark,
   BrowserDownload,
+  BrowserProfile,
+  BrowserProfileType,
 } from '../types';
-import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle } from 'lucide-react';
+import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2 } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -271,6 +273,73 @@ export const BrowserView: React.FC = () => {
       await browserController.openDownloadFile(id);
     } catch (e) {
       console.error('Failed to open file', e);
+    }
+  };
+
+  // Phase 5.6C Browser Profiles States
+  const [showProfilesPanel, setShowProfilesPanel] = useState(false);
+  const [profilesList, setProfilesList] = useState<BrowserProfile[]>([]);
+  const [isFetchingProfiles, setIsFetchingProfiles] = useState(false);
+  const [newProfileName, setNewProfileName] = useState('');
+  const [newProfileType, setNewProfileType] = useState<BrowserProfileType>('USER');
+  const [isCreatingProfile, setIsCreatingProfile] = useState(false);
+  const [editingProfileId, setEditingProfileId] = useState<string | null>(null);
+  const [editingProfileName, setEditingProfileName] = useState('');
+
+  const fetchProfiles = useCallback(async () => {
+    setIsFetchingProfiles(true);
+    try {
+      const res = await browserController.getProfiles();
+      setProfilesList(res);
+    } catch (e) {
+      console.warn('Failed to fetch profiles', e);
+    } finally {
+      setIsFetchingProfiles(false);
+    }
+  }, []);
+
+  const handleCreateProfile = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newProfileName.trim()) return;
+    try {
+      await browserController.createProfile(newProfileName.trim(), newProfileType);
+      setNewProfileName('');
+      setIsCreatingProfile(false);
+      fetchProfiles();
+    } catch (e) {
+      console.error('Failed to create profile', e);
+    }
+  };
+
+  const handleSwitchProfile = async (profileId: string) => {
+    try {
+      await browserController.switchProfile(profileId);
+      fetchProfiles();
+    } catch (e) {
+      console.error('Failed to switch profile', e);
+    }
+  };
+
+  const handleRenameProfile = async (profileId: string) => {
+    if (!editingProfileName.trim()) return;
+    try {
+      await browserController.renameProfile(profileId, editingProfileName.trim());
+      setEditingProfileId(null);
+      setEditingProfileName('');
+      fetchProfiles();
+    } catch (e) {
+      console.error('Failed to rename profile', e);
+    }
+  };
+
+  const handleDeleteProfile = async (profileId: string) => {
+    if (confirm(`Delete browser profile '${profileId}' and its storage data? This cannot be undone.`)) {
+      try {
+        await browserController.deleteProfile(profileId);
+        fetchProfiles();
+      } catch (e: any) {
+        alert(String(e));
+      }
     }
   };
 
@@ -765,6 +834,12 @@ export const BrowserView: React.FC = () => {
                 ) : (
                   <span className="px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[9px] font-bold shrink-0" title="Human Controlled">👤</span>
                 )}
+                {/* Phase 5.6C Tab Profile Badge */}
+                {tab.profile_id && tab.profile_id !== 'profile_default' && (
+                  <span className="px-1 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30 text-cyan-300 text-[8px] font-mono shrink-0" title={`Profile: ${tab.profile_id}`}>
+                    {tab.profile_id.startsWith('agent_') ? 'AI' : tab.profile_id.replace('profile_', '')}
+                  </span>
+                )}
                 {browserState.tabs.length > 1 && (
                   <button
                     onClick={(e) => handleCloseTab(e, tab.id)}
@@ -940,6 +1015,31 @@ export const BrowserView: React.FC = () => {
             {downloadsList.filter((d) => d.status === 'DOWNLOADING').length > 0 && (
               <span className="px-1 py-0.2 rounded-full bg-emerald-500 text-black text-[9px] font-bold animate-pulse">
                 {downloadsList.filter((d) => d.status === 'DOWNLOADING').length}
+              </span>
+            )}
+          </button>
+
+          {/* Phase 5.6C Profiles Button */}
+          <button
+            onClick={() => {
+              setShowProfilesPanel(!showProfilesPanel);
+              setShowDownloadsPanel(false);
+              setShowHistoryPanel(false);
+              setShowBookmarksPanel(false);
+              if (!showProfilesPanel) fetchProfiles();
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
+              showProfilesPanel
+                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-cyan-glow-xs'
+                : 'bg-[#090e1a] border-white/[0.08] text-slate-300 hover:text-cyan-300'
+            }`}
+            title="Toggle Browser Profiles & Storage Isolation (5.6C)"
+          >
+            <Users className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Profiles</span>
+            {profilesList.find((p) => p.is_active) && (
+              <span className="px-1 py-0.2 rounded bg-cyan-950/80 border border-cyan-500/30 text-cyan-300 text-[9px]">
+                {profilesList.find((p) => p.is_active)?.name.slice(0, 8)}
               </span>
             )}
           </button>
@@ -1213,6 +1313,136 @@ export const BrowserView: React.FC = () => {
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phase 5.6C Profiles Drawer */}
+      {showProfilesPanel && (
+        <div className="bg-[#030914] border-b border-cyan-500/30 p-3 text-xs text-cyan-200 flex flex-col gap-2.5 shrink-0 z-10 max-h-80 overflow-y-auto animate-fadeIn font-mono">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-cyan-300">
+              <Users className="w-4 h-4 text-cyan-400" />
+              Phase 5.6C Browser Profiles & Storage Isolation ({profilesList.length})
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setIsCreatingProfile(!isCreatingProfile)}
+                className="flex items-center gap-1 text-[10px] text-cyan-300 hover:text-cyan-100 bg-cyan-950/60 hover:bg-cyan-900/60 border border-cyan-500/30 px-2 py-0.5 rounded transition"
+              >
+                <Plus className="w-3 h-3" />
+                New Profile
+              </button>
+              <button
+                onClick={() => setShowProfilesPanel(false)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          {/* Create Profile Inline Form */}
+          {isCreatingProfile && (
+            <form onSubmit={handleCreateProfile} className="flex items-center gap-2 p-2 bg-black/60 border border-cyan-500/30 rounded-lg">
+              <input
+                type="text"
+                value={newProfileName}
+                onChange={(e) => setNewProfileName(e.target.value)}
+                placeholder="Enter Profile Name (e.g. Work, Research, Personal)..."
+                className="bg-[#091122] border border-white/10 rounded px-2.5 py-1 text-xs text-cyan-100 placeholder-slate-500 focus:outline-none flex-1 font-mono"
+                autoFocus
+              />
+              <select
+                value={newProfileType}
+                onChange={(e) => setNewProfileType(e.target.value as BrowserProfileType)}
+                className="bg-[#091122] border border-white/10 rounded px-2 py-1 text-xs text-cyan-300 focus:outline-none cursor-pointer font-mono"
+              >
+                <option value="USER">USER</option>
+                <option value="WORK">WORK</option>
+                <option value="RESEARCH">RESEARCH</option>
+                <option value="AGENT_TEMPORARY">AGENT_TEMPORARY</option>
+              </select>
+              <button
+                type="submit"
+                className="px-3 py-1 rounded bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs transition"
+              >
+                Create
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsCreatingProfile(false)}
+                className="px-2 py-1 rounded text-slate-400 hover:text-white text-xs"
+              >
+                Cancel
+              </button>
+            </form>
+          )}
+
+          {/* Profiles Grid */}
+          {profilesList.length === 0 ? (
+            <div className="text-slate-400 text-center py-4 text-[11px]">Loading browser profiles...</div>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-56 overflow-y-auto">
+              {profilesList.map((p) => (
+                <div
+                  key={p.id}
+                  className={`flex items-center justify-between p-2 rounded-lg border text-[11px] transition ${
+                    p.is_active
+                      ? 'bg-cyan-950/40 border-cyan-500/40 shadow-cyan-glow-xs'
+                      : 'bg-black/40 border-white/5 hover:border-cyan-500/20'
+                  }`}
+                >
+                  <div className="flex flex-col gap-0.5 truncate flex-1 mr-2">
+                    <div className="flex items-center gap-1.5">
+                      <span className="font-bold text-slate-100 truncate">{p.name}</span>
+                      <span
+                        className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${
+                          p.profile_type === 'DEFAULT'
+                            ? 'bg-blue-500/20 text-blue-300 border border-blue-500/30'
+                            : p.profile_type === 'WORK'
+                            ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/30'
+                            : p.profile_type === 'RESEARCH'
+                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
+                            : p.profile_type === 'AGENT_TEMPORARY'
+                            ? 'bg-purple-500/20 text-purple-300 border border-purple-500/30'
+                            : 'bg-cyan-500/20 text-cyan-300 border border-cyan-500/30'
+                        }`}
+                      >
+                        {p.profile_type}
+                      </span>
+                      {p.is_active && (
+                        <span className="px-1 py-0.2 rounded bg-emerald-500 text-black text-[9px] font-bold">
+                          ACTIVE
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-[10px] text-slate-400 font-mono truncate" title={p.user_data_dir}>
+                      Dir: {p.user_data_dir}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    {!p.is_active && (
+                      <button
+                        onClick={() => handleSwitchProfile(p.id)}
+                        className="px-2 py-0.5 rounded bg-cyan-600/30 hover:bg-cyan-600/50 border border-cyan-500/40 text-cyan-200 text-[10px] font-bold transition"
+                      >
+                        Switch
+                      </button>
+                    )}
+                    {!p.is_default && (
+                      <button
+                        onClick={() => handleDeleteProfile(p.id)}
+                        className="p-1 text-slate-500 hover:text-red-400 transition"
+                        title="Delete Profile & Storage"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
               ))}
             </div>

@@ -423,6 +423,47 @@ impl BrowserRiskEngine {
             };
         }
 
+        // Phase 5.6C: Browser Profile Isolation Risk Policies (Step 13)
+        if tool == "browser_profiles_list" || tool == "browser_profile_get" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Low,
+                decision: BrowserRiskDecision::Allow,
+                policy_code: "SAFE_PROFILE_QUERY".to_string(),
+                reason: "Listing and inspecting browser profile metadata is permitted.".to_string(),
+                user_explanation: "Action permitted.".to_string(),
+            };
+        }
+
+        if tool == "browser_profile_create" || tool == "browser_profile_rename" || tool == "browser_profile_switch" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Medium,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "PROFILE_SWITCH_APPROVAL".to_string(),
+                reason: "Creating, renaming, or switching browser profiles requires operator authorization.".to_string(),
+                user_explanation: "Approval required: this action creates or switches the browser storage profile.".to_string(),
+            };
+        }
+
+        if tool == "browser_profile_delete" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::High,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "PROFILE_DELETE_APPROVAL".to_string(),
+                reason: "Deleting a browser profile and its storage directory requires explicit human approval.".to_string(),
+                user_explanation: "Approval required: this action will permanently delete a browser profile and its storage data.".to_string(),
+            };
+        }
+
+        if tool.contains("cookie") || tool.contains("credential") || tool.contains("password") || tool.contains("export_storage") {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Blocked,
+                decision: BrowserRiskDecision::Block,
+                policy_code: "BLOCKED_CREDENTIAL_EXTRACTION".to_string(),
+                reason: "Extracting cookies, credentials, or session databases is strictly prohibited.".to_string(),
+                user_explanation: "Blocked: credential and cookie extraction is forbidden.".to_string(),
+            };
+        }
+
         if tool.contains("upload") {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Medium,

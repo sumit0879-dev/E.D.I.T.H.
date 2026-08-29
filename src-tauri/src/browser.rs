@@ -153,6 +153,7 @@ pub struct BrowserTabInfo {
     pub can_go_forward: bool,
     pub error: Option<String>,
     pub created_at: u64,
+    pub profile_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -506,6 +507,7 @@ pub async fn browser_create_tab(
     tab_id: String,
     url: Option<String>,
     bounds: Option<BrowserViewportBounds>,
+    profile_id: Option<String>,
     state: tauri::State<'_, BrowserState>,
 ) -> Result<BrowserTabInfo, String> {
     let raw_input = url.unwrap_or_else(|| "https://example.com".to_string());
@@ -514,6 +516,12 @@ pub async fn browser_create_tab(
         .map_err(|e| format!("Invalid URL format: {}", e))?;
 
     let label = get_tab_label(&tab_id);
+
+    let target_profile_id = profile_id.unwrap_or_else(|| {
+        crate::browser_profile::GLOBAL_PROFILE_MGR.get_active_profile_id()
+    });
+    let is_temp = target_profile_id.starts_with("agent_") || target_profile_id.contains("temporary");
+    let profile_data_dir = crate::browser_profile::get_profile_data_dir(&target_profile_id, is_temp);
 
     if let Some(ref b) = bounds {
         *state.bounds.lock().unwrap() = Some(b.clone());
@@ -552,6 +560,9 @@ pub async fn browser_create_tab(
 
         let webview_url = WebviewUrl::External(target_url);
         let mut builder = WebviewBuilder::new(&label, webview_url);
+
+        // Phase 5.6C: Native WebView2 Storage & Profile Isolation (Step 4 & 5)
+        builder = builder.data_directory(profile_data_dir);
 
         // Inject live DOM observer script
         builder = builder.initialization_script(LIVE_OBSERVER_INIT_SCRIPT);
@@ -602,6 +613,7 @@ pub async fn browser_create_tab(
         can_go_forward: false,
         error: None,
         created_at: current_timestamp(),
+        profile_id: target_profile_id,
     };
 
     {
@@ -751,7 +763,7 @@ pub async fn browser_reopen_last_closed_tab(
 
     if let Some(tab) = last_closed {
         let restored_id = format!("tab_{}", current_timestamp());
-        let res = browser_create_tab(app, restored_id, Some(tab.url), bounds, state).await?;
+        let res = browser_create_tab(app, restored_id, Some(tab.url), bounds, Some(tab.profile_id), state).await?;
         Ok(Some(res))
     } else {
         Ok(None)
@@ -1693,7 +1705,7 @@ pub async fn browser_create(
     bounds: Option<BrowserViewportBounds>,
     state: tauri::State<'_, BrowserState>,
 ) -> Result<BrowserInfo, String> {
-    let tab = browser_create_tab(app, "tab_a".to_string(), url, bounds.clone(), state).await?;
+    let tab = browser_create_tab(app, "tab_a".to_string(), url, bounds.clone(), None, state).await?;
     Ok(BrowserInfo {
         is_created: true,
         is_visible: true,

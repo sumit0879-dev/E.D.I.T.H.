@@ -25,6 +25,7 @@ import type {
   BrowserBookmarkFolder,
   BrowserBookmark,
   BrowserDownload,
+  BrowserProfile,
 } from '../types';
 
 /**
@@ -105,11 +106,12 @@ class BrowserController {
   public async createTab(
     tabId: string,
     url?: string,
-    bounds?: BrowserViewportBounds
+    bounds?: BrowserViewportBounds,
+    profileId?: string
   ): Promise<BrowserTabInfo> {
     if (bounds) this.currentBounds = bounds;
     const normUrl = url ? normalizeBrowserUrl(url) : 'https://example.com';
-    const res = await tauriService.browserCreateTab(tabId, normUrl, this.currentBounds || undefined);
+    const res = await tauriService.browserCreateTab(tabId, normUrl, this.currentBounds || undefined, profileId);
 
     const existingIdx = this.tabs.findIndex((t) => t.id === tabId);
     this.tabs.forEach((t) => (t.is_active = false));
@@ -574,6 +576,47 @@ class BrowserController {
 
   public async openDownloadFile(downloadId: string): Promise<boolean> {
     return await tauriService.browserDownloadOpenFile(downloadId);
+  }
+
+  // --- Phase 5.6C Browser Profiles & Session Storage Isolation Methods ---
+  public async getProfiles(): Promise<BrowserProfile[]> {
+    return await tauriService.browserProfilesList();
+  }
+
+  public async getProfile(profileId: string): Promise<BrowserProfile | null> {
+    return await tauriService.browserProfileGet(profileId);
+  }
+
+  public async createProfile(name: string, profileType?: string): Promise<BrowserProfile> {
+    const profile = await tauriService.browserProfileCreate(name, profileType);
+    this.notify();
+    return profile;
+  }
+
+  public async switchProfile(profileId: string): Promise<BrowserProfile> {
+    const profile = await tauriService.browserProfileSwitch(profileId);
+    this.notify();
+    return profile;
+  }
+
+  public async renameProfile(profileId: string, newName: string): Promise<BrowserProfile> {
+    const profile = await tauriService.browserProfileRename(profileId, newName);
+    this.notify();
+    return profile;
+  }
+
+  public async deleteProfile(profileId: string): Promise<boolean> {
+    const success = await tauriService.browserProfileDelete(profileId);
+    this.notify();
+    return success;
+  }
+
+  public async createTemporaryProfile(taskId: string): Promise<BrowserProfile> {
+    return await tauriService.browserProfileCreateTemporary(taskId);
+  }
+
+  public async cleanupTemporaryProfile(profileId: string): Promise<boolean> {
+    return await tauriService.browserProfileCleanupTemporary(profileId);
   }
 }
 

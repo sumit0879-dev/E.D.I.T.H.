@@ -401,6 +401,10 @@ AVAILABLE TOOLS:
 - browser_download_get: {{\"download_id\": \"<id>\"}}
 - browser_download_cancel: {{\"download_id\": \"<id>\"}}
 - browser_download_start: {{\"tab_id\": \"<tab_id>\", \"url\": \"https://...\", \"suggested_filename\": \"file.pdf\"}}
+- browser_profiles_list: {{}}
+- browser_profile_get: {{\"profile_id\": \"<id>\"}}
+- browser_profile_create: {{\"name\": \"<name>\", \"profile_type\": \"AGENT_TEMPORARY\"}}
+- browser_profile_switch: {{\"profile_id\": \"<id>\"}}
 
 Output ONLY ONE tool call per turn. Wait for the tool result before taking the next action.",
         goal, initial_tab_id

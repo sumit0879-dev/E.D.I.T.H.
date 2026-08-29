@@ -38,6 +38,7 @@ import type {
   BrowserBookmarkFolder,
   BrowserBookmark,
   BrowserDownload,
+  BrowserProfile,
 } from '../types';
 
 export const isTauri = () => {
@@ -789,7 +790,7 @@ export async function onModelProgress(callback: (msg: string) => void): Promise<
 }
 
 // --- Browser Webview2 Multi-Tab Controller Methods ---
-export async function browserCreateTab(tabId: string, url?: string, bounds?: BrowserViewportBounds): Promise<BrowserTabInfo> {
+export async function browserCreateTab(tabId: string, url?: string, bounds?: BrowserViewportBounds, profileId?: string): Promise<BrowserTabInfo> {
   if (!isTauri()) {
     return {
       id: tabId,
@@ -801,9 +802,10 @@ export async function browserCreateTab(tabId: string, url?: string, bounds?: Bro
       can_go_back: false,
       can_go_forward: false,
       created_at: Date.now(),
+      profile_id: profileId || 'profile_default',
     };
   }
-  return await invoke<BrowserTabInfo>('browser_create_tab', { tabId, url, bounds });
+  return await invoke<BrowserTabInfo>('browser_create_tab', { tabId, url, bounds, profileId });
 }
 
 export async function browserSwitchTab(tabId: string, bounds?: BrowserViewportBounds): Promise<BrowserTabInfo> {
@@ -1565,5 +1567,104 @@ export async function browserDownloadOpenFile(downloadId: string): Promise<boole
   if (!isTauri()) return true;
   return await invoke<boolean>('browser_download_open_file', { downloadId });
 }
+
+// --- Phase 5.6C: Browser Profile Manager Methods ---
+export async function browserProfilesList(): Promise<BrowserProfile[]> {
+  if (!isTauri()) {
+    return [
+      {
+        id: 'profile_default',
+        name: 'Default Profile',
+        profile_type: 'DEFAULT',
+        user_data_dir: 'profiles/profile_default',
+        created_at: 1700000000000,
+        updated_at: 1700000000000,
+        is_default: true,
+        is_active: true,
+      },
+    ];
+  }
+  return await invoke<BrowserProfile[]>('browser_profiles_list');
+}
+
+export async function browserProfileGet(profileId: string): Promise<BrowserProfile | null> {
+  if (!isTauri()) return null;
+  return await invoke<BrowserProfile | null>('browser_profile_get', { profileId });
+}
+
+export async function browserProfileCreate(name: string, profileType?: string): Promise<BrowserProfile> {
+  if (!isTauri()) {
+    return {
+      id: `profile_${Date.now()}`,
+      name,
+      profile_type: (profileType as any) || 'USER',
+      user_data_dir: `profiles/profile_${Date.now()}`,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      is_default: false,
+      is_active: false,
+    };
+  }
+  return await invoke<BrowserProfile>('browser_profile_create', { name, profileType });
+}
+
+export async function browserProfileSwitch(profileId: string): Promise<BrowserProfile> {
+  if (!isTauri()) {
+    return {
+      id: profileId,
+      name: 'Switched Profile',
+      profile_type: 'USER',
+      user_data_dir: `profiles/${profileId}`,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      is_default: profileId === 'profile_default',
+      is_active: true,
+    };
+  }
+  return await invoke<BrowserProfile>('browser_profile_switch', { profileId });
+}
+
+export async function browserProfileRename(profileId: string, newName: string): Promise<BrowserProfile> {
+  if (!isTauri()) {
+    return {
+      id: profileId,
+      name: newName,
+      profile_type: 'USER',
+      user_data_dir: `profiles/${profileId}`,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      is_default: profileId === 'profile_default',
+      is_active: true,
+    };
+  }
+  return await invoke<BrowserProfile>('browser_profile_rename', { profileId, newName });
+}
+
+export async function browserProfileDelete(profileId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_profile_delete', { profileId });
+}
+
+export async function browserProfileCreateTemporary(taskId: string): Promise<BrowserProfile> {
+  if (!isTauri()) {
+    return {
+      id: `agent_${taskId}`,
+      name: `AI Task ${taskId}`,
+      profile_type: 'AGENT_TEMPORARY',
+      user_data_dir: `temporary/agent_${taskId}`,
+      created_at: Date.now(),
+      updated_at: Date.now(),
+      is_default: false,
+      is_active: false,
+    };
+  }
+  return await invoke<BrowserProfile>('browser_profile_create_temporary', { taskId });
+}
+
+export async function browserProfileCleanupTemporary(profileId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_profile_cleanup_temporary', { profileId });
+}
+
 
 

@@ -568,6 +568,69 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["url"]
             }),
         },
+        ToolDefinition {
+            name: "browser_profiles_list".to_string(),
+            description: "List all browser profiles with their IDs, names, types, and active status.".to_string(),
+            category: "profiles".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {}
+            }),
+        },
+        ToolDefinition {
+            name: "browser_profile_get".to_string(),
+            description: "Get detailed metadata for a specific browser profile ID.".to_string(),
+            category: "profiles".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Unique profile identifier."
+                    }
+                },
+                "required": ["profile_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_profile_create".to_string(),
+            description: "Create a new isolated browser profile with separate cookies, storage, and cache. Requires operator approval.".to_string(),
+            category: "profiles".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "name": {
+                        "type": "string",
+                        "description": "Name for the new profile."
+                    },
+                    "profile_type": {
+                        "type": "string",
+                        "enum": ["USER", "WORK", "RESEARCH", "AGENT_TEMPORARY"],
+                        "description": "Type of profile to create."
+                    }
+                },
+                "required": ["name"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_profile_switch".to_string(),
+            description: "Switch active browser profile context for future tabs. Requires operator approval.".to_string(),
+            category: "profiles".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "profile_id": {
+                        "type": "string",
+                        "description": "Target profile ID to switch into."
+                    }
+                },
+                "required": ["profile_id"]
+            }),
+        },
     ]
 }
 
@@ -783,7 +846,7 @@ pub async fn execute_browser_tool(
             let url = args.get("url").and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'url'.".to_string())?;
 
-            match browser_create_tab(app, tab_id.to_string(), Some(url.to_string()), None, state).await {
+            match browser_create_tab(app, tab_id.to_string(), Some(url.to_string()), None, None, state).await {
                 Ok(tab) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -1475,6 +1538,111 @@ pub async fn execute_browser_tool(
                     data: None,
                     error: Some(e),
                     error_code: Some("DOWNLOAD_START_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_profiles_list" => {
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::list_browser_profiles(&conn) {
+                Ok(profiles) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "profiles": profiles })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_profile_get" => {
+            let profile_id = args.get("profile_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'profile_id'.".to_string())?;
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            match crate::db::get_browser_profile(&conn, profile_id) {
+                Ok(profile) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "profile": profile })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e.to_string()),
+                    error_code: Some("DB_ERROR".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_profile_create" => {
+            let name = args.get("name").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'name'.".to_string())?;
+            let profile_type = args.get("profile_type").and_then(|v| v.as_str()).unwrap_or("USER");
+            match crate::browser_profile::GLOBAL_PROFILE_MGR.create_profile(&app, name, profile_type, None) {
+                Ok(profile) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "profile": profile })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("PROFILE_CREATE_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_profile_switch" => {
+            let profile_id = args.get("profile_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'profile_id'.".to_string())?;
+            match crate::browser_profile::GLOBAL_PROFILE_MGR.switch_profile(&app, profile_id) {
+                Ok(profile) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: Some(json!({ "active_profile": profile })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: None,
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("PROFILE_SWITCH_FAILED".to_string()),
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
             }

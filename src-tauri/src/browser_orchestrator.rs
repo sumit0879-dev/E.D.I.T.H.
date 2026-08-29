@@ -458,7 +458,8 @@ pub async fn run_multi_tab_orchestration(
             (existing_tabs[i].clone(), TabOwnership::AgentShared)
         } else {
             let temp_tab_id = format!("tab_{}", (b'a' + (i as u8 % 26)) as char);
-            let new_tab_res = browser_create_tab(app.clone(), temp_tab_id.clone(), None, None, browser_state.clone()).await;
+            let temp_profile = format!("agent_{}", orchestration_id);
+            let new_tab_res = browser_create_tab(app.clone(), temp_tab_id.clone(), None, None, Some(temp_profile), browser_state.clone()).await;
             match new_tab_res {
                 Ok(new_tab) => {
                     orchestrator.set_tab_ownership(&new_tab.id, TabOwnership::AgentTemporary);

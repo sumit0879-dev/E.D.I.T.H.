@@ -21,6 +21,7 @@ pub mod browser_orchestrator;
 pub mod browser_control;
 pub mod browser_storage;
 pub mod browser_download;
+pub mod browser_profile;
 pub mod weather;
 
 use db::DbState;
@@ -270,6 +271,14 @@ pub fn run() {
             browser_download::browser_download_clear_records,
             browser_download::browser_download_show_in_folder,
             browser_download::browser_download_open_file,
+            browser_profile::browser_profiles_list,
+            browser_profile::browser_profile_get,
+            browser_profile::browser_profile_create,
+            browser_profile::browser_profile_switch,
+            browser_profile::browser_profile_rename,
+            browser_profile::browser_profile_delete,
+            browser_profile::browser_profile_create_temporary,
+            browser_profile::browser_profile_cleanup_temporary,
             browser::browser_get_tab_url,
             browser::browser_get_tab_title,
             browser::browser_get_tab_visible_text,

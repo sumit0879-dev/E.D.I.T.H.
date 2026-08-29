@@ -244,6 +244,7 @@ export interface BrowserTabInfo {
   can_go_forward: boolean;
   error?: string;
   created_at: number;
+  profile_id?: string;
 }
 
 export interface BrowserMultiStateInfo {
@@ -525,4 +526,24 @@ export interface BrowserDownload {
   error?: string;
   tab_id?: string;
 }
+
+// --- Phase 5.6C Browser Profiles & Session Storage Isolation Types ---
+export type BrowserProfileType =
+  | 'DEFAULT'
+  | 'USER'
+  | 'WORK'
+  | 'RESEARCH'
+  | 'AGENT_TEMPORARY';
+
+export interface BrowserProfile {
+  id: string;
+  name: string;
+  profile_type: BrowserProfileType;
+  user_data_dir: string;
+  created_at: number;
+  updated_at: number;
+  is_default: boolean;
+  is_active: boolean;
+}
+
 
