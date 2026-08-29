@@ -23,6 +23,7 @@ pub mod browser_storage;
 pub mod browser_download;
 pub mod browser_profile;
 pub mod browser_privacy;
+pub mod browser_recovery;
 pub mod weather;
 
 use db::DbState;
@@ -332,6 +333,7 @@ pub fn run() {
             browser::browser_tab_group_remove_tab,
             browser::browser_tab_group_reorder,
             browser::browser_tab_group_close_tabs,
+            browser_recovery::browser_run_startup_recovery,
             agent::agent_status,
             agent::agent_chat,
             agent::agent_set_path,

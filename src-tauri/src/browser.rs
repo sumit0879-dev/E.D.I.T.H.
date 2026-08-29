@@ -1064,11 +1064,14 @@ pub async fn browser_restore_session(
     for tab in saved_tabs {
         let tab_id = tab.id.clone();
         let profile_id = tab.profile_id.clone();
-        let url = tab.url.clone();
         let is_pinned = tab.is_pinned;
         let group_id = tab.group_id.clone();
+        let safe_url = match crate::browser_recovery::validate_url_for_recovery(&tab.url) {
+            Ok(u) => u,
+            Err(_) => "about:blank".to_string(),
+        };
 
-        match browser_create_tab(app.clone(), tab_id, Some(url), bounds.clone(), Some(profile_id), state.clone()).await {
+        match browser_create_tab(app.clone(), tab_id.clone(), Some(safe_url), bounds.clone(), Some(profile_id), state.clone()).await {
             Ok(mut created) => {
                 if is_pinned {
                     let mut tabs = state.tabs.lock().unwrap();
@@ -1087,7 +1090,7 @@ pub async fn browser_restore_session(
                 restored.push(created);
             }
             Err(e) => {
-                eprintln!("Failed to restore tab {}: {}", tab.id, e);
+                eprintln!("Recovery notice: failed to restore individual tab '{}': {}", tab_id, e);
             }
         }
     }

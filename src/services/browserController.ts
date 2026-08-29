@@ -26,6 +26,7 @@ import type {
   BrowserBookmark,
   BrowserDownload,
   BrowserProfile,
+  RecoveryReport,
 } from '../types';
 
 /**
@@ -666,6 +667,11 @@ class BrowserController {
       this.notify();
     }
     return restored;
+  }
+
+  // --- Phase 5.7C Crash Recovery & State Integrity ---
+  public async runStartupRecovery(): Promise<RecoveryReport> {
+    return await tauriService.browserRunStartupRecovery();
   }
 
   // --- Phase 5.6E Content Blocking & Privacy Policy ---

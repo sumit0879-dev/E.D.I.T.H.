@@ -530,6 +530,7 @@ export const BrowserView: React.FC = () => {
   const [readerLineWidth, setReaderLineWidth] = useState<'narrow' | 'normal' | 'wide'>('normal');
   const [readerTheme, setReaderTheme] = useState<'dark' | 'sepia' | 'onyx' | 'light'>('dark');
   const [saveStatusToast, setSaveStatusToast] = useState<string | null>(null);
+  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
 
   const handleToggleReaderMode = async (tabId?: string) => {
     const targetId = tabId || browserState.active_tab_id;
@@ -849,6 +850,10 @@ export const BrowserView: React.FC = () => {
         try {
           const currentTabs = browserController.getState().tabs;
           if (currentTabs.length === 0) {
+            const recoveryReport = await browserController.runStartupRecovery();
+            if (recoveryReport && recoveryReport.notice) {
+              setRecoveryNotice(recoveryReport.notice);
+            }
             const restored = await browserController.restoreSession();
             if (restored.length === 0) {
               await browserController.createTab('tab_a', 'edith://newtab', initialBounds);
@@ -1849,6 +1854,22 @@ export const BrowserView: React.FC = () => {
               </>
             );
           })()}
+        </div>
+      )}
+
+      {/* Phase 5.7C Startup Recovery Notice Banner */}
+      {recoveryNotice && (
+        <div className="bg-cyan-950/90 border-b border-cyan-500/40 px-3 py-1.5 flex items-center justify-between text-xs font-mono text-cyan-200 z-20 shrink-0 backdrop-blur-sm animate-fadeIn">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-3.5 h-3.5 text-cyan-400 shrink-0" />
+            <span>{recoveryNotice}</span>
+          </div>
+          <button
+            onClick={() => setRecoveryNotice(null)}
+            className="text-cyan-400 hover:text-cyan-100 px-2 py-0.5 rounded text-[10px] bg-cyan-900/50 hover:bg-cyan-800/60 border border-cyan-500/30 transition"
+          >
+            Dismiss
+          </button>
         </div>
       )}
 

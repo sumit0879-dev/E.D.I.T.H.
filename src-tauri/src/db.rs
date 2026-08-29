@@ -1149,24 +1149,38 @@ pub fn delete_browser_profile_record(conn: &Connection, profile_id: &str) -> Res
 // ============================================================================
 
 pub fn save_browser_tabs(conn: &Connection, tabs: &[BrowserTabRecord]) -> Result<()> {
-    conn.execute("DELETE FROM browser_tabs", [])?;
-    for (i, tab) in tabs.iter().enumerate() {
-        conn.execute(
-            "INSERT INTO browser_tabs (id, url, title, profile_id, is_pinned, is_active, position, group_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-            params![
-                tab.id,
-                tab.url,
-                tab.title,
-                tab.profile_id,
-                if tab.is_pinned { 1 } else { 0 },
-                if tab.is_active { 1 } else { 0 },
-                i as i64,
-                tab.group_id,
-            ],
-        )?;
+    conn.execute("BEGIN IMMEDIATE;", [])?;
+    let res = (|| -> Result<()> {
+        conn.execute("DELETE FROM browser_tabs", [])?;
+        for (i, tab) in tabs.iter().enumerate() {
+            conn.execute(
+                "INSERT INTO browser_tabs (id, url, title, profile_id, is_pinned, is_active, position, group_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    tab.id,
+                    tab.url,
+                    tab.title,
+                    tab.profile_id,
+                    if tab.is_pinned { 1 } else { 0 },
+                    if tab.is_active { 1 } else { 0 },
+                    i as i64,
+                    tab.group_id,
+                ],
+            )?;
+        }
+        Ok(())
+    })();
+
+    match res {
+        Ok(()) => {
+            conn.execute("COMMIT;", [])?;
+            Ok(())
+        }
+        Err(e) => {
+            let _ = conn.execute("ROLLBACK;", []);
+            Err(e)
+        }
     }
-    Ok(())
 }
 
 pub fn load_browser_tabs(conn: &Connection) -> Result<Vec<BrowserTabRecord>> {

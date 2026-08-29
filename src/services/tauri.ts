@@ -45,6 +45,7 @@ import type {
   FindResult,
   ReaderDocument,
   BrowserTabGroup,
+  RecoveryReport,
 } from '../types';
 
 export const isTauri = () => {
@@ -1730,6 +1731,24 @@ export async function browserSaveSession(): Promise<boolean> {
 export async function browserRestoreSession(bounds?: BrowserViewportBounds): Promise<BrowserTabInfo[]> {
   if (!isTauri()) return [];
   return await invoke<BrowserTabInfo[]>('browser_restore_session', { bounds });
+}
+
+export async function browserRunStartupRecovery(): Promise<RecoveryReport> {
+  if (!isTauri()) {
+    return {
+      recovered_tabs: 0,
+      skipped_tabs: 0,
+      repaired_groups: 0,
+      invalidated_approvals: 0,
+      interrupted_downloads: 0,
+      interrupted_agent_tasks: 0,
+      profile_issues: [],
+      database_issues: [],
+      recovery_time_ms: 2,
+      notice: null,
+    };
+  }
+  return await invoke<RecoveryReport>('browser_run_startup_recovery');
 }
 
 // --- Phase 5.6E Privacy & Content Blocking IPC ---

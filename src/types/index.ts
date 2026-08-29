@@ -618,4 +618,18 @@ export interface ReaderDocument {
   extracted_at: number;
 }
 
+// --- Phase 5.7C Crash Recovery & State Integrity Types ---
+export interface RecoveryReport {
+  recovered_tabs: number;
+  skipped_tabs: number;
+  repaired_groups: number;
+  invalidated_approvals: number;
+  interrupted_downloads: number;
+  interrupted_agent_tasks: number;
+  profile_issues: string[];
+  database_issues: string[];
+  recovery_time_ms: number;
+  notice?: string | null;
+}
+
 
