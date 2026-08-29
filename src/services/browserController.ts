@@ -6,6 +6,7 @@ import type {
   BrowserInfo,
   PageObservationSnapshot,
   ScreenshotResult,
+  BrowserActionResult,
 } from '../types';
 
 /**
@@ -208,6 +209,68 @@ class BrowserController {
       await tauriService.browserShowActive(this.currentBounds || undefined);
       this.notify();
     }
+  }
+
+  // --- Phase 4A Browser Interaction & Action Layer APIs ---
+  public async clickElement(elementId: string, tabId?: string): Promise<BrowserActionResult> {
+    const targetId = tabId || this.activeTabId || 'tab_a';
+    const result = await tauriService.browserClickElement(targetId, elementId);
+    if (result.url_changed && result.resulting_url) {
+      const tab = this.tabs.find((t) => t.id === targetId);
+      if (tab) {
+        tab.url = result.resulting_url;
+        this.notify();
+      }
+    }
+    return result;
+  }
+
+  public async typeElement(
+    elementId: string,
+    text: string,
+    clearFirst?: boolean,
+    tabId?: string
+  ): Promise<BrowserActionResult> {
+    const targetId = tabId || this.activeTabId || 'tab_a';
+    return await tauriService.browserTypeElement(targetId, elementId, text, clearFirst);
+  }
+
+  public async scroll(
+    direction: string,
+    amount?: number,
+    tabId?: string
+  ): Promise<BrowserActionResult> {
+    const targetId = tabId || this.activeTabId || 'tab_a';
+    return await tauriService.browserScroll(targetId, direction, amount);
+  }
+
+  public async pressKey(key: string, tabId?: string): Promise<BrowserActionResult> {
+    const targetId = tabId || this.activeTabId || 'tab_a';
+    return await tauriService.browserPressKey(targetId, key);
+  }
+
+  public async focusElement(elementId: string, tabId?: string): Promise<BrowserActionResult> {
+    const targetId = tabId || this.activeTabId || 'tab_a';
+    return await tauriService.browserFocusElement(targetId, elementId);
+  }
+
+  public async wait(
+    condition: string,
+    target?: string,
+    timeoutMs?: number,
+    tabId?: string
+  ): Promise<BrowserActionResult> {
+    const targetId = tabId || this.activeTabId || 'tab_a';
+    return await tauriService.browserWait(targetId, condition, target, timeoutMs);
+  }
+
+  public async selectOption(
+    elementId: string,
+    value: string,
+    tabId?: string
+  ): Promise<BrowserActionResult> {
+    const targetId = tabId || this.activeTabId || 'tab_a';
+    return await tauriService.browserSelectOption(targetId, elementId, value);
   }
 
   // --- Phase 3 Live Observation & Screenshot APIs ---

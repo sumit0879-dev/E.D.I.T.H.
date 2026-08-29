@@ -9,6 +9,7 @@ import {
   Eye,
   Camera,
   CheckCircle2,
+  AlertTriangle,
   Plus,
   X,
   Layers,
@@ -16,6 +17,12 @@ import {
   RefreshCw,
   Loader2,
   Code2,
+  MousePointer,
+  Keyboard,
+  ArrowUpDown,
+  Play,
+  Clock,
+  ShieldCheck,
 } from 'lucide-react';
 import { browserController } from '../services/browserController';
 import { isTauri } from '../services/tauri';
@@ -24,6 +31,8 @@ import type {
   BrowserMultiStateInfo,
   PageObservationSnapshot,
   ScreenshotResult,
+  BrowserActionResult,
+  ElementInfo,
 } from '../types';
 
 export const BrowserView: React.FC = () => {
@@ -42,6 +51,17 @@ export const BrowserView: React.FC = () => {
   const [inspectTabId, setInspectTabId] = useState<string>('tab_a');
   const [screenshotPreview, setScreenshotPreview] = useState<ScreenshotResult | null>(null);
   const [isCapturingScreen, setIsCapturingScreen] = useState(false);
+
+  // Phase 4A Action Layer States
+  const [showActionPanel, setShowActionPanel] = useState(false);
+  const [selectedAction, setSelectedAction] = useState<'click' | 'type' | 'scroll' | 'press_key' | 'focus' | 'wait'>('click');
+  const [targetElementId, setTargetElementId] = useState<string>('');
+  const [typeText, setTypeText] = useState<string>('Hello from E.D.I.T.H.');
+  const [scrollDirection, setScrollDirection] = useState<string>('down');
+  const [keyToPress, setKeyToPress] = useState<string>('Enter');
+  const [waitCondition, setWaitCondition] = useState<string>('timeout');
+  const [isExecutingAction, setIsExecutingAction] = useState(false);
+  const [lastActionResult, setLastActionResult] = useState<BrowserActionResult | null>(null);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const omniboxInputRef = useRef<HTMLInputElement>(null);
@@ -130,10 +150,9 @@ export const BrowserView: React.FC = () => {
     };
   }, [syncBounds, isOmniboxFocused]);
 
-  // Phase 3 Keyboard Shortcuts (Part A)
+  // Phase 3 Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
-      // Ctrl+T: New Tab
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 't') {
         e.preventDefault();
         const newId = `tab_${Date.now().toString(36)}`;
@@ -142,7 +161,6 @@ export const BrowserView: React.FC = () => {
         return;
       }
 
-      // Ctrl+Shift+T: Reopen Last Closed Tab
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 't') {
         e.preventDefault();
         const restored = await browserController.reopenLastClosedTab();
@@ -150,7 +168,6 @@ export const BrowserView: React.FC = () => {
         return;
       }
 
-      // Ctrl+W: Close Current Tab
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         if (browserState.active_tab_id) {
@@ -159,7 +176,6 @@ export const BrowserView: React.FC = () => {
         return;
       }
 
-      // Ctrl+Tab / Ctrl+Shift+Tab: Cycle Tabs
       if ((e.ctrlKey || e.metaKey) && e.key === 'Tab') {
         e.preventDefault();
         if (e.shiftKey) {
@@ -170,7 +186,6 @@ export const BrowserView: React.FC = () => {
         return;
       }
 
-      // Ctrl+L: Focus Omnibox
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
         e.preventDefault();
         omniboxInputRef.current?.focus();
@@ -178,21 +193,18 @@ export const BrowserView: React.FC = () => {
         return;
       }
 
-      // Ctrl+R: Reload
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
         e.preventDefault();
         await browserController.reload();
         return;
       }
 
-      // Alt+Left: Back
       if (e.altKey && e.key === 'ArrowLeft') {
         e.preventDefault();
         await browserController.goBack();
         return;
       }
 
-      // Alt+Right: Forward
       if (e.altKey && e.key === 'ArrowRight') {
         e.preventDefault();
         await browserController.goForward();
@@ -284,7 +296,7 @@ export const BrowserView: React.FC = () => {
     }
   };
 
-  // Phase 3 Live DOM Observation Handler (Part I, J, K)
+  // Live DOM Observation Handler
   const handleObserveLiveTab = async () => {
     const targetId = inspectTabId || browserState.active_tab_id || 'tab_a';
     setIsObserving(true);
@@ -293,6 +305,9 @@ export const BrowserView: React.FC = () => {
     try {
       const snapshot = await browserController.observeTab(targetId);
       setLiveSnapshot(snapshot);
+      if (snapshot.interactive_elements.length > 0 && !targetElementId) {
+        setTargetElementId(snapshot.interactive_elements[0].id);
+      }
     } catch (err: any) {
       console.error(`Live observation error for ${targetId}:`, err);
     } finally {
@@ -300,7 +315,7 @@ export const BrowserView: React.FC = () => {
     }
   };
 
-  // Phase 3 Native Viewport Screenshot Handler (Part N)
+  // Screenshot Handler
   const handleCaptureScreenshot = async () => {
     const targetId = browserState.active_tab_id || 'tab_a';
     setIsCapturingScreen(true);
@@ -311,6 +326,60 @@ export const BrowserView: React.FC = () => {
       console.error('Screenshot error:', err);
     } finally {
       setIsCapturingScreen(false);
+    }
+  };
+
+  // Phase 4A Action Layer Execution with Verification Loop (Step 16)
+  const handleExecuteAction = async () => {
+    const targetId = browserState.active_tab_id || 'tab_a';
+    setIsExecutingAction(true);
+    setLastActionResult(null);
+
+    try {
+      let result: BrowserActionResult;
+
+      switch (selectedAction) {
+        case 'click':
+          result = await browserController.clickElement(targetElementId, targetId);
+          break;
+        case 'type':
+          result = await browserController.typeElement(targetElementId, typeText, true, targetId);
+          break;
+        case 'scroll':
+          result = await browserController.scroll(scrollDirection, 350, targetId);
+          break;
+        case 'press_key':
+          result = await browserController.pressKey(keyToPress, targetId);
+          break;
+        case 'focus':
+          result = await browserController.focusElement(targetElementId, targetId);
+          break;
+        case 'wait':
+          result = await browserController.wait(waitCondition, targetElementId || undefined, 2000, targetId);
+          break;
+      }
+
+      setLastActionResult(result);
+
+      // Verification loop: Re-observe DOM to confirm effect
+      setTimeout(async () => {
+        try {
+          const refreshed = await browserController.observeTab(targetId);
+          setLiveSnapshot(refreshed);
+        } catch (e) {}
+      }, 300);
+    } catch (err: any) {
+      setLastActionResult({
+        success: false,
+        action: selectedAction,
+        tab_id: targetId,
+        page_changed: false,
+        url_changed: false,
+        error: String(err),
+        error_code: 'ACTION_EXECUTION_ERROR',
+      });
+    } finally {
+      setIsExecutingAction(false);
     }
   };
 
@@ -428,45 +497,204 @@ export const BrowserView: React.FC = () => {
           </div>
         </form>
 
-        {/* Action Controls: Live DOM Observer & Screenshot */}
+        {/* Action Controls: Live DOM Observer, Action Playground, & Screenshot */}
         <div className="flex items-center space-x-1.5">
-          <div className="flex items-center gap-1 bg-[#090e1a] border border-white/[0.08] rounded-xl px-2 py-0.5">
-            <Layers className="w-3 h-3 text-cyan-400" />
-            <select
-              value={inspectTabId}
-              onChange={(e) => setInspectTabId(e.target.value)}
-              className="bg-transparent text-[11px] font-mono text-cyan-300 focus:outline-none cursor-pointer"
-              title="Select Tab for Live Observation"
-            >
-              {browserState.tabs.map((t) => (
-                <option key={t.id} value={t.id} className="bg-[#090e1a] text-slate-200">
-                  {t.id}: {t.title.slice(0, 16)}...
-                </option>
-              ))}
-            </select>
-          </div>
+          <button
+            onClick={() => setShowActionPanel(!showActionPanel)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
+              showActionPanel
+                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-cyan-glow-xs'
+                : 'bg-[#090e1a] border-white/[0.08] text-slate-300 hover:text-cyan-300'
+            }`}
+            title="Toggle Phase 4A Action Layer Playground"
+          >
+            <Play className="w-3.5 h-3.5 text-cyan-400" />
+            <span className="hidden sm:inline">Actions (4A)</span>
+          </button>
 
           <button
             onClick={handleObserveLiveTab}
             disabled={isObserving}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-cyan-950/60 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-900/50 hover:border-cyan-400 transition text-[11px] font-mono shadow-cyan-glow-xs"
-            title="Inspect Live Rendered DOM & Elements (Phase 3)"
+            title="Inspect Live Rendered DOM & Elements"
           >
             {isObserving ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Eye className="w-3.5 h-3.5" />}
-            <span className="hidden sm:inline">Observe DOM</span>
+            <span className="hidden sm:inline">Observe</span>
           </button>
 
           <button
             onClick={handleCaptureScreenshot}
             disabled={isCapturingScreen}
             className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-emerald-950/60 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-900/50 hover:border-emerald-400 transition text-[11px] font-mono shadow-emerald-glow-xs"
-            title="Capture Native Viewport Screenshot (Phase 3)"
+            title="Capture Native Viewport Screenshot"
           >
             {isCapturingScreen ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Camera className="w-3.5 h-3.5" />}
             <span className="hidden sm:inline">Capture</span>
           </button>
         </div>
       </div>
+
+      {/* Phase 4A Action Layer Playground Drawer */}
+      {showActionPanel && (
+        <div className="bg-[#050b16] border-b border-cyan-500/30 p-3 text-xs text-cyan-200 flex flex-col gap-2 shrink-0 z-10 font-mono animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-cyan-300">
+              <MousePointer className="w-4 h-4 text-cyan-400" />
+              Phase 4A Interaction & Action Layer Testing Console
+            </div>
+            <button
+              onClick={() => setShowActionPanel(false)}
+              className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+            >
+              Close
+            </button>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {/* Action Type Selector */}
+            <div className="flex items-center gap-1 bg-[#091122] border border-white/10 rounded-lg p-1">
+              {(['click', 'type', 'scroll', 'press_key', 'focus', 'wait'] as const).map((act) => (
+                <button
+                  key={act}
+                  onClick={() => setSelectedAction(act)}
+                  className={`px-2 py-0.5 rounded text-[11px] transition ${
+                    selectedAction === act
+                      ? 'bg-cyan-500/30 text-cyan-300 font-bold border border-cyan-500/40'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  {act.toUpperCase()}
+                </button>
+              ))}
+            </div>
+
+            {/* Target Element Picker (For Click, Type, Focus) */}
+            {(selectedAction === 'click' || selectedAction === 'type' || selectedAction === 'focus') && (
+              <div className="flex items-center gap-1.5 flex-1 min-w-[200px]">
+                <span className="text-slate-400 text-[11px]">Target:</span>
+                {liveSnapshot && liveSnapshot.interactive_elements.length > 0 ? (
+                  <select
+                    value={targetElementId}
+                    onChange={(e) => setTargetElementId(e.target.value)}
+                    className="bg-[#091122] border border-white/10 rounded-lg px-2 py-1 text-[11px] text-cyan-300 flex-1 focus:outline-none cursor-pointer"
+                  >
+                    {liveSnapshot.interactive_elements.map((el) => (
+                      <option key={el.id} value={el.id} className="bg-[#050b16] text-slate-200">
+                        {el.id} (&lt;{el.tag}&gt; {el.text ? `"${el.text.slice(0, 20)}"` : ''} {el.is_password ? '[PASSWORD-PROTECTED]' : ''})
+                      </option>
+                    ))}
+                  </select>
+                ) : (
+                  <input
+                    type="text"
+                    value={targetElementId}
+                    onChange={(e) => setTargetElementId(e.target.value)}
+                    placeholder="Enter element_id (e.g. id_submit_btn or el_button_...)"
+                    className="bg-[#091122] border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-100 flex-1 focus:outline-none"
+                  />
+                )}
+              </div>
+            )}
+
+            {/* Type Text Field */}
+            {selectedAction === 'type' && (
+              <div className="flex items-center gap-1.5 flex-1 min-w-[180px]">
+                <span className="text-slate-400 text-[11px]">Text:</span>
+                <input
+                  type="text"
+                  value={typeText}
+                  onChange={(e) => setTypeText(e.target.value)}
+                  placeholder="Text to type..."
+                  className="bg-[#091122] border border-white/10 rounded-lg px-2 py-1 text-[11px] text-slate-100 flex-1 focus:outline-none"
+                />
+              </div>
+            )}
+
+            {/* Scroll Direction Picker */}
+            {selectedAction === 'scroll' && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-400 text-[11px]">Direction:</span>
+                <select
+                  value={scrollDirection}
+                  onChange={(e) => setScrollDirection(e.target.value)}
+                  className="bg-[#091122] border border-white/10 rounded-lg px-2 py-1 text-[11px] text-cyan-300 focus:outline-none cursor-pointer"
+                >
+                  <option value="down">DOWN</option>
+                  <option value="up">UP</option>
+                  <option value="top">TOP</option>
+                  <option value="bottom">BOTTOM</option>
+                  <option value="left">LEFT</option>
+                  <option value="right">RIGHT</option>
+                </select>
+              </div>
+            )}
+
+            {/* Key Press Picker */}
+            {selectedAction === 'press_key' && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-slate-400 text-[11px]">Key:</span>
+                <select
+                  value={keyToPress}
+                  onChange={(e) => setKeyToPress(e.target.value)}
+                  className="bg-[#091122] border border-white/10 rounded-lg px-2 py-1 text-[11px] text-cyan-300 focus:outline-none cursor-pointer"
+                >
+                  <option value="Enter">Enter</option>
+                  <option value="Escape">Escape</option>
+                  <option value="Tab">Tab</option>
+                  <option value="Backspace">Backspace</option>
+                  <option value="ArrowDown">ArrowDown</option>
+                  <option value="ArrowUp">ArrowUp</option>
+                  <option value="ArrowLeft">ArrowLeft</option>
+                  <option value="ArrowRight">ArrowRight</option>
+                  <option value="Space">Space</option>
+                  <option value="Home">Home</option>
+                  <option value="End">End</option>
+                </select>
+              </div>
+            )}
+
+            {/* Execute Action Button */}
+            <button
+              onClick={handleExecuteAction}
+              disabled={isExecutingAction}
+              className="flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600/80 hover:bg-emerald-500 text-white font-bold text-[11px] transition shadow-md"
+            >
+              {isExecutingAction ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Play className="w-3.5 h-3.5" />}
+              Execute Action
+            </button>
+          </div>
+
+          {/* Action Result Inspector */}
+          {lastActionResult && (
+            <div className={`p-2 rounded-lg border text-[11px] mt-1 ${
+              lastActionResult.success
+                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-300'
+                : 'bg-red-950/40 border-red-500/40 text-red-300'
+            }`}>
+              <div className="flex items-center gap-1.5 font-bold">
+                {lastActionResult.success ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-red-400" />
+                )}
+                ActionResult: [{lastActionResult.action.toUpperCase()}] {lastActionResult.success ? 'SUCCESS' : 'FAILED'}
+              </div>
+              <div className="grid grid-cols-3 gap-2 mt-1 text-[10px] text-slate-300">
+                <div>Tab: <span className="text-white font-mono">{lastActionResult.tab_id}</span></div>
+                <div>Element: <span className="text-white font-mono">{lastActionResult.element_id || 'None'}</span></div>
+                <div>Page Mutated: <span className="text-cyan-300">{lastActionResult.page_changed ? 'Yes' : 'No'}</span></div>
+                <div>URL Changed: <span className="text-cyan-300">{lastActionResult.url_changed ? 'Yes' : 'No'}</span></div>
+                {lastActionResult.resulting_url && (
+                  <div className="col-span-2 truncate">Resulting URL: <span className="text-white font-mono">{lastActionResult.resulting_url}</span></div>
+                )}
+                {lastActionResult.error && (
+                  <div className="col-span-3 text-red-300 font-bold">Error: {lastActionResult.error} ({lastActionResult.error_code})</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Live Observation Snapshot Drawer */}
       {liveSnapshot && (
@@ -493,11 +721,19 @@ export const BrowserView: React.FC = () => {
 
           {liveSnapshot.interactive_elements.length > 0 && (
             <div className="border border-white/10 rounded-lg p-2 bg-black/40 overflow-x-auto">
-              <div className="text-[10px] text-slate-400 font-bold mb-1">Interactive Elements Sample (Tag, Text, Bounds):</div>
+              <div className="text-[10px] text-slate-400 font-bold mb-1">Interactive Elements with Generated EIDs:</div>
               <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                {liveSnapshot.interactive_elements.slice(0, 15).map((el, i) => (
-                  <span key={i} className="px-1.5 py-0.5 rounded bg-cyan-950/70 border border-cyan-500/20 text-[10px] text-cyan-200">
-                    &lt;{el.tag}&gt; &quot;{el.text || el.id || 'anonymous'}&quot; {el.bounding_box ? `[${Math.round(el.bounding_box.width)}x${Math.round(el.bounding_box.height)}]` : ''}
+                {liveSnapshot.interactive_elements.slice(0, 20).map((el, i) => (
+                  <span
+                    key={i}
+                    onClick={() => {
+                      setTargetElementId(el.id);
+                      setShowActionPanel(true);
+                    }}
+                    className="px-1.5 py-0.5 rounded bg-cyan-950/70 border border-cyan-500/20 text-[10px] text-cyan-200 cursor-pointer hover:border-cyan-400 transition"
+                    title={`Click to set as Action target: ${el.id}`}
+                  >
+                    [{el.id}] &lt;{el.tag}&gt; &quot;{el.text || 'anonymous'}&quot; {el.is_password ? '[PW]' : ''}
                   </span>
                 ))}
               </div>
@@ -551,7 +787,7 @@ export const BrowserView: React.FC = () => {
             </p>
             <div className="w-full bg-slate-900/90 rounded-xl p-3 border border-white/5 text-left font-mono text-[10px] space-y-2">
               <div className="text-emerald-400 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Phase 3 Live DOM Observation Active
+                <CheckCircle2 className="w-3.5 h-3.5" /> Phase 4A Action Layer Active
               </div>
               <div className="text-cyan-300">
                 Active Tab: <span className="text-white font-bold">{activeTab?.id || 'None'}</span> ({activeTab?.label})
@@ -582,7 +818,7 @@ export const BrowserView: React.FC = () => {
         <div className="flex items-center gap-3">
           <span className="text-slate-500">Shortcuts: Ctrl+T, Ctrl+W, Ctrl+Shift+T, Ctrl+Tab, Ctrl+L</span>
           <span className="text-slate-600">|</span>
-          <span className="text-cyan-400/80">Phase 3 Hardened Core</span>
+          <span className="text-cyan-400/80">Phase 4A Action Layer</span>
         </div>
       </div>
     </div>

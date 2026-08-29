@@ -19,6 +19,7 @@ import type {
   PageObservationSnapshot,
   ScreenshotResult,
   ElementInfo,
+  BrowserActionResult,
 } from '../types';
 
 export const isTauri = () => {
@@ -913,6 +914,128 @@ export async function browserScreenshotTab(tabId: string, bounds?: BrowserViewpo
 export async function browserReopenLastClosedTab(bounds?: BrowserViewportBounds): Promise<BrowserTabInfo | null> {
   if (!isTauri()) return null;
   return await invoke<BrowserTabInfo | null>('browser_reopen_last_closed_tab', { bounds });
+}
+
+// --- Phase 4A Browser Interaction / Action Layer Methods ---
+export async function browserClickElement(tabId: string, elementId: string): Promise<BrowserActionResult> {
+  if (!isTauri()) {
+    return {
+      success: true,
+      action: 'click',
+      tab_id: tabId,
+      element_id: elementId,
+      page_changed: true,
+      url_changed: false,
+      resulting_url: 'https://example.com',
+    };
+  }
+  return await invoke<BrowserActionResult>('browser_click_element', { tabId, elementId });
+}
+
+export async function browserTypeElement(
+  tabId: string,
+  elementId: string,
+  text: string,
+  clearFirst?: boolean
+): Promise<BrowserActionResult> {
+  if (!isTauri()) {
+    return {
+      success: true,
+      action: 'type',
+      tab_id: tabId,
+      element_id: elementId,
+      page_changed: true,
+      url_changed: false,
+      resulting_url: 'https://example.com',
+    };
+  }
+  return await invoke<BrowserActionResult>('browser_type_element', {
+    tabId,
+    elementId,
+    text,
+    clearFirst: clearFirst ?? true,
+  });
+}
+
+export async function browserScroll(
+  tabId: string,
+  direction: string,
+  amount?: number
+): Promise<BrowserActionResult> {
+  if (!isTauri()) {
+    return {
+      success: true,
+      action: `scroll_${direction}`,
+      tab_id: tabId,
+      page_changed: true,
+      url_changed: false,
+    };
+  }
+  return await invoke<BrowserActionResult>('browser_scroll', { tabId, direction, amount });
+}
+
+export async function browserPressKey(tabId: string, key: string): Promise<BrowserActionResult> {
+  if (!isTauri()) {
+    return {
+      success: true,
+      action: `press_key_${key}`,
+      tab_id: tabId,
+      page_changed: true,
+      url_changed: false,
+    };
+  }
+  return await invoke<BrowserActionResult>('browser_press_key', { tabId, key });
+}
+
+export async function browserFocusElement(tabId: string, elementId: string): Promise<BrowserActionResult> {
+  if (!isTauri()) {
+    return {
+      success: true,
+      action: 'focus',
+      tab_id: tabId,
+      element_id: elementId,
+      page_changed: false,
+      url_changed: false,
+    };
+  }
+  return await invoke<BrowserActionResult>('browser_focus_element', { tabId, elementId });
+}
+
+export async function browserWait(
+  tabId: string,
+  condition: string,
+  target?: string,
+  timeoutMs?: number
+): Promise<BrowserActionResult> {
+  if (!isTauri()) {
+    return {
+      success: true,
+      action: `wait_${condition}`,
+      tab_id: tabId,
+      element_id: target,
+      page_changed: false,
+      url_changed: false,
+    };
+  }
+  return await invoke<BrowserActionResult>('browser_wait', { tabId, condition, target, timeoutMs });
+}
+
+export async function browserSelectOption(
+  tabId: string,
+  elementId: string,
+  value: string
+): Promise<BrowserActionResult> {
+  if (!isTauri()) {
+    return {
+      success: true,
+      action: 'select_option',
+      tab_id: tabId,
+      element_id: elementId,
+      page_changed: true,
+      url_changed: false,
+    };
+  }
+  return await invoke<BrowserActionResult>('browser_select_option', { tabId, elementId, value });
 }
 
 // --- Legacy Phase 1 Delegate Methods ---

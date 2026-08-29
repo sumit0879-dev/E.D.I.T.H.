@@ -116,7 +116,7 @@ export interface BrowserElementBounds {
 }
 
 export interface ElementInfo {
-  id?: string;
+  id: string;
   tag: string;
   role?: string;
   text: string;
@@ -125,7 +125,21 @@ export interface ElementInfo {
   input_type?: string;
   disabled: boolean;
   visible: boolean;
+  is_password?: boolean;
+  is_in_iframe?: boolean;
   bounding_box?: BrowserElementBounds;
+}
+
+export interface BrowserActionResult {
+  success: boolean;
+  action: string;
+  tab_id: string;
+  element_id?: string;
+  page_changed: boolean;
+  url_changed: boolean;
+  resulting_url?: string;
+  error?: string;
+  error_code?: string;
 }
 
 export interface PageObservationSnapshot {

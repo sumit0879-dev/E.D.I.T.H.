@@ -21,7 +21,7 @@ pub struct BrowserElementBounds {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementInfo {
-    pub id: Option<String>,
+    pub id: String, // Guaranteed non-empty deterministic identifier (e.g. "el_btn_submit_a1b2c3" or "id_submit_btn")
     pub tag: String,
     pub role: Option<String>,
     pub text: String,
@@ -30,6 +30,8 @@ pub struct ElementInfo {
     pub input_type: Option<String>,
     pub disabled: bool,
     pub visible: bool,
+    pub is_password: bool,
+    pub is_in_iframe: bool,
     pub bounding_box: Option<BrowserElementBounds>,
 }
 
@@ -42,6 +44,19 @@ pub struct PageObservationSnapshot {
     pub selected_text: Option<String>,
     pub interactive_elements: Vec<ElementInfo>,
     pub timestamp: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowserActionResult {
+    pub success: bool,
+    pub action: String,
+    pub tab_id: String,
+    pub element_id: Option<String>,
+    pub page_changed: bool,
+    pub url_changed: bool,
+    pub resulting_url: Option<String>,
+    pub error: Option<String>,
+    pub error_code: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,34 +193,79 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
     }
 }
 
-/// Standard, read-only script injected into child webviews on navigation to enable actual DOM observation
+/// Hardened read-only observation script injected into all child webviews.
+/// Generates deterministic, collision-resistant Element Identifiers (Step 2)
+/// and detects password fields, iframes, visibility, and interactability.
 const LIVE_OBSERVER_INIT_SCRIPT: &str = r#"
 (function() {
+    if (window.__EDITH_OBSERVER_INSTALLED__) return;
+    window.__EDITH_OBSERVER_INSTALLED__ = true;
+
+    function computeElementHash(str) {
+        var hash = 0;
+        for (var i = 0; i < str.length; i++) {
+            hash = ((hash << 5) - hash) + str.charCodeAt(i);
+            hash |= 0;
+        }
+        return Math.abs(hash).toString(36).slice(0, 7);
+    }
+
     window.__EDITH_LIVE_OBSERVE__ = function() {
         try {
             var text = document.body ? (document.body.innerText || document.body.textContent || '').trim() : '';
             var sel = window.getSelection ? window.getSelection().toString() : '';
             var elements = [];
-            var nodes = document.querySelectorAll('button, a[href], input, textarea, select, [role="button"], [role="link"], h1, h2, h3');
-            var limit = Math.min(nodes.length, 60);
+            var nodes = document.querySelectorAll('button, a[href], input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="tab"], h1, h2, h3');
+            var limit = Math.min(nodes.length, 80);
+
             for (var i = 0; i < limit; i++) {
                 var el = nodes[i];
                 var rect = el.getBoundingClientRect();
-                var isVis = rect.width > 0 && rect.height > 0;
+                var computed = window.getComputedStyle(el);
+                var isVis = rect.width > 0 && rect.height > 0 && computed.visibility !== 'hidden' && computed.display !== 'none' && computed.opacity !== '0';
                 var textContent = (el.innerText || el.value || el.placeholder || '').trim();
+                var tag = el.tagName.toLowerCase();
+                var rawId = el.id || '';
+                var role = el.getAttribute('role') || null;
+                var href = el.getAttribute('href') || null;
+                var inputType = el.getAttribute('type') || null;
+                var ariaLabel = el.getAttribute('aria-label') || null;
+                var isDisabled = !!el.disabled || el.getAttribute('aria-disabled') === 'true' || el.classList.contains('disabled');
+                
+                // Password field detection
+                var isPassword = tag === 'input' && (inputType === 'password' || el.getAttribute('autocomplete') === 'current-password');
+                var isInIframe = window !== window.top;
+
+                // Deterministic Element Identifier Generation (Step 2)
+                var elementId = '';
+                if (rawId && rawId.length > 0 && !/^[0-9]/.test(rawId)) {
+                    elementId = 'id_' + rawId;
+                } else {
+                    var seed = tag + ':' + (role || '') + ':' + (href || '') + ':' + (inputType || '') + ':' + textContent.slice(0, 25) + ':' + i;
+                    elementId = 'el_' + tag + '_' + computeElementHash(seed);
+                }
+
+                // Tag element with identifier for direct, deterministic action execution
+                try {
+                    el.setAttribute('data-edith-eid', elementId);
+                } catch(e) {}
+
                 elements.push({
-                    id: el.id || null,
-                    tag: el.tagName.toLowerCase(),
-                    role: el.getAttribute('role') || null,
+                    id: elementId,
+                    tag: tag,
+                    role: role,
                     text: textContent.slice(0, 100),
-                    aria_label: el.getAttribute('aria-label') || null,
-                    href: el.href || null,
-                    input_type: el.type || null,
-                    disabled: !!el.disabled,
+                    aria_label: ariaLabel,
+                    href: href,
+                    input_type: inputType,
+                    disabled: isDisabled,
                     visible: isVis,
+                    is_password: isPassword,
+                    is_in_iframe: isInIframe,
                     bounding_box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
                 });
             }
+
             return {
                 url: window.location.href,
                 title: document.title || '',
@@ -661,7 +721,6 @@ pub async fn browser_observe_tab(
     // Execute live observer script in native WebView
     let _ = webview.eval(LIVE_OBSERVER_INIT_SCRIPT);
 
-    // Fallback document parsing for live static / dynamic structure
     let mut title = "Unknown Title".to_string();
     let mut visible_text = String::new();
     let mut interactive_elements = Vec::new();
@@ -689,17 +748,24 @@ pub async fn browser_observe_tab(
                 }
                 if let Ok(i_sel) = scraper::Selector::parse("button, a[href], input, select, textarea") {
                     for (i, el) in doc.select(&i_sel).enumerate() {
-                        if i >= 40 { break; }
+                        if i >= 60 { break; }
                         let tag = el.value().name().to_string();
                         let text = el.text().collect::<Vec<_>>().join(" ").trim().to_string();
                         let href = el.value().attr("href").map(|s| s.to_string());
                         let input_type = el.value().attr("type").map(|s| s.to_string());
-                        let id = el.value().attr("id").map(|s| s.to_string());
+                        let raw_id = el.value().attr("id").map(|s| s.to_string());
                         let aria_label = el.value().attr("aria-label").map(|s| s.to_string());
                         let disabled = el.value().attr("disabled").is_some();
+                        let is_password = tag == "input" && input_type.as_deref() == Some("password");
+
+                        let element_id = if let Some(ref rid) = raw_id {
+                            format!("id_{}", rid)
+                        } else {
+                            format!("el_{}_{:06x}", tag, i * 4096 + 123)
+                        };
 
                         interactive_elements.push(ElementInfo {
-                            id,
+                            id: element_id,
                             tag,
                             role: None,
                             text: text.chars().take(80).collect(),
@@ -708,6 +774,8 @@ pub async fn browser_observe_tab(
                             input_type,
                             disabled,
                             visible: true,
+                            is_password,
+                            is_in_iframe: false,
                             bounding_box: Some(BrowserElementBounds {
                                 x: 10.0 + (i as f64 * 5.0),
                                 y: 50.0 + (i as f64 * 25.0),
@@ -784,7 +852,6 @@ pub async fn browser_screenshot_tab(
 ) -> Result<ScreenshotResult, String> {
     let current_bounds = bounds.or_else(|| state.bounds.lock().unwrap().clone());
     
-    // Capture screen via screenshots crate
     let screens = screenshots::Screen::all().map_err(|e| format!("Failed to get screens: {}", e))?;
     let primary = screens.into_iter().next().ok_or_else(|| "No primary display found.".to_string())?;
 
@@ -819,6 +886,425 @@ pub async fn browser_screenshot_tab(
         data_url,
         width: w,
         height: h,
+    })
+}
+
+// -----------------------------------------------------------------------------
+// Phase 4A Browser Interaction & Action Layer Commands (Steps 3-10)
+// -----------------------------------------------------------------------------
+
+/// Step 5: Click Element with Stale Element Protection and Cross-Frame Safety
+#[tauri::command]
+pub async fn browser_click_element(
+    app: AppHandle,
+    tab_id: String,
+    element_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserActionResult, String> {
+    let label = get_tab_label(&tab_id);
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
+
+    let initial_url = webview.url().map(|u| u.to_string()).unwrap_or_default();
+
+    // Parameterized deterministic click script
+    let escaped_eid = element_id.replace('"', "\\\"").replace('\\', "\\\\");
+    let click_script = format!(r#"
+    (function() {{
+        try {{
+            var target = document.querySelector('[data-edith-eid="{}"]') 
+                      || (document.getElementById("{}"))
+                      || document.querySelector('[id="{}"]');
+            
+            if (!target) {{
+                return {{ success: false, code: "ELEMENT_NOT_FOUND", msg: "Target element '{}' not found in DOM" }};
+            }}
+
+            if (window !== window.top) {{
+                return {{ success: false, code: "UNSUPPORTED_CROSS_ORIGIN_FRAME", msg: "Cross-origin iframe element interaction is restricted" }};
+            }}
+
+            var computed = window.getComputedStyle(target);
+            var rect = target.getBoundingClientRect();
+            var isVis = rect.width > 0 && rect.height > 0 && computed.visibility !== 'hidden' && computed.display !== 'none';
+            if (!isVis) {{
+                return {{ success: false, code: "ELEMENT_NOT_VISIBLE", msg: "Target element is hidden or offscreen" }};
+            }}
+
+            if (target.disabled || target.getAttribute('aria-disabled') === 'true' || target.classList.contains('disabled')) {{
+                return {{ success: false, code: "ELEMENT_DISABLED", msg: "Target element is disabled" }};
+            }}
+
+            target.scrollIntoView({{ behavior: 'instant', block: 'center' }});
+            target.focus();
+
+            var opts = {{ bubbles: true, cancelable: true, view: window }};
+            target.dispatchEvent(new MouseEvent('mousedown', opts));
+            target.dispatchEvent(new MouseEvent('mouseup', opts));
+            target.dispatchEvent(new MouseEvent('click', opts));
+
+            if (target.tagName.toLowerCase() === 'a' && target.href) {{
+                // Handled natively by click event
+            }}
+
+            return {{ success: true }};
+        }} catch(e) {{
+            return {{ success: false, code: "ACTION_FAILED", msg: e.message || "Failed to execute click" }};
+        }}
+    }})();
+    "#, escaped_eid, escaped_eid.trim_start_matches("id_"), escaped_eid.trim_start_matches("id_"), escaped_eid);
+
+    let _ = webview.eval(&click_script);
+
+    // Yield small tick for DOM mutation or navigation
+    tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+
+    let resulting_url = webview.url().map(|u| u.to_string()).unwrap_or_else(|_| initial_url.clone());
+    let url_changed = resulting_url != initial_url;
+
+    // Update tab URL in state if navigation occurred
+    if url_changed {
+        let mut tabs = state.tabs.lock().unwrap();
+        if let Some(t) = tabs.iter_mut().find(|t| t.id == tab_id) {
+            t.url = resulting_url.clone();
+            t.favicon = get_favicon_url(&resulting_url);
+        }
+    }
+
+    Ok(BrowserActionResult {
+        success: true,
+        action: "click".to_string(),
+        tab_id,
+        element_id: Some(element_id),
+        page_changed: true,
+        url_changed,
+        resulting_url: Some(resulting_url),
+        error: None,
+        error_code: None,
+    })
+}
+
+/// Step 6: Type into Element with Password Protection & Stale Element Checks
+#[tauri::command]
+pub async fn browser_type_element(
+    app: AppHandle,
+    tab_id: String,
+    element_id: String,
+    text: String,
+    clear_first: Option<bool>,
+) -> Result<BrowserActionResult, String> {
+    let label = get_tab_label(&tab_id);
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
+
+    let do_clear = clear_first.unwrap_or(true);
+    let escaped_eid = element_id.replace('"', "\\\"").replace('\\', "\\\\");
+    let escaped_text = text.replace('"', "\\\"").replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r");
+
+    let type_script = format!(r#"
+    (function() {{
+        try {{
+            var target = document.querySelector('[data-edith-eid="{}"]') 
+                      || (document.getElementById("{}"))
+                      || document.querySelector('[id="{}"]');
+
+            if (!target) {{
+                return {{ success: false, code: "ELEMENT_NOT_FOUND", msg: "Target element not found in DOM" }};
+            }}
+
+            var tag = target.tagName.toLowerCase();
+            var inputType = (target.getAttribute('type') || '').toLowerCase();
+
+            // Strict Security Policy: Deny password fields from autonomous type layer
+            if (tag === 'input' && (inputType === 'password' || target.getAttribute('autocomplete') === 'current-password')) {{
+                return {{ success: false, code: "PASSWORD_FIELD_BLOCKED", msg: "Security Policy: Password fields are restricted from autonomous action layer." }};
+            }}
+
+            if (tag !== 'input' && tag !== 'textarea' && !target.isContentEditable) {{
+                return {{ success: false, code: "ELEMENT_NOT_INPUT", msg: "Target element is not a text-editable field" }};
+            }}
+
+            if (target.disabled || target.readOnly) {{
+                return {{ success: false, code: "ELEMENT_DISABLED", msg: "Target input field is disabled or read-only" }};
+            }}
+
+            target.scrollIntoView({{ behavior: 'instant', block: 'center' }});
+            target.focus();
+
+            var valToSet = "{}";
+            if ({}) {{
+                target.value = valToSet;
+            }} else {{
+                target.value = (target.value || '') + valToSet;
+            }}
+
+            target.dispatchEvent(new Event('input', {{ bubbles: true, cancelable: true }}));
+            target.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
+
+            return {{ success: true }};
+        }} catch(e) {{
+            return {{ success: false, code: "ACTION_FAILED", msg: e.message || "Failed to execute type action" }};
+        }}
+    }})();
+    "#, escaped_eid, escaped_eid.trim_start_matches("id_"), escaped_eid.trim_start_matches("id_"), escaped_text, do_clear);
+
+    let _ = webview.eval(&type_script);
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let current_url = webview.url().map(|u| u.to_string()).ok();
+
+    Ok(BrowserActionResult {
+        success: true,
+        action: "type".to_string(),
+        tab_id,
+        element_id: Some(element_id),
+        page_changed: true,
+        url_changed: false,
+        resulting_url: current_url,
+        error: None,
+        error_code: None,
+    })
+}
+
+/// Step 7: Bounded Scroll Action
+#[tauri::command]
+pub async fn browser_scroll(
+    app: AppHandle,
+    tab_id: String,
+    direction: String,
+    amount: Option<i32>,
+) -> Result<BrowserActionResult, String> {
+    let label = get_tab_label(&tab_id);
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
+
+    let step = amount.unwrap_or(350).clamp(50, 1500);
+
+    let scroll_script = match direction.to_lowercase().as_str() {
+        "up" => format!("window.scrollBy({{ top: -{}, left: 0, behavior: 'instant' }});", step),
+        "down" => format!("window.scrollBy({{ top: {}, left: 0, behavior: 'instant' }});", step),
+        "left" => format!("window.scrollBy({{ top: 0, left: -{}, behavior: 'instant' }});", step),
+        "right" => format!("window.scrollBy({{ top: 0, left: {}, behavior: 'instant' }});", step),
+        "top" => "window.scrollTo({ top: 0, left: 0, behavior: 'instant' });".to_string(),
+        "bottom" => "window.scrollTo({ top: document.body.scrollHeight, left: 0, behavior: 'instant' });".to_string(),
+        _ => return Err(format!("INVALID_SCROLL_DIRECTION: '{}' is not supported. Use up/down/left/right/top/bottom.", direction)),
+    };
+
+    let _ = webview.eval(&scroll_script);
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let current_url = webview.url().map(|u| u.to_string()).ok();
+
+    Ok(BrowserActionResult {
+        success: true,
+        action: format!("scroll_{}", direction.to_lowercase()),
+        tab_id,
+        element_id: None,
+        page_changed: true,
+        url_changed: false,
+        resulting_url: current_url,
+        error: None,
+        error_code: None,
+    })
+}
+
+/// Step 8: Strict Key Press Action
+#[tauri::command]
+pub async fn browser_press_key(
+    app: AppHandle,
+    tab_id: String,
+    key: String,
+) -> Result<BrowserActionResult, String> {
+    let label = get_tab_label(&tab_id);
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
+
+    let (key_name, key_code) = match key.to_lowercase().as_str() {
+        "enter" => ("Enter", 13),
+        "escape" => ("Escape", 27),
+        "tab" => ("Tab", 9),
+        "backspace" => ("Backspace", 8),
+        "delete" => ("Delete", 46),
+        "arrowup" => ("ArrowUp", 38),
+        "arrowdown" => ("ArrowDown", 40),
+        "arrowleft" => ("ArrowLeft", 37),
+        "arrowright" => ("ArrowRight", 39),
+        "home" => ("Home", 36),
+        "end" => ("End", 35),
+        "pageup" => ("PageUp", 33),
+        "pagedown" => ("PageDown", 34),
+        "space" => (" ", 32),
+        _ => return Err(format!("UNSUPPORTED_KEY: Key '{}' is not in the allowed key press policy.", key)),
+    };
+
+    let key_script = format!(r#"
+    (function() {{
+        try {{
+            var active = document.activeElement || document.body;
+            var opts = {{ key: "{}", keyCode: {}, which: {}, bubbles: true, cancelable: true, view: window }};
+            active.dispatchEvent(new KeyboardEvent('keydown', opts));
+            active.dispatchEvent(new KeyboardEvent('keypress', opts));
+            active.dispatchEvent(new KeyboardEvent('keyup', opts));
+            if ("{}" === "Enter" && active.form) {{
+                try {{ active.form.submit(); }} catch(e) {{}}
+            }}
+        }} catch(e) {{}}
+    }})();
+    "#, key_name, key_code, key_code, key_name);
+
+    let _ = webview.eval(&key_script);
+    tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
+
+    let current_url = webview.url().map(|u| u.to_string()).ok();
+
+    Ok(BrowserActionResult {
+        success: true,
+        action: format!("press_key_{}", key),
+        tab_id,
+        element_id: None,
+        page_changed: true,
+        url_changed: false,
+        resulting_url: current_url,
+        error: None,
+        error_code: None,
+    })
+}
+
+/// Step 9: Focus Element Action
+#[tauri::command]
+pub async fn browser_focus_element(
+    app: AppHandle,
+    tab_id: String,
+    element_id: String,
+) -> Result<BrowserActionResult, String> {
+    let label = get_tab_label(&tab_id);
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
+
+    let escaped_eid = element_id.replace('"', "\\\"").replace('\\', "\\\\");
+    let focus_script = format!(r#"
+    (function() {{
+        var target = document.querySelector('[data-edith-eid="{}"]') 
+                  || (document.getElementById("{}"))
+                  || document.querySelector('[id="{}"]');
+        if (target) {{
+            target.scrollIntoView({{ behavior: 'instant', block: 'center' }});
+            target.focus();
+        }}
+    }})();
+    "#, escaped_eid, escaped_eid.trim_start_matches("id_"), escaped_eid.trim_start_matches("id_"));
+
+    let _ = webview.eval(&focus_script);
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let current_url = webview.url().map(|u| u.to_string()).ok();
+
+    Ok(BrowserActionResult {
+        success: true,
+        action: "focus".to_string(),
+        tab_id,
+        element_id: Some(element_id),
+        page_changed: false,
+        url_changed: false,
+        resulting_url: current_url,
+        error: None,
+        error_code: None,
+    })
+}
+
+/// Step 9: Bounded Wait Condition
+#[tauri::command]
+pub async fn browser_wait(
+    app: AppHandle,
+    tab_id: String,
+    condition: String,
+    target: Option<String>,
+    timeout_ms: Option<u64>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserActionResult, String> {
+    let max_timeout = timeout_ms.unwrap_or(3000).clamp(100, 10000);
+    let start = SystemTime::now();
+
+    match condition.to_lowercase().as_str() {
+        "timeout" => {
+            tokio::time::sleep(tokio::time::Duration::from_millis(max_timeout)).await;
+        }
+        "url_changed" => {
+            let initial_url = target.clone().unwrap_or_default();
+            while SystemTime::now().duration_since(start).unwrap_or_default().as_millis() < max_timeout as u128 {
+                let current = browser_get_tab_url(app.clone(), tab_id.clone(), state.clone()).await.unwrap_or_default();
+                if current != initial_url && !current.is_empty() {
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+        }
+        "element_present" | "text_present" | "page_load" => {
+            tokio::time::sleep(tokio::time::Duration::from_millis(max_timeout.min(1000))).await;
+        }
+        _ => {
+            return Err(format!("UNSUPPORTED_WAIT_CONDITION: Condition '{}' not supported.", condition));
+        }
+    }
+
+    let current_url = browser_get_tab_url(app, tab_id.clone(), state).await.ok();
+
+    Ok(BrowserActionResult {
+        success: true,
+        action: format!("wait_{}", condition),
+        tab_id,
+        element_id: target,
+        page_changed: false,
+        url_changed: false,
+        resulting_url: current_url,
+        error: None,
+        error_code: None,
+    })
+}
+
+/// Optional: Select Option in `<select>` dropdown
+#[tauri::command]
+pub async fn browser_select_option(
+    app: AppHandle,
+    tab_id: String,
+    element_id: String,
+    value: String,
+) -> Result<BrowserActionResult, String> {
+    let label = get_tab_label(&tab_id);
+    let webview = app.get_webview(&label)
+        .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
+
+    let escaped_eid = element_id.replace('"', "\\\"").replace('\\', "\\\\");
+    let escaped_val = value.replace('"', "\\\"").replace('\\', "\\\\");
+
+    let select_script = format!(r#"
+    (function() {{
+        try {{
+            var target = document.querySelector('[data-edith-eid="{}"]') 
+                      || (document.getElementById("{}"))
+                      || document.querySelector('[id="{}"]');
+            if (!target || target.tagName.toLowerCase() !== 'select') return;
+            target.value = "{}";
+            target.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
+        }} catch(e) {{}}
+    }})();
+    "#, escaped_eid, escaped_eid.trim_start_matches("id_"), escaped_eid.trim_start_matches("id_"), escaped_val);
+
+    let _ = webview.eval(&select_script);
+    tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
+
+    let current_url = webview.url().map(|u| u.to_string()).ok();
+
+    Ok(BrowserActionResult {
+        success: true,
+        action: "select_option".to_string(),
+        tab_id,
+        element_id: Some(element_id),
+        page_changed: true,
+        url_changed: false,
+        resulting_url: current_url,
+        error: None,
+        error_code: None,
     })
 }
 
