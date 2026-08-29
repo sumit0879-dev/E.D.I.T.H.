@@ -247,6 +247,8 @@ export interface BrowserTabInfo {
   profile_id?: string;
   is_pinned?: boolean;
   zoom_level?: number;
+  is_reader_mode?: boolean;
+  is_pdf?: boolean;
 }
 
 export interface BrowserMultiStateInfo {
@@ -586,6 +588,22 @@ export interface FindResult {
   match_found: boolean;
   matches_count: number;
   active_match_ordinal: number;
+}
+
+// --- Phase 5.6F-B Save Page + PDF + Reader Mode Types ---
+export interface ReaderDocument {
+  tab_id: string;
+  url: string;
+  title: string;
+  byline?: string | null;
+  published_time?: string | null;
+  excerpt?: string | null;
+  content_html: string;
+  text_content: string;
+  word_count: number;
+  reading_time_minutes: number;
+  images: string[];
+  extracted_at: number;
 }
 
 

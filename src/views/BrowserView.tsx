@@ -53,8 +53,9 @@ import type {
   PrivacyRule,
   TabPrivacyStats,
   FindResult,
+  ReaderDocument,
 } from '../types';
-import { Shield, ShieldOff, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu, Printer, ZoomIn, ZoomOut, ChevronUp, ChevronDown, Type } from 'lucide-react';
+import { Shield, ShieldOff, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu, Printer, ZoomIn, ZoomOut, ChevronUp, ChevronDown, Type, BookOpen, FileDown } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -521,6 +522,50 @@ export const BrowserView: React.FC = () => {
     }
   };
 
+  // Phase 5.6F-B Save Page + Reader Mode States & Handlers
+  const [readerDocs, setReaderDocs] = useState<Record<string, ReaderDocument>>({});
+  const [isExtractingReader, setIsExtractingReader] = useState(false);
+  const [readerFontSize, setReaderFontSize] = useState<number>(18);
+  const [readerLineWidth, setReaderLineWidth] = useState<'narrow' | 'normal' | 'wide'>('normal');
+  const [readerTheme, setReaderTheme] = useState<'dark' | 'sepia' | 'onyx' | 'light'>('dark');
+  const [saveStatusToast, setSaveStatusToast] = useState<string | null>(null);
+
+  const handleToggleReaderMode = async (tabId?: string) => {
+    const targetId = tabId || browserState.active_tab_id;
+    if (!targetId) return;
+    const tab = browserState.tabs.find((t) => t.id === targetId);
+    if (!tab) return;
+
+    if (tab.is_reader_mode) {
+      await browserController.readerModeExit(targetId);
+    } else {
+      setIsExtractingReader(true);
+      try {
+        const doc = await browserController.readerModeEnter(targetId);
+        setReaderDocs((prev) => ({ ...prev, [targetId]: doc }));
+      } catch (e) {
+        console.error('Failed to enter reader mode:', e);
+      } finally {
+        setIsExtractingReader(false);
+      }
+    }
+  };
+
+  const handleSavePageHtml = async (tabId?: string) => {
+    const targetId = tabId || browserState.active_tab_id;
+    if (!targetId) return;
+    try {
+      const path = await browserController.savePageHtml(targetId);
+      setSaveStatusToast(`Saved: ${path}`);
+      setTimeout(() => setSaveStatusToast(null), 4000);
+      fetchDownloads();
+    } catch (e) {
+      console.error('Failed to save page:', e);
+      setSaveStatusToast(`Error saving page: ${e}`);
+      setTimeout(() => setSaveStatusToast(null), 4000);
+    }
+  };
+
   const fetchRiskAuditLogs = useCallback(async () => {
     setIsFetchingLogs(true);
     try {
@@ -754,11 +799,27 @@ export const BrowserView: React.FC = () => {
         handlePrint();
         return;
       }
+
+      // Phase 5.6F-B Shortcuts
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'r') {
+        e.preventDefault();
+        handleToggleReaderMode();
+        return;
+      }
+
+      if (e.key === 'Escape') {
+        const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
+        if (activeTab?.is_reader_mode && !showFindHud) {
+          e.preventDefault();
+          handleToggleReaderMode();
+          return;
+        }
+      }
     };
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [browserState.active_tab_id]);
+  }, [browserState.active_tab_id, browserState.tabs, showFindHud]);
 
   const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
   const isNewTab = !activeTab || !activeTab.url || activeTab.url === 'edith://newtab' || activeTab.url === 'about:blank';
@@ -1263,6 +1324,36 @@ export const BrowserView: React.FC = () => {
             <span className="flex items-center gap-2"><Printer className="w-3.5 h-3.5 text-cyan-400" /> Print Tab...</span>
             <span className="text-[10px] text-slate-500">Ctrl+P</span>
           </button>
+          <button
+            onClick={() => {
+              handleToggleReaderMode(contextMenu.tabId);
+              setContextMenu(null);
+            }}
+            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <span className="flex items-center gap-2"><BookOpen className="w-3.5 h-3.5 text-cyan-400" /> Toggle Reader Mode</span>
+            <span className="text-[10px] text-slate-500">Ctrl+Shift+R</span>
+          </button>
+          <button
+            onClick={() => {
+              handleSavePageHtml(contextMenu.tabId);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <FileDown className="w-3.5 h-3.5 text-cyan-400" />
+            Save Page HTML...
+          </button>
+          <button
+            onClick={() => {
+              handlePrint();
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <FileText className="w-3.5 h-3.5 text-amber-400" />
+            Save Page as PDF...
+          </button>
           <div className="h-px bg-white/10 my-0.5" />
           <button
             onClick={() => {
@@ -1365,6 +1456,11 @@ export const BrowserView: React.FC = () => {
         <form onSubmit={handleNavigate} className="flex-1 flex items-center">
           <div className="w-full flex items-center bg-[#090e1a] border border-white/[0.1] focus-within:border-cyan-500/60 rounded-xl px-3 py-1 transition shadow-inner">
             <Lock className="w-3.5 h-3.5 text-emerald-400 mr-2 shrink-0" />
+            {(activeTab?.is_pdf || activeTab?.url?.toLowerCase().endsWith('.pdf') || activeTab?.url?.toLowerCase().includes('/pdf/')) && (
+              <span className="px-1.5 py-0.5 rounded bg-orange-950/80 text-orange-400 border border-orange-500/40 text-[9px] font-bold shrink-0 mr-1.5 font-mono">
+                PDF
+              </span>
+            )}
             <input
               ref={omniboxInputRef}
               type="text"
@@ -1642,6 +1738,30 @@ export const BrowserView: React.FC = () => {
             title="Print Page (Ctrl+P)"
           >
             <Printer className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Phase 5.6F-B: Reader Mode Toggle Button */}
+          <button
+            onClick={() => handleToggleReaderMode(activeTab?.id)}
+            disabled={!activeTab || isNewTab}
+            className={`p-1.5 rounded-xl border text-slate-300 hover:text-cyan-300 transition disabled:opacity-40 ${
+              activeTab?.is_reader_mode
+                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300 shadow-cyan-glow-xs'
+                : 'bg-[#090e1a] border-white/[0.08]'
+            }`}
+            title="Toggle Reader Mode (Ctrl+Shift+R)"
+          >
+            <BookOpen className="w-3.5 h-3.5" />
+          </button>
+
+          {/* Phase 5.6F-B: Save Page HTML Button */}
+          <button
+            onClick={() => handleSavePageHtml(activeTab?.id)}
+            disabled={!activeTab || isNewTab}
+            className="p-1.5 rounded-xl bg-[#090e1a] border border-white/[0.08] text-slate-300 hover:text-cyan-300 transition disabled:opacity-40"
+            title="Save Page HTML (Downloads)"
+          >
+            <FileDown className="w-3.5 h-3.5" />
           </button>
         </div>
       </div>
@@ -3154,6 +3274,188 @@ export const BrowserView: React.FC = () => {
             >
               <X className="w-4 h-4" />
             </button>
+          </div>
+        )}
+
+        {/* Phase 5.6F-B Save Page Toast Notification */}
+        {saveStatusToast && (
+          <div className="absolute top-3 left-1/2 transform -translate-x-1/2 z-50 bg-[#06111f] border border-cyan-500/50 text-cyan-200 px-4 py-2 rounded-xl shadow-2xl backdrop-blur-md text-xs font-mono flex items-center gap-2 animate-fadeIn">
+            <CheckCircle2 className="w-4 h-4 text-cyan-400" />
+            <span>{saveStatusToast}</span>
+          </div>
+        )}
+
+        {/* Phase 5.6F-B Isolated Reader Mode Surface */}
+        {activeTab?.is_reader_mode && !isNewTab && (
+          <div className={`absolute inset-0 z-30 overflow-y-auto flex flex-col transition-colors duration-200 ${
+            readerTheme === 'sepia'
+              ? 'bg-[#f4ecd8] text-[#5b4636]'
+              : readerTheme === 'onyx'
+              ? 'bg-black text-[#e0e0e0]'
+              : readerTheme === 'light'
+              ? 'bg-[#fafafa] text-[#222222]'
+              : 'bg-[#060a14] text-[#d1d5db]'
+          }`}>
+            {/* Reader Header Toolbar */}
+            <div className={`sticky top-0 z-20 px-4 py-2 flex flex-wrap items-center justify-between gap-3 border-b backdrop-blur-md font-mono text-xs ${
+              readerTheme === 'sepia'
+                ? 'bg-[#f4ecd8]/95 border-[#d3c2a6]'
+                : readerTheme === 'onyx'
+                ? 'bg-black/95 border-white/10'
+                : readerTheme === 'light'
+                ? 'bg-white/95 border-slate-200'
+                : 'bg-[#080e1c]/95 border-cyan-500/30 text-cyan-300'
+            }`}>
+              <div className="flex items-center gap-2 truncate max-w-md">
+                <BookOpen className="w-4 h-4 text-cyan-400 shrink-0" />
+                <span className="font-bold truncate">{readerDocs[activeTab.id]?.title || activeTab.title}</span>
+                {readerDocs[activeTab.id]?.reading_time_minutes && (
+                  <span className="px-2 py-0.5 rounded-full text-[10px] bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 shrink-0">
+                    📖 {readerDocs[activeTab.id].reading_time_minutes} min read ({readerDocs[activeTab.id].word_count.toLocaleString()} words)
+                  </span>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                {/* Font Size Adjusters */}
+                <div className="flex items-center gap-1 bg-black/20 rounded-lg p-0.5 border border-white/10 text-xs">
+                  <button
+                    onClick={() => setReaderFontSize((prev) => Math.max(13, prev - 1))}
+                    className="px-1.5 py-0.5 rounded hover:bg-white/10 font-bold"
+                    title="Smaller Text"
+                  >
+                    A-
+                  </button>
+                  <span className="px-1 text-[11px] font-bold">{readerFontSize}px</span>
+                  <button
+                    onClick={() => setReaderFontSize((prev) => Math.min(26, prev + 1))}
+                    className="px-1.5 py-0.5 rounded hover:bg-white/10 font-bold"
+                    title="Larger Text"
+                  >
+                    A+
+                  </button>
+                </div>
+
+                {/* Line Width */}
+                <div className="flex items-center gap-0.5 bg-black/20 rounded-lg p-0.5 border border-white/10 text-[11px]">
+                  {(['narrow', 'normal', 'wide'] as const).map((w) => (
+                    <button
+                      key={w}
+                      onClick={() => setReaderLineWidth(w)}
+                      className={`px-1.5 py-0.5 rounded capitalize transition ${
+                        readerLineWidth === w ? 'bg-cyan-500/30 text-cyan-300 font-bold border border-cyan-500/40' : 'hover:bg-white/10'
+                      }`}
+                    >
+                      {w}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Theme Switcher */}
+                <div className="flex items-center gap-0.5 bg-black/20 rounded-lg p-0.5 border border-white/10 text-[11px]">
+                  {[
+                    { id: 'dark', label: 'Dark' },
+                    { id: 'sepia', label: 'Sepia' },
+                    { id: 'onyx', label: 'Onyx' },
+                    { id: 'light', label: 'Light' },
+                  ].map((t) => (
+                    <button
+                      key={t.id}
+                      onClick={() => setReaderTheme(t.id as any)}
+                      className={`px-1.5 py-0.5 rounded transition ${
+                        readerTheme === t.id ? 'bg-cyan-500/30 text-cyan-300 font-bold border border-cyan-500/40' : 'hover:bg-white/10'
+                      }`}
+                    >
+                      {t.label}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Print & Save Buttons */}
+                <button
+                  onClick={handlePrint}
+                  className="p-1 rounded-lg bg-black/20 border border-white/10 hover:border-cyan-500/40 hover:text-cyan-300 transition"
+                  title="Print Reader Article"
+                >
+                  <Printer className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                  onClick={() => handleSavePageHtml(activeTab.id)}
+                  className="p-1 rounded-lg bg-black/20 border border-white/10 hover:border-cyan-500/40 hover:text-cyan-300 transition"
+                  title="Save Clean Article HTML"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                </button>
+
+                {/* Exit Reader Mode */}
+                <button
+                  onClick={() => handleToggleReaderMode(activeTab.id)}
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-lg bg-cyan-600/20 border border-cyan-500/40 hover:bg-cyan-600/40 text-cyan-300 transition font-bold text-xs"
+                  title="Exit Reader Mode (Escape)"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Exit</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Reader Article Body */}
+            <div className={`mx-auto px-6 py-8 w-full transition-all duration-200 ${
+              readerLineWidth === 'narrow'
+                ? 'max-w-2xl'
+                : readerLineWidth === 'wide'
+                ? 'max-w-4xl'
+                : 'max-w-3xl'
+            }`} style={{ fontSize: `${readerFontSize}px`, lineHeight: 1.75 }}>
+              {isExtractingReader ? (
+                <div className="flex flex-col items-center justify-center py-20 gap-3">
+                  <Loader2 className="w-8 h-8 text-cyan-400 animate-spin" />
+                  <div className="text-sm font-mono text-cyan-300">Extracting clean article content...</div>
+                </div>
+              ) : (
+                <article className="space-y-6">
+                  <h1 className="text-3xl font-bold tracking-tight mb-2 leading-tight">
+                    {readerDocs[activeTab.id]?.title || activeTab.title}
+                  </h1>
+
+                  {(readerDocs[activeTab.id]?.byline || readerDocs[activeTab.id]?.published_time) && (
+                    <div className="flex flex-wrap items-center gap-3 text-xs font-mono opacity-75 border-b pb-3 mb-6">
+                      {readerDocs[activeTab.id]?.byline && <span>By <strong className="opacity-100">{readerDocs[activeTab.id].byline}</strong></span>}
+                      {readerDocs[activeTab.id]?.published_time && <span>• {readerDocs[activeTab.id].published_time}</span>}
+                      <span>• <a href={activeTab.url} target="_blank" rel="noreferrer" className="underline hover:opacity-100">Original Source</a></span>
+                    </div>
+                  )}
+
+                  {readerDocs[activeTab.id]?.excerpt && (
+                    <div className={`p-4 rounded-xl border italic text-sm ${
+                      readerTheme === 'sepia'
+                        ? 'bg-[#ede3cc] border-[#d3c2a6]'
+                        : readerTheme === 'light'
+                        ? 'bg-slate-100 border-slate-200 text-slate-700'
+                        : 'bg-cyan-950/20 border-cyan-500/20 text-cyan-200'
+                    }`}>
+                      {readerDocs[activeTab.id].excerpt}
+                    </div>
+                  )}
+
+                  <div
+                    className="reader-content space-y-4 font-serif leading-relaxed"
+                    dangerouslySetInnerHTML={{ __html: readerDocs[activeTab.id]?.content_html || `<p>${readerDocs[activeTab.id]?.text_content || 'No article text extracted.'}</p>` }}
+                  />
+
+                  <div className="pt-8 mt-8 border-t text-xs font-mono opacity-60 flex items-center justify-between">
+                    <span>E.D.I.T.H. Reader Mode</span>
+                    <button
+                      onClick={() => handleToggleReaderMode(activeTab.id)}
+                      className="underline hover:opacity-100"
+                    >
+                      Return to original page →
+                    </button>
+                  </div>
+                </article>
+              )}
+            </div>
           </div>
         )}
       </div>

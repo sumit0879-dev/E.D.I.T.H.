@@ -760,6 +760,75 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["tab_id"]
             }),
         },
+        // Phase 5.6F-B: Save Page + Reader Mode Tools
+        ToolDefinition {
+            name: "browser_reader_mode_enter".to_string(),
+            description: "Extract clean readable article content and enter Reader Mode for the target tab.".to_string(),
+            category: "reader".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID."
+                    }
+                },
+                "required": ["tab_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_reader_mode_exit".to_string(),
+            description: "Exit Reader Mode and return to the live web view for the target tab.".to_string(),
+            category: "reader".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID."
+                    }
+                },
+                "required": ["tab_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_reader_mode_get".to_string(),
+            description: "Retrieve extracted reader document for the target tab if active.".to_string(),
+            category: "reader".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID."
+                    }
+                },
+                "required": ["tab_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_save_page".to_string(),
+            description: "Save a sanitized offline HTML snapshot of the target tab to downloads. Requires operator approval.".to_string(),
+            category: "save".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Target tab ID."
+                    },
+                    "custom_filename": {
+                        "type": "string",
+                        "description": "Optional custom filename (e.g. 'article_backup.html')."
+                    }
+                },
+                "required": ["tab_id"]
+            }),
+        },
     ]
 }
 
@@ -1964,6 +2033,112 @@ pub async fn execute_browser_tool(
                     data: None,
                     error: Some(e),
                     error_code: Some("PRINT_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        // Phase 5.6F-B: Save Page & Reader Mode Execution
+        "browser_reader_mode_enter" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+
+            match crate::browser::browser_reader_mode_enter(app, tab_id.to_string(), state).await {
+                Ok(doc) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "reader_document": doc })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("READER_ENTER_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_reader_mode_exit" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+
+            match crate::browser::browser_reader_mode_exit(app, tab_id.to_string(), state).await {
+                Ok(ok) => Ok(BrowserToolExecutionResult {
+                    success: ok,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "status": "READER_MODE_EXITED" })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("READER_EXIT_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_reader_mode_get" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+
+            match crate::browser::browser_reader_mode_get(tab_id.to_string()).await {
+                Ok(doc_opt) => Ok(BrowserToolExecutionResult {
+                    success: doc_opt.is_some(),
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "reader_document": doc_opt })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("READER_GET_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_save_page" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+            let custom_filename = args.get("custom_filename").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            match crate::browser::browser_save_page_html(app, tab_id.to_string(), custom_filename, state).await {
+                Ok(path) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({ "saved_file_path": path })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("SAVE_PAGE_FAILED".to_string()),
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
             }

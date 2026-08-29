@@ -43,6 +43,7 @@ import type {
   PrivacyRule,
   TabPrivacyStats,
   FindResult,
+  ReaderDocument,
 } from '../types';
 
 export const isTauri = () => {
@@ -1938,6 +1939,56 @@ export async function browserOpenLinkTab(
     sourceTabId,
     bounds,
   });
+}
+
+// --- Phase 5.6F-B: Save Page + PDF + Reader Mode ---
+
+export async function browserSavePageHtml(tabId: string, customFilename?: string): Promise<string> {
+  if (!isTauri()) {
+    return 'C:\\Users\\User\\Downloads\\mock_saved_page.html';
+  }
+  return await invoke<string>('browser_save_page_html', { tabId, customFilename });
+}
+
+export async function browserReaderExtract(tabId: string): Promise<ReaderDocument> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      url: 'https://example.com',
+      title: 'Mock Reader Article',
+      byline: 'E.D.I.T.H. Intelligence',
+      published_time: new Date().toLocaleDateString(),
+      excerpt: 'Extracted mock reader document content.',
+      content_html: '<p>This is a simulated reader view article extracted cleanly without external scripts.</p>',
+      text_content: 'This is a simulated reader view article extracted cleanly without external scripts.',
+      word_count: 14,
+      reading_time_minutes: 1,
+      images: [],
+      extracted_at: Date.now(),
+    };
+  }
+  return await invoke<ReaderDocument>('browser_reader_extract', { tabId });
+}
+
+export async function browserReaderModeEnter(tabId: string): Promise<ReaderDocument> {
+  if (!isTauri()) {
+    return browserReaderExtract(tabId);
+  }
+  return await invoke<ReaderDocument>('browser_reader_mode_enter', { tabId });
+}
+
+export async function browserReaderModeExit(tabId: string): Promise<boolean> {
+  if (!isTauri()) {
+    return true;
+  }
+  return await invoke<boolean>('browser_reader_mode_exit', { tabId });
+}
+
+export async function browserReaderModeGet(tabId: string): Promise<ReaderDocument | null> {
+  if (!isTauri()) {
+    return null;
+  }
+  return await invoke<ReaderDocument | null>('browser_reader_mode_get', { tabId });
 }
 
 

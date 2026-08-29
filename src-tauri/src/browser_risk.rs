@@ -496,6 +496,27 @@ impl BrowserRiskEngine {
             };
         }
 
+        // Phase 5.6F-B: Save Page + Reader Mode Risk Rules
+        if tool == "browser_reader_mode_enter" || tool == "browser_reader_mode_exit" || tool == "browser_reader_mode_get" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Low,
+                decision: BrowserRiskDecision::Allow,
+                policy_code: "SAFE_READER_MODE".to_string(),
+                reason: "Reader mode content extraction and viewing is a safe read-only operation.".to_string(),
+                user_explanation: "Action permitted.".to_string(),
+            };
+        }
+
+        if tool == "browser_save_page" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Medium,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "SAVE_PAGE_APPROVAL".to_string(),
+                reason: "Saving a webpage snapshot writes files to the local disk, requiring operator approval.".to_string(),
+                user_explanation: "Approval required: the agent requests to save the current web page to disk.".to_string(),
+            };
+        }
+
         if tool.contains("cookie") || tool.contains("credential") || tool.contains("password") || tool.contains("export_storage") {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Blocked,

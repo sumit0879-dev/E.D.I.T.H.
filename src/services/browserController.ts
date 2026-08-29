@@ -757,6 +757,35 @@ class BrowserController {
     this.notify();
     return tab;
   }
+
+  // --- Phase 5.6F-B Save Page + PDF + Reader Mode ---
+  public async savePageHtml(tabId: string, customFilename?: string) {
+    return await tauriService.browserSavePageHtml(tabId, customFilename);
+  }
+
+  public async readerModeEnter(tabId: string) {
+    const doc = await tauriService.browserReaderModeEnter(tabId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) tab.is_reader_mode = true;
+    this.notify();
+    return doc;
+  }
+
+  public async readerModeExit(tabId: string) {
+    const res = await tauriService.browserReaderModeExit(tabId);
+    const tab = this.tabs.find((t) => t.id === tabId);
+    if (tab) tab.is_reader_mode = false;
+    this.notify();
+    return res;
+  }
+
+  public async readerModeGet(tabId: string) {
+    return await tauriService.browserReaderModeGet(tabId);
+  }
+
+  public async readerExtract(tabId: string) {
+    return await tauriService.browserReaderExtract(tabId);
+  }
 }
 
 export const browserController = new BrowserController();

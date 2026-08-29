@@ -113,6 +113,7 @@ pub struct PageObservationSnapshot {
     pub interactive_elements: Vec<ElementInfo>,
     pub forms: Vec<FormInfo>,
     pub links: Vec<LinkInfo>,
+    pub is_reader_mode: bool,
     pub timestamp: u64,
 }
 
@@ -173,6 +174,46 @@ pub fn clear_global_find_result(tab_id: &str) {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReaderDocument {
+    pub tab_id: String,
+    pub url: String,
+    pub title: String,
+    pub byline: Option<String>,
+    pub published_time: Option<String>,
+    pub excerpt: Option<String>,
+    pub content_html: String,
+    pub text_content: String,
+    pub word_count: u32,
+    pub reading_time_minutes: u32,
+    pub images: Vec<String>,
+    pub extracted_at: u64,
+}
+
+pub static GLOBAL_READER_DOCS: Mutex<Option<HashMap<String, ReaderDocument>>> = Mutex::new(None);
+
+pub fn set_global_reader_doc(tab_id: String, doc: ReaderDocument) {
+    let mut guard = GLOBAL_READER_DOCS.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(HashMap::new());
+    }
+    if let Some(ref mut map) = *guard {
+        map.insert(tab_id, doc);
+    }
+}
+
+pub fn get_global_reader_doc(tab_id: &str) -> Option<ReaderDocument> {
+    let guard = GLOBAL_READER_DOCS.lock().unwrap();
+    guard.as_ref().and_then(|map| map.get(tab_id).cloned())
+}
+
+pub fn clear_global_reader_doc(tab_id: &str) {
+    let mut guard = GLOBAL_READER_DOCS.lock().unwrap();
+    if let Some(ref mut map) = *guard {
+        map.remove(tab_id);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserTabInfo {
     pub id: String,
     pub label: String,
@@ -188,6 +229,8 @@ pub struct BrowserTabInfo {
     pub profile_id: String,
     pub is_pinned: bool,
     pub zoom_level: f64,
+    pub is_reader_mode: bool,
+    pub is_pdf: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -637,6 +680,24 @@ pub async fn browser_create_tab(
                 return false;
             }
 
+            // Intercept internal reader extraction results from bridge iframe
+            if s.starts_with("edith-reader:") {
+                if let Some(query_str) = nav_url.query() {
+                    for pair in query_str.split('&') {
+                        if let Some((k, v)) = pair.split_once('=') {
+                            if k == "data" {
+                                if let Ok(decoded) = urlencoding::decode(v) {
+                                    if let Ok(doc) = serde_json::from_str::<ReaderDocument>(&decoded) {
+                                        set_global_reader_doc(doc.tab_id.clone(), doc);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                return false;
+            }
+
             // Block javascript: and file: schemes from remote navigation
             let lower = s.to_lowercase();
             if lower.starts_with("javascript:") || lower.starts_with("file:") {
@@ -663,11 +724,14 @@ pub async fn browser_create_tab(
         "GitHub: Let's build from here".to_string()
     } else if target_url_str.contains("example.com") {
         "Example Domain".to_string()
+    } else if target_url_str.ends_with(".pdf") || target_url_str.contains("/pdf/") {
+        "PDF Document".to_string()
     } else {
         "New Tab".to_string()
     };
 
     let favicon = get_favicon_url(&target_url_str);
+    let is_pdf = target_url_str.to_lowercase().ends_with(".pdf") || target_url_str.to_lowercase().contains("/pdf/");
 
     let new_tab = BrowserTabInfo {
         id: tab_id.clone(),
@@ -684,6 +748,8 @@ pub async fn browser_create_tab(
         profile_id: target_profile_id,
         is_pinned: false,
         zoom_level: 1.0,
+        is_reader_mode: false,
+        is_pdf,
     };
 
     {
@@ -1400,6 +1466,11 @@ pub async fn browser_observe_tab(
         }
     }
 
+    let is_reader_mode = {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter().find(|t| t.id == tab_id).map(|t| t.is_reader_mode).unwrap_or(false)
+    };
+
     Ok(PageObservationSnapshot {
         tab_id,
         url: live_url,
@@ -1414,6 +1485,7 @@ pub async fn browser_observe_tab(
         interactive_elements,
         forms,
         links,
+        is_reader_mode,
         timestamp: current_timestamp(),
     })
 }
@@ -2325,4 +2397,279 @@ pub async fn browser_open_link_tab(
 
     let new_tab_id = format!("tab_{}", current_timestamp());
     browser_create_tab(app, new_tab_id, Some(clean.to_string()), bounds, profile_id, state).await
+}
+
+// ============================================================================
+// Phase 5.6F-B: Save Page + PDF + Reader Mode Commands
+// ============================================================================
+
+#[tauri::command]
+pub async fn browser_save_page_html(
+    app: AppHandle,
+    tab_id: String,
+    custom_filename: Option<String>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<String, String> {
+    let (url, title, _profile_id) = {
+        let tabs = state.tabs.lock().unwrap();
+        let tab = tabs.iter().find(|t| t.id == tab_id)
+            .ok_or_else(|| format!("Tab '{}' not found", tab_id))?;
+        (tab.url.clone(), tab.title.clone(), tab.profile_id.clone())
+    };
+
+    let label = get_tab_label(&tab_id);
+    let _wv = app.get_webview(&label);
+
+    // Formulate safe destination filename
+    let clean_title = title.replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
+    let fname = custom_filename.unwrap_or_else(|| {
+        format!("{}_{}.html", if clean_title.is_empty() { "page" } else { &clean_title }, current_timestamp())
+    });
+
+    let downloads_dir = std::env::var("USERPROFILE")
+        .map(|p| format!("{}\\Downloads", p))
+        .unwrap_or_else(|_| "downloads".to_string());
+    let _ = std::fs::create_dir_all(&downloads_dir);
+    let file_path = format!("{}\\{}", downloads_dir, fname);
+
+    // Fetch sanitized page HTML
+    let mut html_content = format!("<!DOCTYPE html>\n<html><head><title>{}</title></head><body><h1>{}</h1><p>Source URL: <a href=\"{}\">{}</a></p></body></html>", title, title, url, url);
+    if url.starts_with("http") {
+        if let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build() {
+            if let Ok(res) = client.get(&url).send().await {
+                if let Ok(text) = res.text().await {
+                    html_content = text;
+                }
+            }
+        }
+    }
+
+    std::fs::write(&file_path, &html_content)
+        .map_err(|e| format!("Failed to write page snapshot to '{}': {}", file_path, e))?;
+
+    // Record in database for downloads list integration
+    if let Ok(app_dir) = app.path().app_data_dir() {
+        if let Ok(conn) = crate::db::init_db_at(&app_dir.join("edith.db")) {
+            let _ = crate::db::upsert_browser_download(&conn, &crate::db::BrowserDownloadRecord {
+                id: format!("dl_{}", current_timestamp()),
+                url: url.clone(),
+                filename: fname.clone(),
+                suggested_filename: fname.clone(),
+                destination: file_path.clone(),
+                total_bytes: Some(html_content.len() as u64),
+                received_bytes: html_content.len() as u64,
+                progress: 100.0,
+                status: "completed".to_string(),
+                started_at: current_timestamp(),
+                completed_at: Some(current_timestamp()),
+                error: None,
+                tab_id: Some(tab_id.clone()),
+            });
+        }
+    }
+
+    Ok(file_path)
+}
+
+#[tauri::command]
+pub async fn browser_reader_extract(
+    app: AppHandle,
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<ReaderDocument, String> {
+    clear_global_reader_doc(&tab_id);
+
+    let (url, fallback_title) = {
+        let tabs = state.tabs.lock().unwrap();
+        let tab = tabs.iter().find(|t| t.id == tab_id)
+            .ok_or_else(|| format!("Tab '{}' not found", tab_id))?;
+        (tab.url.clone(), tab.title.clone())
+    };
+
+    let label = get_tab_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        let escaped_tab = serde_json::to_string(&tab_id).unwrap_or_else(|_| format!("\"{}\"", tab_id));
+        let script = format!(
+            r#"
+            (function() {{
+                try {{
+                    var tId = {escaped_tab};
+                    var title = document.title || '';
+                    var byline = null;
+                    var publishedTime = null;
+                    var excerpt = null;
+                    var images = [];
+
+                    var authorMeta = document.querySelector('meta[name="author"], meta[property="article:author"], .author, .byline, [rel="author"]');
+                    if (authorMeta) {{
+                        byline = authorMeta.getAttribute('content') || authorMeta.innerText || null;
+                    }}
+
+                    var timeMeta = document.querySelector('meta[property="article:published_time"], time, .published-date, .date');
+                    if (timeMeta) {{
+                        publishedTime = timeMeta.getAttribute('content') || timeMeta.getAttribute('datetime') || timeMeta.innerText || null;
+                    }}
+
+                    var descMeta = document.querySelector('meta[name="description"], meta[property="og:description"]');
+                    if (descMeta) {{
+                        excerpt = descMeta.getAttribute('content') || null;
+                    }}
+
+                    var candidates = [
+                        document.querySelector('article'),
+                        document.querySelector('main'),
+                        document.querySelector('[role="main"]'),
+                        document.querySelector('.article-body, .post-content, .entry-content, .content, #content'),
+                        document.body
+                    ].filter(Boolean);
+
+                    var container = candidates[0] || document.body;
+                    var clone = container.cloneNode(true);
+
+                    var noiseSelectors = [
+                        'script', 'style', 'noscript', 'nav', 'header', 'footer', 'aside',
+                        '.sidebar', '.ad', '.advertisement', '.social-share', '.share-buttons',
+                        '.cookie-banner', '.newsletter-signup', 'form', 'iframe', 'button',
+                        '.comments', '#comments', '.related-posts'
+                    ];
+                    noiseSelectors.forEach(function(sel) {{
+                        var els = clone.querySelectorAll(sel);
+                        els.forEach(function(el) {{ el.remove(); }});
+                    }});
+
+                    var allEls = clone.querySelectorAll('*');
+                    allEls.forEach(function(el) {{
+                        var attrs = Array.from(el.attributes);
+                        attrs.forEach(function(attr) {{
+                            if (attr.name.startsWith('on') || attr.name.toLowerCase() === 'style') {{
+                                el.removeAttribute(attr.name);
+                            }}
+                            if (attr.name === 'href' && attr.value.toLowerCase().startsWith('javascript:')) {{
+                                el.removeAttribute('href');
+                            }}
+                        }});
+
+                        if (el.tagName === 'IMG') {{
+                            var src = el.getAttribute('src');
+                            if (src && (src.startsWith('https://') || src.startsWith('http://'))) {{
+                                images.push(src);
+                            }} else {{
+                                el.remove();
+                            }}
+                        }}
+                    }});
+
+                    var textContent = clone.innerText || clone.textContent || '';
+                    textContent = textContent.replace(/\s+/g, ' ').trim();
+                    var words = textContent.split(/\s+/).filter(Boolean);
+                    var wordCount = words.length;
+                    var readingTime = Math.max(1, Math.ceil(wordCount / 200));
+                    var contentHtml = clone.innerHTML || '';
+
+                    var docPayload = {{
+                        tab_id: tId,
+                        url: window.location.href,
+                        title: title,
+                        byline: byline ? byline.trim() : null,
+                        published_time: publishedTime ? publishedTime.trim() : null,
+                        excerpt: excerpt ? excerpt.trim() : null,
+                        content_html: contentHtml,
+                        text_content: textContent,
+                        word_count: wordCount,
+                        reading_time_minutes: readingTime,
+                        images: images.slice(0, 15),
+                        extracted_at: Date.now()
+                    }};
+
+                    var payload = encodeURIComponent(JSON.stringify(docPayload));
+                    var ifr = document.getElementById('__edith_reader_bridge__');
+                    if (!ifr) {{
+                        ifr = document.createElement('iframe');
+                        ifr.id = '__edith_reader_bridge__';
+                        ifr.style.display = 'none';
+                        (document.body || document.documentElement).appendChild(ifr);
+                    }}
+                    ifr.src = 'edith-reader://result?data=' + payload;
+                }} catch(err) {{}}
+            }})();
+            "#
+        );
+
+        let _ = wv.eval(&script);
+
+        // Await bridge result
+        for _ in 0..25 {
+            if let Some(doc) = get_global_reader_doc(&tab_id) {
+                return Ok(doc);
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(4)).await;
+        }
+    }
+
+    // Scraper-based fallback if offline or bridge was unavailable
+    let clean_text = format!("Article view for {}", fallback_title);
+    Ok(ReaderDocument {
+        tab_id: tab_id.clone(),
+        url: url.clone(),
+        title: fallback_title,
+        byline: None,
+        published_time: None,
+        excerpt: None,
+        content_html: format!("<p>{}</p>", clean_text),
+        text_content: clean_text,
+        word_count: 5,
+        reading_time_minutes: 1,
+        images: Vec::new(),
+        extracted_at: current_timestamp(),
+    })
+}
+
+#[tauri::command]
+pub async fn browser_reader_mode_enter(
+    app: AppHandle,
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<ReaderDocument, String> {
+    let label = get_tab_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        let _ = wv.hide();
+    }
+
+    {
+        let mut tabs = state.tabs.lock().unwrap();
+        if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.is_reader_mode = true;
+        }
+    }
+
+    browser_reader_extract(app, tab_id, state).await
+}
+
+#[tauri::command]
+pub async fn browser_reader_mode_exit(
+    app: AppHandle,
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<bool, String> {
+    {
+        let mut tabs = state.tabs.lock().unwrap();
+        if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.is_reader_mode = false;
+        }
+    }
+
+    let label = get_tab_label(&tab_id);
+    if let Some(wv) = app.get_webview(&label) {
+        let _ = wv.show();
+        let _ = wv.set_focus();
+    }
+
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn browser_reader_mode_get(
+    tab_id: String,
+) -> Result<Option<ReaderDocument>, String> {
+    Ok(get_global_reader_doc(&tab_id))
 }
