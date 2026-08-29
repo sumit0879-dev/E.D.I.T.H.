@@ -377,7 +377,7 @@ To execute a tool, output:
 AVAILABLE TOOLS:
 - browser_get_tabs: {{}}
 - browser_get_active_tab: {{}}
-- browser_observe: {{\"tab_id\": \"<tab_id>\"}}
+- browser_observe: {{\"tab_id\": \"<tab_id>\", \"scope\": \"full_page\"}}
 - browser_screenshot: {{\"tab_id\": \"<tab_id>\"}}
 - browser_open_url: {{\"tab_id\": \"<tab_id>\", \"url\": \"https://example.com\"}}
 - browser_switch_tab: {{\"tab_id\": \"<tab_id>\"}}

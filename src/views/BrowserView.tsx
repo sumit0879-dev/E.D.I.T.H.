@@ -936,42 +936,81 @@ export const BrowserView: React.FC = () => {
 
       {/* Live Observation Snapshot Drawer */}
       {liveSnapshot && (
-        <div className="bg-[#070e1c] border-b border-cyan-500/30 p-3 text-xs text-cyan-200 flex flex-col gap-2 shrink-0 z-10 max-h-64 overflow-y-auto animate-fadeIn font-mono">
+        <div className="bg-[#070e1c] border-b border-cyan-500/30 p-3 text-xs text-cyan-200 flex flex-col gap-2.5 shrink-0 z-10 max-h-80 overflow-y-auto animate-fadeIn font-mono">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2 font-bold text-cyan-300">
               <Sparkles className="w-4 h-4 text-cyan-400" />
-              Live Rendered DOM Snapshot — Tab `{liveSnapshot.tab_id}`
+              Phase 5.2 Structured Observation Snapshot — Tab `{liveSnapshot.tab_id}` (Gen {liveSnapshot.generation || 1})
             </div>
-            <button
-              onClick={() => setLiveSnapshot(null)}
-              className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
-            >
-              Close
-            </button>
+            <div className="flex items-center gap-2">
+              {liveSnapshot.fingerprint && (
+                <span className="text-[10px] text-slate-400 bg-white/5 px-2 py-0.5 rounded border border-white/10">
+                  {liveSnapshot.fingerprint}
+                </span>
+              )}
+              <button
+                onClick={() => setLiveSnapshot(null)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+              >
+                Close
+              </button>
+            </div>
           </div>
 
-          <div className="grid grid-cols-2 gap-2 text-[11px]">
-            <div><span className="text-slate-400">Live URL:</span> <span className="text-white">{liveSnapshot.url}</span></div>
-            <div><span className="text-slate-400">Document Title:</span> <span className="text-cyan-300">{liveSnapshot.title}</span></div>
-            <div><span className="text-slate-400">Extracted Text Length:</span> <span className="text-emerald-400">{liveSnapshot.visible_text.length} characters</span></div>
-            <div><span className="text-slate-400">Discovered Interactive Elements:</span> <span className="text-yellow-400">{liveSnapshot.interactive_elements.length} elements</span></div>
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] bg-black/40 p-2 rounded-lg border border-white/5">
+            <div><span className="text-slate-400">Title:</span> <span className="text-cyan-300 font-bold truncate block">{liveSnapshot.title}</span></div>
+            <div><span className="text-slate-400">URL:</span> <span className="text-white truncate block">{liveSnapshot.url}</span></div>
+            <div><span className="text-slate-400">Text Length:</span> <span className="text-emerald-400 font-bold">{liveSnapshot.visible_text.length} chars</span></div>
+            <div><span className="text-slate-400">Interactive:</span> <span className="text-yellow-400 font-bold">{liveSnapshot.interactive_elements.length} elements</span></div>
+            {liveSnapshot.viewport && (
+              <div className="col-span-2 sm:col-span-4 text-[10px] text-slate-400 flex items-center gap-3 border-t border-white/5 pt-1 mt-1">
+                <span>Viewport: <strong className="text-slate-200">{liveSnapshot.viewport.width}x{liveSnapshot.viewport.height}</strong></span>
+                <span>Page: <strong className="text-slate-200">{liveSnapshot.viewport.page_width}x{liveSnapshot.viewport.page_height}</strong></span>
+                <span>Regions: <strong className="text-cyan-300">{liveSnapshot.regions?.length || 0}</strong></span>
+                <span>Headings: <strong className="text-purple-300">{liveSnapshot.headings?.length || 0}</strong></span>
+                <span>Forms: <strong className="text-emerald-300">{liveSnapshot.forms?.length || 0}</strong></span>
+                <span>Links: <strong className="text-blue-300">{liveSnapshot.links?.length || 0}</strong></span>
+              </div>
+            )}
           </div>
 
+          {/* Semantic Headings & Regions */}
+          {((liveSnapshot.headings && liveSnapshot.headings.length > 0) || (liveSnapshot.regions && liveSnapshot.regions.length > 0)) && (
+            <div className="flex flex-wrap gap-1.5 text-[10px]">
+              {liveSnapshot.regions?.map((reg, ri) => (
+                <span key={ri} className="px-2 py-0.5 rounded bg-blue-950/60 border border-blue-500/30 text-blue-300">
+                  [{reg.region_type}] {reg.label ? `"${reg.label}"` : ''}
+                </span>
+              ))}
+              {liveSnapshot.headings?.slice(0, 8).map((h, hi) => (
+                <span key={hi} className="px-2 py-0.5 rounded bg-purple-950/60 border border-purple-500/30 text-purple-300">
+                  H{h.level}: {h.text}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Interactive Elements List */}
           {liveSnapshot.interactive_elements.length > 0 && (
             <div className="border border-white/10 rounded-lg p-2 bg-black/40 overflow-x-auto">
-              <div className="text-[10px] text-slate-400 font-bold mb-1">Interactive Elements with Generated EIDs:</div>
-              <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                {liveSnapshot.interactive_elements.slice(0, 20).map((el, i) => (
+              <div className="text-[10px] text-slate-400 font-bold mb-1">Interactive Elements with Deterministic EIDs & Real Geometry:</div>
+              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                {liveSnapshot.interactive_elements.slice(0, 30).map((el, i) => (
                   <span
                     key={i}
                     onClick={() => {
                       setTargetElementId(el.id);
                       setShowActionPanel(true);
                     }}
-                    className="px-1.5 py-0.5 rounded bg-cyan-950/70 border border-cyan-500/20 text-[10px] text-cyan-200 cursor-pointer hover:border-cyan-400 transition"
-                    title={`Click to set as Action target: ${el.id}`}
+                    className={`px-1.5 py-0.5 rounded border text-[10px] cursor-pointer transition flex items-center gap-1 ${
+                      el.is_password
+                        ? 'bg-red-950/70 border-red-500/40 text-red-300 hover:border-red-400'
+                        : 'bg-cyan-950/70 border-cyan-500/20 text-cyan-200 hover:border-cyan-400'
+                    }`}
+                    title={`Click to set target: ${el.id} (Bounding Box: ${el.bounding_box ? `${Math.round(el.bounding_box.x)},${Math.round(el.bounding_box.y)} ${Math.round(el.bounding_box.width)}x${Math.round(el.bounding_box.height)}` : 'none'})`}
                   >
-                    [{el.id}] &lt;{el.tag}&gt; &quot;{el.text || 'anonymous'}&quot; {el.is_password ? '[PW]' : ''}
+                    <span className="font-bold">[{el.id}]</span> &lt;{el.tag}&gt; &quot;{el.accessible_name || el.text || 'anonymous'}&quot;
+                    {el.is_password && <span className="text-[9px] bg-red-800 text-white px-1 rounded">PW</span>}
                   </span>
                 ))}
               </div>

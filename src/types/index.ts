@@ -115,18 +115,74 @@ export interface BrowserElementBounds {
   height: number;
 }
 
+export interface RegionInfo {
+  region_type: string;
+  label?: string;
+  element_id?: string;
+  bounding_box?: BrowserElementBounds;
+  elements_count: number;
+}
+
+export interface HeadingInfo {
+  level: number;
+  text: string;
+  id?: string;
+}
+
+export interface FormControlInfo {
+  element_id: string;
+  field_type: string;
+  label?: string;
+  placeholder?: string;
+  required: boolean;
+  disabled: boolean;
+  is_password: boolean;
+}
+
+export interface FormInfo {
+  id?: string;
+  name?: string;
+  action?: string;
+  method?: string;
+  controls: FormControlInfo[];
+}
+
+export interface LinkInfo {
+  text: string;
+  href: string;
+  role?: string;
+  visible: boolean;
+  is_external: boolean;
+}
+
+export interface ViewportInfo {
+  width: number;
+  height: number;
+  scroll_x: number;
+  scroll_y: number;
+  page_width: number;
+  page_height: number;
+}
+
 export interface ElementInfo {
   id: string;
   tag: string;
   role?: string;
+  accessible_name?: string;
   text: string;
   aria_label?: string;
   href?: string;
   input_type?: string;
+  placeholder?: string;
+  value_available?: boolean;
   disabled: boolean;
+  checked?: boolean;
+  selected?: boolean;
   visible: boolean;
+  interactable?: boolean;
   is_password?: boolean;
   is_in_iframe?: boolean;
+  parent_region?: string;
   bounding_box?: BrowserElementBounds;
 }
 
@@ -146,9 +202,16 @@ export interface PageObservationSnapshot {
   tab_id: string;
   url: string;
   title: string;
+  generation?: number;
+  fingerprint?: string;
+  viewport?: ViewportInfo;
   visible_text: string;
   selected_text?: string;
+  regions?: RegionInfo[];
+  headings?: HeadingInfo[];
   interactive_elements: ElementInfo[];
+  forms?: FormInfo[];
+  links?: LinkInfo[];
   timestamp: number;
 }
 

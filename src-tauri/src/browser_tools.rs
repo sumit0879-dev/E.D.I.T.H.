@@ -59,7 +59,7 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "browser_observe".to_string(),
-            description: "Observe the actual live rendered DOM, visible text, and interactive elements of a browser tab.".to_string(),
+            description: "Observe the live rendered DOM, semantic regions, headings, forms, links, and interactive elements of a browser tab.".to_string(),
             category: "observation".to_string(),
             risk_level: "OBSERVE".to_string(),
             parameters: json!({
@@ -68,6 +68,11 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
                     "tab_id": {
                         "type": "string",
                         "description": "Identifier of the tab to observe (e.g. 'tab_a')."
+                    },
+                    "scope": {
+                        "type": "string",
+                        "enum": ["full_page", "visible_viewport", "region", "element"],
+                        "description": "Optional observation scope (default: 'full_page')."
                     }
                 },
                 "required": ["tab_id"]
@@ -400,17 +405,25 @@ pub async fn execute_browser_tool(
         "browser_observe" => {
             let tab_id = args.get("tab_id").and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+            let scope = args.get("scope").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-            match browser_observe_tab(app, tab_id.to_string(), state).await {
+            match browser_observe_tab(app, tab_id.to_string(), scope, state).await {
                 Ok(obs) => {
                     let compact_data = json!({
                         "tab_id": obs.tab_id,
                         "url": obs.url,
                         "title": obs.title,
+                        "generation": obs.generation,
+                        "fingerprint": obs.fingerprint,
+                        "viewport": obs.viewport,
                         "visible_text": obs.visible_text.chars().take(20000).collect::<String>(),
                         "selected_text": obs.selected_text,
+                        "regions": obs.regions,
+                        "headings": obs.headings,
                         "interactive_elements_count": obs.interactive_elements.len(),
-                        "interactive_elements": obs.interactive_elements.iter().take(40).collect::<Vec<_>>(),
+                        "interactive_elements": obs.interactive_elements.iter().take(60).collect::<Vec<_>>(),
+                        "forms": obs.forms,
+                        "links": obs.links.iter().take(30).collect::<Vec<_>>(),
                         "timestamp": obs.timestamp,
                     });
                     Ok(BrowserToolExecutionResult {

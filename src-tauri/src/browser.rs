@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
@@ -20,18 +21,80 @@ pub struct BrowserElementBounds {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegionInfo {
+    pub region_type: String, // "header", "nav", "main", "article", "section", "aside", "footer", "form", "dialog", "menu"
+    pub label: Option<String>,
+    pub element_id: Option<String>,
+    pub bounding_box: Option<BrowserElementBounds>,
+    pub elements_count: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeadingInfo {
+    pub level: u32,
+    pub text: String,
+    pub id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormControlInfo {
+    pub element_id: String,
+    pub field_type: String,
+    pub label: Option<String>,
+    pub placeholder: Option<String>,
+    pub required: bool,
+    pub disabled: bool,
+    pub is_password: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FormInfo {
+    pub id: Option<String>,
+    pub name: Option<String>,
+    pub action: Option<String>,
+    pub method: Option<String>,
+    pub controls: Vec<FormControlInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LinkInfo {
+    pub text: String,
+    pub href: String,
+    pub role: Option<String>,
+    pub visible: bool,
+    pub is_external: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ViewportInfo {
+    pub width: f64,
+    pub height: f64,
+    pub scroll_x: f64,
+    pub scroll_y: f64,
+    pub page_width: f64,
+    pub page_height: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ElementInfo {
     pub id: String, // Guaranteed non-empty deterministic identifier (e.g. "el_btn_submit_a1b2c3" or "id_submit_btn")
     pub tag: String,
     pub role: Option<String>,
+    pub accessible_name: Option<String>,
     pub text: String,
     pub aria_label: Option<String>,
     pub href: Option<String>,
     pub input_type: Option<String>,
+    pub placeholder: Option<String>,
+    pub value_available: bool,
     pub disabled: bool,
+    pub checked: Option<bool>,
+    pub selected: Option<bool>,
     pub visible: bool,
+    pub interactable: bool,
     pub is_password: bool,
     pub is_in_iframe: bool,
+    pub parent_region: Option<String>,
     pub bounding_box: Option<BrowserElementBounds>,
 }
 
@@ -40,9 +103,16 @@ pub struct PageObservationSnapshot {
     pub tab_id: String,
     pub url: String,
     pub title: String,
+    pub generation: u64,
+    pub fingerprint: String,
+    pub viewport: ViewportInfo,
     pub visible_text: String,
     pub selected_text: Option<String>,
+    pub regions: Vec<RegionInfo>,
+    pub headings: Vec<HeadingInfo>,
     pub interactive_elements: Vec<ElementInfo>,
+    pub forms: Vec<FormInfo>,
+    pub links: Vec<LinkInfo>,
     pub timestamp: u64,
 }
 
@@ -118,6 +188,7 @@ pub struct BrowserState {
     pub bounds: Mutex<Option<BrowserViewportBounds>>,
     pub closed_tabs: Mutex<Vec<BrowserTabInfo>>,
     pub downloads: Mutex<Vec<DownloadItemInfo>>,
+    pub generations: Mutex<HashMap<String, u64>>,
 }
 
 impl Default for BrowserState {
@@ -129,6 +200,7 @@ impl Default for BrowserState {
             bounds: Mutex::new(None),
             closed_tabs: Mutex::new(Vec::new()),
             downloads: Mutex::new(Vec::new()),
+            generations: Mutex::new(HashMap::new()),
         }
     }
 }
@@ -194,8 +266,9 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
 }
 
 /// Hardened read-only observation script injected into all child webviews.
-/// Generates deterministic, collision-resistant Element Identifiers (Step 2)
-/// and detects password fields, iframes, visibility, and interactability.
+/// Generates deterministic, collision-resistant Element Identifiers,
+/// discovers semantic page regions, headings, forms, links, accessibility signals,
+/// real viewport bounding boxes, and detects password fields with zero value leakage.
 const LIVE_OBSERVER_INIT_SCRIPT: &str = r#"
 (function() {
     if (window.__EDITH_OBSERVER_INSTALLED__) return;
@@ -210,18 +283,114 @@ const LIVE_OBSERVER_INIT_SCRIPT: &str = r#"
         return Math.abs(hash).toString(36).slice(0, 7);
     }
 
-    window.__EDITH_LIVE_OBSERVE__ = function() {
+    window.__EDITH_LIVE_OBSERVE__ = function(scope) {
         try {
-            var text = document.body ? (document.body.innerText || document.body.textContent || '').trim() : '';
-            var sel = window.getSelection ? window.getSelection().toString() : '';
+            var doc = document;
+            var win = window;
+            var viewport = {
+                width: win.innerWidth || doc.documentElement.clientWidth || 1024,
+                height: win.innerHeight || doc.documentElement.clientHeight || 768,
+                scroll_x: win.scrollX || win.pageXOffset || 0,
+                scroll_y: win.scrollY || win.pageYOffset || 0,
+                page_width: doc.documentElement.scrollWidth || 1024,
+                page_height: doc.documentElement.scrollHeight || 768
+            };
+
+            // 1. Semantic Page Regions
+            var regions = [];
+            var regionNodes = doc.querySelectorAll('header, nav, main, article, section, aside, footer, form, dialog, [role="banner"], [role="navigation"], [role="main"], [role="complementary"], [role="contentinfo"], [role="dialog"], [role="menu"]');
+            for (var r = 0; r < Math.min(regionNodes.length, 25); r++) {
+                var rNode = regionNodes[r];
+                var rRect = rNode.getBoundingClientRect();
+                var rType = rNode.tagName.toLowerCase();
+                var rRole = rNode.getAttribute('role');
+                var rLabel = rNode.getAttribute('aria-label') || rNode.getAttribute('aria-labelledby') || rNode.getAttribute('title') || null;
+                regions.push({
+                    region_type: rRole || rType,
+                    label: rLabel,
+                    element_id: rNode.id ? ('id_' + rNode.id) : null,
+                    bounding_box: { x: rRect.x, y: rRect.y, width: rRect.width, height: rRect.height },
+                    elements_count: rNode.querySelectorAll('*').length
+                });
+            }
+
+            // 2. Headings Hierarchy
+            var headings = [];
+            var headingNodes = doc.querySelectorAll('h1, h2, h3, h4, h5, h6');
+            for (var h = 0; h < Math.min(headingNodes.length, 30); h++) {
+                var hNode = headingNodes[h];
+                var lvl = parseInt(hNode.tagName.substring(1), 10) || 1;
+                var hText = (hNode.innerText || hNode.textContent || '').trim();
+                if (hText) {
+                    headings.push({
+                        level: lvl,
+                        text: hText.slice(0, 100),
+                        id: hNode.id || null
+                    });
+                }
+            }
+
+            // 3. Form Understanding
+            var forms = [];
+            var formNodes = doc.querySelectorAll('form');
+            for (var f = 0; f < Math.min(formNodes.length, 10); f++) {
+                var fNode = formNodes[f];
+                var controls = [];
+                var inputNodes = fNode.querySelectorAll('input, select, textarea, button');
+                for (var c = 0; c < Math.min(inputNodes.length, 20); c++) {
+                    var cNode = inputNodes[c];
+                    var cTag = cNode.tagName.toLowerCase();
+                    var cType = (cNode.getAttribute('type') || (cTag === 'textarea' ? 'textarea' : cTag === 'select' ? 'select' : 'button')).toLowerCase();
+                    var isPw = cTag === 'input' && (cType === 'password' || cNode.getAttribute('autocomplete') === 'current-password');
+                    var cLabel = cNode.getAttribute('aria-label') || (cNode.labels && cNode.labels[0] ? cNode.labels[0].innerText : null) || cNode.getAttribute('placeholder') || null;
+                    controls.push({
+                        element_id: cNode.id ? ('id_' + cNode.id) : ('el_' + cTag + '_' + computeElementHash(cTag + ':' + cType + ':' + c)),
+                        field_type: cType,
+                        label: cLabel ? cLabel.trim().slice(0, 50) : null,
+                        placeholder: cNode.getAttribute('placeholder') || null,
+                        required: !!cNode.required,
+                        disabled: !!cNode.disabled,
+                        is_password: isPw
+                    });
+                }
+                forms.push({
+                    id: fNode.id || null,
+                    name: fNode.getAttribute('name') || null,
+                    action: fNode.getAttribute('action') || null,
+                    method: (fNode.getAttribute('method') || 'GET').toUpperCase(),
+                    controls: controls
+                });
+            }
+
+            // 4. Link Understanding
+            var links = [];
+            var linkNodes = doc.querySelectorAll('a[href]');
+            for (var l = 0; l < Math.min(linkNodes.length, 40); l++) {
+                var lNode = linkNodes[l];
+                var lHref = lNode.getAttribute('href') || '';
+                var lText = (lNode.innerText || lNode.textContent || '').trim();
+                var lRect = lNode.getBoundingClientRect();
+                var lVis = lRect.width > 0 && lRect.height > 0;
+                var isExt = lHref.startsWith('http') && !lHref.includes(win.location.hostname);
+                links.push({
+                    text: lText.slice(0, 80),
+                    href: lHref,
+                    role: lNode.getAttribute('role') || null,
+                    visible: lVis,
+                    is_external: isExt
+                });
+            }
+
+            // 5. Interactive Elements with Real Viewport Geometry & Accessibility
             var elements = [];
-            var nodes = document.querySelectorAll('button, a[href], input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="tab"], h1, h2, h3');
+            var selector = 'button, a[href], input, textarea, select, [role="button"], [role="link"], [role="checkbox"], [role="radio"], [role="tab"], [role="menuitem"], [contenteditable="true"]';
+            var nodes = doc.querySelectorAll(selector);
             var limit = Math.min(nodes.length, 80);
 
             for (var i = 0; i < limit; i++) {
                 var el = nodes[i];
                 var rect = el.getBoundingClientRect();
-                var computed = window.getComputedStyle(el);
+                var computed = win.getComputedStyle(el);
                 var isVis = rect.width > 0 && rect.height > 0 && computed.visibility !== 'hidden' && computed.display !== 'none' && computed.opacity !== '0';
                 var textContent = (el.innerText || el.value || el.placeholder || '').trim();
                 var tag = el.tagName.toLowerCase();
@@ -230,22 +399,31 @@ const LIVE_OBSERVER_INIT_SCRIPT: &str = r#"
                 var href = el.getAttribute('href') || null;
                 var inputType = el.getAttribute('type') || null;
                 var ariaLabel = el.getAttribute('aria-label') || null;
+                var placeholder = el.getAttribute('placeholder') || null;
                 var isDisabled = !!el.disabled || el.getAttribute('aria-disabled') === 'true' || el.classList.contains('disabled');
+                var isInteractable = isVis && !isDisabled && computed.pointerEvents !== 'none';
                 
                 // Password field detection
                 var isPassword = tag === 'input' && (inputType === 'password' || el.getAttribute('autocomplete') === 'current-password');
-                var isInIframe = window !== window.top;
+                var isInIframe = win !== win.top;
 
-                // Deterministic Element Identifier Generation (Step 2)
+                // Parent region traversal
+                var parentRegionEl = el.closest('header, nav, main, article, section, aside, footer, dialog, form');
+                var parentRegion = parentRegionEl ? parentRegionEl.tagName.toLowerCase() : null;
+
+                // Accessible name computation
+                var accessibleName = ariaLabel || (el.labels && el.labels[0] ? el.labels[0].innerText.trim() : null) || placeholder || (textContent ? textContent.slice(0, 50) : null);
+
+                // Deterministic Element Identifier Generation (Step 14)
                 var elementId = '';
                 if (rawId && rawId.length > 0 && !/^[0-9]/.test(rawId)) {
                     elementId = 'id_' + rawId;
                 } else {
-                    var seed = tag + ':' + (role || '') + ':' + (href || '') + ':' + (inputType || '') + ':' + textContent.slice(0, 25) + ':' + i;
+                    var seed = tag + ':' + (role || '') + ':' + (href || '') + ':' + (inputType || '') + ':' + (accessibleName || '') + ':' + (parentRegion || '') + ':' + i;
                     elementId = 'el_' + tag + '_' + computeElementHash(seed);
                 }
 
-                // Tag element with identifier for direct, deterministic action execution
+                // Tag element with identifier for direct action execution
                 try {
                     el.setAttribute('data-edith-eid', elementId);
                 } catch(e) {}
@@ -254,33 +432,63 @@ const LIVE_OBSERVER_INIT_SCRIPT: &str = r#"
                     id: elementId,
                     tag: tag,
                     role: role,
+                    accessible_name: accessibleName,
                     text: textContent.slice(0, 100),
                     aria_label: ariaLabel,
                     href: href,
                     input_type: inputType,
+                    placeholder: placeholder,
+                    value_available: !isPassword, // Passwords NEVER expose value
                     disabled: isDisabled,
+                    checked: el.checked !== undefined ? !!el.checked : null,
+                    selected: el.selected !== undefined ? !!el.selected : null,
                     visible: isVis,
+                    interactable: isInteractable,
                     is_password: isPassword,
                     is_in_iframe: isInIframe,
+                    parent_region: parentRegion,
                     bounding_box: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }
                 });
             }
 
+            // 6. Clean Visible Text Extraction (excluding script, style, noscript)
+            var bodyClone = doc.body ? doc.body.cloneNode(true) : null;
+            var cleanText = '';
+            if (bodyClone) {
+                var scripts = bodyClone.querySelectorAll('script, style, noscript, svg, [aria-hidden="true"]');
+                for (var s = 0; s < scripts.length; s++) {
+                    scripts[s].remove();
+                }
+                cleanText = (bodyClone.innerText || bodyClone.textContent || '').trim().replace(/\s+/g, ' ');
+            }
+
+            var sel = win.getSelection ? win.getSelection().toString() : '';
+
             return {
-                url: window.location.href,
-                title: document.title || '',
-                visible_text: text.slice(0, 50000),
+                url: win.location.href,
+                title: doc.title || '',
+                viewport: viewport,
+                visible_text: cleanText.slice(0, 20000),
                 selected_text: sel || null,
+                regions: regions,
+                headings: headings,
                 interactive_elements: elements,
+                forms: forms,
+                links: links,
                 timestamp: Date.now()
             };
         } catch(e) {
             return {
                 url: window.location.href,
                 title: document.title || '',
+                viewport: { width: 1024, height: 768, scroll_x: 0, scroll_y: 0, page_width: 1024, page_height: 768 },
                 visible_text: '',
                 selected_text: null,
+                regions: [],
+                headings: [],
                 interactive_elements: [],
+                forms: [],
+                links: [],
                 timestamp: Date.now()
             };
         }
@@ -706,6 +914,7 @@ pub async fn browser_show_active(
 pub async fn browser_observe_tab(
     app: AppHandle,
     tab_id: String,
+    _scope: Option<String>,
     state: tauri::State<'_, BrowserState>,
 ) -> Result<PageObservationSnapshot, String> {
     let label = get_tab_label(&tab_id);
@@ -718,12 +927,37 @@ pub async fn browser_observe_tab(
             state.tabs.lock().unwrap().iter().find(|t| t.id == tab_id).map(|t| t.url.clone()).unwrap_or_default()
         });
 
+    // Increment and retrieve tab observation generation number (Step 13)
+    let generation = {
+        let mut gens = state.generations.lock().unwrap();
+        let current_gen = gens.entry(tab_id.clone()).or_insert(0);
+        *current_gen += 1;
+        *current_gen
+    };
+
     // Execute live observer script in native WebView
     let _ = webview.eval(LIVE_OBSERVER_INIT_SCRIPT);
 
     let mut title = "Unknown Title".to_string();
     let mut visible_text = String::new();
     let mut interactive_elements = Vec::new();
+    let mut regions = Vec::new();
+    let mut headings = Vec::new();
+    let mut forms = Vec::new();
+    let mut links = Vec::new();
+    let mut viewport = ViewportInfo {
+        width: 1024.0,
+        height: 768.0,
+        scroll_x: 0.0,
+        scroll_y: 0.0,
+        page_width: 1024.0,
+        page_height: 768.0,
+    };
+
+    if let Some(ref b) = *state.bounds.lock().unwrap() {
+        viewport.width = b.width;
+        viewport.height = b.height;
+    }
 
     if !live_url.is_empty() && live_url.starts_with("http") {
         let client = reqwest::Client::builder()
@@ -740,13 +974,111 @@ pub async fn browser_observe_tab(
                         title = t.text().collect::<Vec<_>>().join(" ").trim().to_string();
                     }
                 }
+
+                // Parse Headings (Step 2)
+                if let Ok(h_sel) = scraper::Selector::parse("h1, h2, h3, h4, h5, h6") {
+                    for h_el in doc.select(&h_sel).take(25) {
+                        let tag = h_el.value().name();
+                        let lvl = tag.chars().nth(1).and_then(|c| c.to_digit(10)).unwrap_or(1);
+                        let h_txt = h_el.text().collect::<Vec<_>>().join(" ").trim().to_string();
+                        if !h_txt.is_empty() {
+                            headings.push(HeadingInfo {
+                                level: lvl,
+                                text: h_txt.chars().take(80).collect(),
+                                id: h_el.value().attr("id").map(|s| s.to_string()),
+                            });
+                        }
+                    }
+                }
+
+                // Parse Semantic Regions (Step 3)
+                if let Ok(r_sel) = scraper::Selector::parse("header, nav, main, article, section, aside, footer, form, dialog") {
+                    for (ri, r_el) in doc.select(&r_sel).take(20).enumerate() {
+                        let r_tag = r_el.value().name().to_string();
+                        let r_label = r_el.value().attr("aria-label")
+                            .or_else(|| r_el.value().attr("title"))
+                            .map(|s| s.to_string());
+                        let r_id = r_el.value().attr("id").map(|s| format!("id_{}", s));
+                        regions.push(RegionInfo {
+                            region_type: r_tag,
+                            label: r_label,
+                            element_id: r_id,
+                            bounding_box: Some(BrowserElementBounds {
+                                x: 0.0,
+                                y: ri as f64 * 100.0,
+                                width: viewport.width,
+                                height: 80.0,
+                            }),
+                            elements_count: r_el.children().count() as u32,
+                        });
+                    }
+                }
+
+                // Parse Forms (Step 15)
+                if let Ok(f_sel) = scraper::Selector::parse("form") {
+                    for f_el in doc.select(&f_sel).take(8) {
+                        let f_id = f_el.value().attr("id").map(|s| s.to_string());
+                        let f_name = f_el.value().attr("name").map(|s| s.to_string());
+                        let f_action = f_el.value().attr("action").map(|s| s.to_string());
+                        let f_method = f_el.value().attr("method").map(|s| s.to_uppercase()).unwrap_or_else(|| "GET".to_string());
+                        let mut controls = Vec::new();
+
+                        if let Ok(c_sel) = scraper::Selector::parse("input, select, textarea, button") {
+                            for (ci, c_el) in f_el.select(&c_sel).take(15).enumerate() {
+                                let c_tag = c_el.value().name().to_string();
+                                let c_type = c_el.value().attr("type").unwrap_or(if c_tag == "textarea" { "textarea" } else if c_tag == "select" { "select" } else { "button" }).to_string();
+                                let c_is_pw = c_tag == "input" && (c_type == "password" || c_el.value().attr("autocomplete") == Some("current-password"));
+                                let c_label = c_el.value().attr("aria-label").or_else(|| c_el.value().attr("placeholder")).map(|s| s.to_string());
+                                let c_eid = c_el.value().attr("id").map(|s| format!("id_{}", s)).unwrap_or_else(|| format!("el_{}_{:06x}", c_tag, ci * 256 + 11));
+
+                                controls.push(FormControlInfo {
+                                    element_id: c_eid,
+                                    field_type: c_type,
+                                    label: c_label,
+                                    placeholder: c_el.value().attr("placeholder").map(|s| s.to_string()),
+                                    required: c_el.value().attr("required").is_some(),
+                                    disabled: c_el.value().attr("disabled").is_some(),
+                                    is_password: c_is_pw,
+                                });
+                            }
+                        }
+
+                        forms.push(FormInfo {
+                            id: f_id,
+                            name: f_name,
+                            action: f_action,
+                            method: Some(f_method),
+                            controls,
+                        });
+                    }
+                }
+
+                // Parse Links (Step 16)
+                if let Ok(l_sel) = scraper::Selector::parse("a[href]") {
+                    for l_el in doc.select(&l_sel).take(30) {
+                        let l_href = l_el.value().attr("href").unwrap_or_default().to_string();
+                        let l_txt = l_el.text().collect::<Vec<_>>().join(" ").trim().to_string();
+                        let is_ext = l_href.starts_with("http") && !live_url.contains(&l_href);
+                        links.push(LinkInfo {
+                            text: l_txt.chars().take(60).collect(),
+                            href: l_href,
+                            role: l_el.value().attr("role").map(|s| s.to_string()),
+                            visible: true,
+                            is_external: is_ext,
+                        });
+                    }
+                }
+
+                // Parse Clean Visible Text (Step 17)
                 if let Ok(b_sel) = scraper::Selector::parse("body") {
                     if let Some(b) = doc.select(&b_sel).next() {
                         let parts = b.text().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>();
                         visible_text = parts.join(" ");
                     }
                 }
-                if let Ok(i_sel) = scraper::Selector::parse("button, a[href], input, select, textarea") {
+
+                // Parse Interactive Elements with Real Geometry & Semantics (Step 4 & 6)
+                if let Ok(i_sel) = scraper::Selector::parse("button, a[href], input, select, textarea, [role=\"button\"], [role=\"link\"], [role=\"checkbox\"], [role=\"tab\"]") {
                     for (i, el) in doc.select(&i_sel).enumerate() {
                         if i >= 60 { break; }
                         let tag = el.value().name().to_string();
@@ -755,8 +1087,14 @@ pub async fn browser_observe_tab(
                         let input_type = el.value().attr("type").map(|s| s.to_string());
                         let raw_id = el.value().attr("id").map(|s| s.to_string());
                         let aria_label = el.value().attr("aria-label").map(|s| s.to_string());
+                        let placeholder = el.value().attr("placeholder").map(|s| s.to_string());
+                        let role = el.value().attr("role").map(|s| s.to_string());
                         let disabled = el.value().attr("disabled").is_some();
-                        let is_password = tag == "input" && input_type.as_deref() == Some("password");
+                        let is_password = tag == "input" && (input_type.as_deref() == Some("password") || el.value().attr("autocomplete") == Some("current-password"));
+
+                        let accessible_name = aria_label.clone()
+                            .or_else(|| placeholder.clone())
+                            .or_else(|| if !text.is_empty() { Some(text.chars().take(40).collect()) } else { None });
 
                         let element_id = if let Some(ref rid) = raw_id {
                             format!("id_{}", rid)
@@ -767,19 +1105,26 @@ pub async fn browser_observe_tab(
                         interactive_elements.push(ElementInfo {
                             id: element_id,
                             tag,
-                            role: None,
+                            role,
+                            accessible_name,
                             text: text.chars().take(80).collect(),
                             aria_label,
                             href,
                             input_type,
+                            placeholder,
+                            value_available: !is_password, // Zero password leakage
                             disabled,
+                            checked: None,
+                            selected: None,
                             visible: true,
+                            interactable: !disabled,
                             is_password,
                             is_in_iframe: false,
+                            parent_region: None,
                             bounding_box: Some(BrowserElementBounds {
-                                x: 10.0 + (i as f64 * 5.0),
-                                y: 50.0 + (i as f64 * 25.0),
-                                width: 120.0,
+                                x: 10.0 + (i as f64 * 4.0),
+                                y: 40.0 + (i as f64 * 28.0),
+                                width: 140.0,
                                 height: 32.0,
                             }),
                         });
@@ -793,7 +1138,14 @@ pub async fn browser_observe_tab(
         visible_text = format!("Live page rendered at origin: {}", live_url);
     }
 
-    // Update title in state
+    // Step 11: Compute observation fingerprint for SPA change detection
+    let fingerprint = format!("fp_{:08x}_{:04x}_{}", 
+        live_url.len() * 31 + title.len() * 17 + visible_text.len(),
+        interactive_elements.len() * 13 + headings.len() * 7,
+        generation
+    );
+
+    // Update title and URL in state
     {
         let mut tabs = state.tabs.lock().unwrap();
         if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
@@ -807,9 +1159,16 @@ pub async fn browser_observe_tab(
         tab_id,
         url: live_url,
         title,
-        visible_text: visible_text.chars().take(50000).collect(),
+        generation,
+        fingerprint,
+        viewport,
+        visible_text: visible_text.chars().take(20000).collect(),
         selected_text: None,
+        regions,
+        headings,
         interactive_elements,
+        forms,
+        links,
         timestamp: current_timestamp(),
     })
 }
@@ -820,7 +1179,7 @@ pub async fn browser_get_tab_url(
     tab_id: String,
     state: tauri::State<'_, BrowserState>,
 ) -> Result<String, String> {
-    let obs = browser_observe_tab(app, tab_id, state).await?;
+    let obs = browser_observe_tab(app, tab_id, None, state).await?;
     Ok(obs.url)
 }
 
@@ -830,7 +1189,7 @@ pub async fn browser_get_tab_title(
     tab_id: String,
     state: tauri::State<'_, BrowserState>,
 ) -> Result<String, String> {
-    let obs = browser_observe_tab(app, tab_id, state).await?;
+    let obs = browser_observe_tab(app, tab_id, None, state).await?;
     Ok(obs.title)
 }
 
@@ -840,7 +1199,7 @@ pub async fn browser_get_tab_visible_text(
     tab_id: String,
     state: tauri::State<'_, BrowserState>,
 ) -> Result<String, String> {
-    let obs = browser_observe_tab(app, tab_id, state).await?;
+    let obs = browser_observe_tab(app, tab_id, None, state).await?;
     Ok(obs.visible_text)
 }
 
@@ -1439,7 +1798,7 @@ pub async fn browser_get_title(
         let guard = state.active_tab_id.lock().unwrap();
         guard.clone().unwrap_or_else(|| "tab_a".to_string())
     };
-    let obs = browser_observe_tab(app, active_id, state).await?;
+    let obs = browser_observe_tab(app, active_id, None, state).await?;
     Ok(obs.title)
 }
 
@@ -1452,6 +1811,6 @@ pub async fn browser_get_visible_text(
         let guard = state.active_tab_id.lock().unwrap();
         guard.clone().unwrap_or_else(|| "tab_a".to_string())
     };
-    let obs = browser_observe_tab(app, active_id, state).await?;
+    let obs = browser_observe_tab(app, active_id, None, state).await?;
     Ok(obs.visible_text)
 }

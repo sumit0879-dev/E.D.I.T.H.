@@ -287,9 +287,9 @@ class BrowserController {
     return await tauriService.browserSelectOption(targetId, elementId, value);
   }
 
-  // --- Phase 3 Live Observation & Screenshot APIs ---
-  public async observeTab(tabId: string): Promise<PageObservationSnapshot> {
-    const obs = await tauriService.browserObserveTab(tabId);
+  // --- Phase 3 & 5.2 Live Observation & Screenshot APIs ---
+  public async observeTab(tabId: string, scope?: string): Promise<PageObservationSnapshot> {
+    const obs = await tauriService.browserObserveTab(tabId, scope);
     const tab = this.tabs.find((t) => t.id === tabId);
     if (tab) {
       tab.url = obs.url;

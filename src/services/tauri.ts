@@ -877,30 +877,61 @@ export async function browserGetTabVisibleText(tabId: string): Promise<string> {
   return await invoke<string>('browser_get_tab_visible_text', { tabId });
 }
 
-export async function browserObserveTab(tabId: string): Promise<PageObservationSnapshot> {
+export async function browserObserveTab(
+  tabId: string,
+  scope?: string
+): Promise<PageObservationSnapshot> {
   if (!isTauri()) {
     return {
       tab_id: tabId,
       url: 'https://example.com',
       title: 'Example Domain (Simulated)',
+      generation: 1,
+      fingerprint: 'fp_simulated_01',
+      viewport: { width: 1024, height: 768, scroll_x: 0, scroll_y: 0, page_width: 1024, page_height: 768 },
       visible_text: 'Example Domain. This domain is for use in illustrative examples in documents.',
       selected_text: undefined,
+      regions: [
+        {
+          region_type: 'main',
+          label: 'Main Content',
+          elements_count: 5,
+        },
+      ],
+      headings: [
+        {
+          level: 1,
+          text: 'Example Domain',
+        },
+      ],
       interactive_elements: [
         {
-          id: 'more-info-link',
+          id: 'id_more_info',
           tag: 'a',
           role: 'link',
+          accessible_name: 'More information...',
           text: 'More information...',
           href: 'https://www.iana.org/domains/example',
           disabled: false,
           visible: true,
+          interactable: true,
+          value_available: true,
           bounding_box: { x: 100, y: 200, width: 150, height: 24 },
+        },
+      ],
+      forms: [],
+      links: [
+        {
+          text: 'More information...',
+          href: 'https://www.iana.org/domains/example',
+          visible: true,
+          is_external: true,
         },
       ],
       timestamp: Date.now(),
     };
   }
-  return await invoke<PageObservationSnapshot>('browser_observe_tab', { tabId });
+  return await invoke<PageObservationSnapshot>('browser_observe_tab', { tabId, scope });
 }
 
 export async function browserScreenshotTab(tabId: string, bounds?: BrowserViewportBounds): Promise<ScreenshotResult> {
