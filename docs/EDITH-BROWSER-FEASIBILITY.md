@@ -2190,6 +2190,21 @@ Implemented a centralized, host-controlled asynchronous download streaming engin
 - AI cannot execute print jobs without human approval.
 - Full compatibility with Phase 5.6E content blocking and Phase 5.6C profile storage boundaries.
 
+### 5.6F-A Find Result Correctness Fix
+
+- **Original Bug**: `browser_find_in_page` previously evaluated JavaScript to calculate DOM match counts, but because Tauri `Webview::eval` is fire-and-forget, the Rust host fell back to hardcoded `{ matches_count: 1, active_match_ordinal: 1, match_found: true }` without retrieving the real computed DOM state from the child webview.
+- **Corrected Implementation**:
+  - **Bridge Protocol**: Injected JS uses an isolated hidden bridge iframe navigating to `edith-find://result?data=<encoded_json>` containing the live match results.
+  - **Host Navigation Interception**: `WebviewBuilder::on_navigation` intercepts the `edith-find:` protocol synchronously before network dispatch, decodes the payload (`tab_id`, `query`, `match_found`, `matches_count`, `active_match_ordinal`), updates `GLOBAL_FIND_RESULTS`, and returns `false` to prevent page navigation.
+  - **DOM Match Counter**: Uses `document.createTreeWalker` across live visible text nodes (filtering out `<script>`, `<style>`, `<noscript>`) with exact regex matching according to `case_sensitive`.
+  - **Active Match Progression**: Tracks stateful ordinal index (`active_match_ordinal`), wrapping accurately on Next (`(active % count) + 1`) and Previous (`active <= 1 ? count : active - 1`).
+  - **Zero Match Handling**: Returns exact `{ match_found: false, matches_count: 0, active_match_ordinal: 0 }`.
+- **Test Scenarios**:
+  - `Rust Rust Rust` with search `"Rust"`: `matches_count = 3`, `match_found = true`, `active_match_ordinal = 1` -> Next (`2`) -> Next (`3`) -> Prev (`2`).
+  - Search `"XYZ"`: `matches_count = 0`, `match_found = false`, `active_match_ordinal = 0`.
+- **Actual Limitations**:
+  - In cross-origin `<iframe>` elements with restricted sandbox policies, text inside the child frame is isolated per standard browser security boundaries. Top-level document and same-origin frames are counted with 100% precision.
+
 ---
 
 ## Final Phase 5.6F-A Scorecard

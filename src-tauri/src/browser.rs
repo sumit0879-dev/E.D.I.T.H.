@@ -148,6 +148,30 @@ pub struct FindResult {
     pub active_match_ordinal: u32,
 }
 
+pub static GLOBAL_FIND_RESULTS: Mutex<Option<HashMap<String, FindResult>>> = Mutex::new(None);
+
+pub fn set_global_find_result(tab_id: String, res: FindResult) {
+    let mut guard = GLOBAL_FIND_RESULTS.lock().unwrap();
+    if guard.is_none() {
+        *guard = Some(HashMap::new());
+    }
+    if let Some(ref mut map) = *guard {
+        map.insert(tab_id, res);
+    }
+}
+
+pub fn get_global_find_result(tab_id: &str) -> Option<FindResult> {
+    let guard = GLOBAL_FIND_RESULTS.lock().unwrap();
+    guard.as_ref().and_then(|map| map.get(tab_id).cloned())
+}
+
+pub fn clear_global_find_result(tab_id: &str) {
+    let mut guard = GLOBAL_FIND_RESULTS.lock().unwrap();
+    if let Some(ref mut map) = *guard {
+        map.remove(tab_id);
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserTabInfo {
     pub id: String,
@@ -580,14 +604,45 @@ pub async fn browser_create_tab(
         // Phase 5.6E: Privacy & Content Blocker Pre-flight Script (Step 10)
         builder = builder.initialization_script(crate::browser_privacy::PRIVACY_PREFLIGHT_INIT_SCRIPT);
 
-        // Native Navigation Policy Callback
+        // Native Navigation Policy Callback & Find IPC Interception
         builder = builder.on_navigation(|nav_url| {
-            // Block javascript: and file: schemes from remote navigation
-            let s = nav_url.as_str().to_lowercase();
-            if s.starts_with("javascript:") || s.starts_with("file:") {
+            let s = nav_url.as_str();
+
+            // Intercept internal find results from bridge iframe
+            if s.starts_with("edith-find:") {
+                if let Some(query_str) = nav_url.query() {
+                    for pair in query_str.split('&') {
+                        if let Some((k, v)) = pair.split_once('=') {
+                            if k == "data" {
+                                if let Ok(decoded) = urlencoding::decode(v) {
+                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&decoded) {
+                                        let tab_id = val.get("tab_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                                        let q = val.get("query").and_then(|x| x.as_str()).unwrap_or("").to_string();
+                                        let found = val.get("match_found").and_then(|x| x.as_bool()).unwrap_or(false);
+                                        let count = val.get("matches_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                                        let active = val.get("active_match_ordinal").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+
+                                        set_global_find_result(tab_id, FindResult {
+                                            query: q,
+                                            match_found: found,
+                                            matches_count: count,
+                                            active_match_ordinal: active,
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 return false;
             }
-            if s.starts_with("mailto:") || s.starts_with("tel:") {
+
+            // Block javascript: and file: schemes from remote navigation
+            let lower = s.to_lowercase();
+            if lower.starts_with("javascript:") || lower.starts_with("file:") {
+                return false;
+            }
+            if lower.starts_with("mailto:") || lower.starts_with("tel:") {
                 let _ = open::that(s);
                 return false;
             }
@@ -2023,7 +2078,8 @@ pub async fn browser_find_in_page(
 
     let q = query.trim();
     if q.is_empty() {
-        let _ = wv.eval("window.getSelection() && window.getSelection().removeAllRanges();");
+        let _ = wv.eval("window.getSelection() && window.getSelection().removeAllRanges(); window.__EDITH_FIND_STATE__ = { query: '', active: 0, count: 0 };");
+        clear_global_find_result(&tab_id);
         return Ok(FindResult {
             query: String::new(),
             match_found: false,
@@ -2032,53 +2088,127 @@ pub async fn browser_find_in_page(
         });
     }
 
+    clear_global_find_result(&tab_id);
+
     let fwd = forward.unwrap_or(true);
     let cs = case_sensitive.unwrap_or(false);
+    let escaped_tab = serde_json::to_string(&tab_id).unwrap_or_else(|_| format!("\"{}\"", tab_id));
     let escaped_q = serde_json::to_string(q).unwrap_or_else(|_| format!("\"{}\"", q));
 
     let script = format!(
         r#"
         (function() {{
             try {{
+                var tabId = {escaped_tab};
                 var q = {escaped_q};
                 var fwd = {fwd};
                 var cs = {cs};
-                var found = window.find(q, cs, !fwd, true, false, false, false);
+
+                if (!q) {{
+                    window.getSelection() && window.getSelection().removeAllRanges();
+                    window.__EDITH_FIND_STATE__ = {{ query: '', active: 0, count: 0 }};
+                    reportResult(tabId, '', false, 0, 0);
+                    return;
+                }}
+
                 var count = 0;
                 try {{
                     var escaped = q.replace(/[.*+?^${{}}()|[\]\\]/g, '\\$&');
                     var regex = new RegExp(escaped, cs ? 'g' : 'gi');
-                    var text = document.body ? (document.body.innerText || '') : '';
-                    var matches = text.match(regex);
-                    count = matches ? matches.length : (found ? 1 : 0);
+                    var walker = document.createTreeWalker(
+                        document.body || document.documentElement,
+                        NodeFilter.SHOW_TEXT,
+                        null,
+                        false
+                    );
+                    var node;
+                    while ((node = walker.nextNode())) {{
+                        var parent = node.parentElement;
+                        if (parent && (parent.tagName === 'SCRIPT' || parent.tagName === 'STYLE' || parent.tagName === 'NOSCRIPT')) {{
+                            continue;
+                        }}
+                        var val = node.nodeValue || '';
+                        var m = val.match(regex);
+                        if (m) {{
+                            count += m.length;
+                        }}
+                    }}
                 }} catch(e) {{
-                    count = found ? 1 : 0;
+                    count = 0;
                 }}
-                window.__EDITH_FIND_RESULT__ = {{
-                    query: q,
-                    match_found: found,
-                    matches_count: count,
-                    active_match_ordinal: found ? 1 : 0
-                }};
-            }} catch(e) {{
-                window.__EDITH_FIND_RESULT__ = {{
-                    query: {escaped_q},
-                    match_found: false,
-                    matches_count: 0,
-                    active_match_ordinal: 0
-                }};
-            }}
+
+                var found = false;
+                try {{
+                    found = window.find(q, cs, !fwd, true, false, false, false);
+                }} catch(e) {{
+                    found = false;
+                }}
+
+                if (count === 0 && !found) {{
+                    window.__EDITH_FIND_STATE__ = {{ query: q, active: 0, count: 0 }};
+                    reportResult(tabId, q, false, 0, 0);
+                    return;
+                }}
+
+                if (count === 0 && found) {{
+                    count = 1;
+                }}
+
+                var state = window.__EDITH_FIND_STATE__ || {{ query: '', active: 0, count: 0 }};
+                var active = 1;
+                if (state.query === q && state.count === count && count > 0) {{
+                    if (fwd) {{
+                        active = (state.active % count) + 1;
+                    }} else {{
+                        active = state.active <= 1 ? count : state.active - 1;
+                    }}
+                }} else {{
+                    active = 1;
+                }}
+
+                window.__EDITH_FIND_STATE__ = {{ query: q, active: active, count: count }};
+                reportResult(tabId, q, found, count, active);
+
+                function reportResult(tId, queryStr, isFound, matchCount, activeOrd) {{
+                    try {{
+                        var payload = encodeURIComponent(JSON.stringify({{
+                            tab_id: tId,
+                            query: queryStr,
+                            match_found: isFound,
+                            matches_count: matchCount,
+                            active_match_ordinal: activeOrd
+                        }}));
+                        var ifr = document.getElementById('__edith_find_bridge__');
+                        if (!ifr) {{
+                            ifr = document.createElement('iframe');
+                            ifr.id = '__edith_find_bridge__';
+                            ifr.style.display = 'none';
+                            (document.body || document.documentElement).appendChild(ifr);
+                        }}
+                        ifr.src = 'edith-find://result?data=' + payload;
+                    }} catch(err) {{}}
+                }}
+            }} catch(outerErr) {{}}
         }})();
         "#
     );
 
     wv.eval(&script).map_err(|e| format!("Failed to execute find: {}", e))?;
 
+    // Await structured response from on_navigation
+    for _ in 0..25 {
+        if let Some(res) = get_global_find_result(&tab_id) {
+            return Ok(res);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(4)).await;
+    }
+
+    // Fallback if bridge iframe could not report (e.g. empty frame)
     Ok(FindResult {
         query: q.to_string(),
-        match_found: true,
-        matches_count: 1,
-        active_match_ordinal: 1,
+        match_found: false,
+        matches_count: 0,
+        active_match_ordinal: 0,
     })
 }
 
@@ -2087,9 +2217,10 @@ pub async fn browser_clear_find(
     app: AppHandle,
     tab_id: String,
 ) -> Result<bool, String> {
+    clear_global_find_result(&tab_id);
     let label = get_tab_label(&tab_id);
     if let Some(wv) = app.get_webview(&label) {
-        let _ = wv.eval("window.getSelection() && window.getSelection().removeAllRanges();");
+        let _ = wv.eval("window.getSelection() && window.getSelection().removeAllRanges(); window.__EDITH_FIND_STATE__ = { query: '', active: 0, count: 0 };");
     }
     Ok(true)
 }
