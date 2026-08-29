@@ -98,6 +98,18 @@ pub struct BrowserProfileRecord {
     pub is_active: bool,
 }
 
+// Phase 5.6D: Browser Tab Session Model
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserTabRecord {
+    pub id: String,
+    pub url: String,
+    pub title: String,
+    pub profile_id: String,
+    pub is_pinned: bool,
+    pub is_active: bool,
+    pub position: i64,
+}
+
 pub struct DbState {
     pub conn: Mutex<Connection>,
 }
@@ -202,6 +214,17 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
         -- Ensure default profile exists (Step 25)
         INSERT OR IGNORE INTO browser_profiles (id, name, profile_type, user_data_dir, created_at, updated_at, is_default, is_active)
         VALUES ('profile_default', 'Default Profile', 'DEFAULT', 'profiles/profile_default', 1700000000000, 1700000000000, 1, 1);
+
+        -- Phase 5.6D: Tab State Persistence for Application Restart (Step 17 & 18)
+        CREATE TABLE IF NOT EXISTS browser_tabs (
+            id TEXT PRIMARY KEY,
+            url TEXT NOT NULL,
+            title TEXT NOT NULL,
+            profile_id TEXT NOT NULL,
+            is_pinned INTEGER NOT NULL DEFAULT 0,
+            is_active INTEGER NOT NULL DEFAULT 0,
+            position INTEGER NOT NULL DEFAULT 0
+        );
         "
     )?;
 
@@ -992,5 +1015,61 @@ pub fn delete_browser_profile_record(conn: &Connection, profile_id: &str) -> Res
     let count = conn.execute("DELETE FROM browser_profiles WHERE id = ?1 AND is_default = 0", params![profile_id])?;
     Ok(count > 0)
 }
+
+// ============================================================================
+// Phase 5.6D: Tab State Session Persistence Helpers (Step 17 & 18)
+// ============================================================================
+
+pub fn save_browser_tabs(conn: &Connection, tabs: &[BrowserTabRecord]) -> Result<()> {
+    conn.execute("DELETE FROM browser_tabs", [])?;
+    for (i, tab) in tabs.iter().enumerate() {
+        conn.execute(
+            "INSERT INTO browser_tabs (id, url, title, profile_id, is_pinned, is_active, position)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                tab.id,
+                tab.url,
+                tab.title,
+                tab.profile_id,
+                if tab.is_pinned { 1 } else { 0 },
+                if tab.is_active { 1 } else { 0 },
+                i as i64
+            ],
+        )?;
+    }
+    Ok(())
+}
+
+pub fn load_browser_tabs(conn: &Connection) -> Result<Vec<BrowserTabRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, url, title, profile_id, is_pinned, is_active, position
+         FROM browser_tabs
+         ORDER BY position ASC"
+    )?;
+
+    let rows = stmt.query_map([], |row| {
+        Ok(BrowserTabRecord {
+            id: row.get(0)?,
+            url: row.get(1)?,
+            title: row.get(2)?,
+            profile_id: row.get(3)?,
+            is_pinned: row.get::<_, i64>(4)? != 0,
+            is_active: row.get::<_, i64>(5)? != 0,
+            position: row.get(6)?,
+        })
+    })?;
+
+    let mut list = Vec::new();
+    for r in rows {
+        list.push(r?);
+    }
+    Ok(list)
+}
+
+pub fn clear_browser_tabs(conn: &Connection) -> Result<()> {
+    conn.execute("DELETE FROM browser_tabs", [])?;
+    Ok(())
+}
+
 
 

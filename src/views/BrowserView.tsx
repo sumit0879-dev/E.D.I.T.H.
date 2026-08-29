@@ -50,7 +50,7 @@ import type {
   BrowserProfile,
   BrowserProfileType,
 } from '../types';
-import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2 } from 'lucide-react';
+import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -343,6 +343,22 @@ export const BrowserView: React.FC = () => {
     }
   };
 
+  // Phase 5.6D Tab Context Menu & New Tab States
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
+  const [newTabSearchQuery, setNewTabSearchQuery] = useState('');
+
+  const handleTabContextMenu = (e: React.MouseEvent, tabId: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY, tabId });
+  };
+
+  useEffect(() => {
+    const handleWindowClick = () => setContextMenu(null);
+    window.addEventListener('click', handleWindowClick);
+    return () => window.removeEventListener('click', handleWindowClick);
+  }, []);
+
   const fetchRiskAuditLogs = useCallback(async () => {
     setIsFetchingLogs(true);
     try {
@@ -417,12 +433,16 @@ export const BrowserView: React.FC = () => {
     let mounted = true;
     setIsLoading(true);
 
+    fetchBookmarks();
+    fetchHistory();
+    fetchProfiles();
+
     const unsubscribe = browserController.subscribe((state) => {
       if (mounted) {
         setBrowserState(state);
         const activeTab = state.tabs.find((t) => t.id === state.active_tab_id);
         if (activeTab && !isOmniboxFocused) {
-          setInputUrl(activeTab.url);
+          setInputUrl(activeTab.url === 'edith://newtab' ? '' : activeTab.url);
         }
       }
     });
@@ -443,10 +463,10 @@ export const BrowserView: React.FC = () => {
         try {
           const currentTabs = browserController.getState().tabs;
           if (currentTabs.length === 0) {
-            await browserController.createTab('tab_a', 'https://example.com', initialBounds);
-            await browserController.createTab('tab_b', 'https://www.wikipedia.org', initialBounds);
-            await browserController.createTab('tab_c', 'https://github.com', initialBounds);
-            await browserController.switchTab('tab_a', initialBounds);
+            const restored = await browserController.restoreSession();
+            if (restored.length === 0) {
+              await browserController.createTab('tab_a', 'edith://newtab', initialBounds);
+            }
           } else {
             await browserController.showActive(initialBounds);
           }
@@ -480,30 +500,29 @@ export const BrowserView: React.FC = () => {
       window.removeEventListener('resize', syncBounds);
       browserController.hideAll().catch(() => {});
     };
-  }, [syncBounds, isOmniboxFocused]);
+  }, [syncBounds, isOmniboxFocused, fetchBookmarks, fetchHistory, fetchProfiles]);
 
-  // Phase 3 Keyboard Shortcuts
+  // Phase 5.6D Global Keyboard Shortcuts
   useEffect(() => {
     const handleKeyDown = async (e: KeyboardEvent) => {
+      const isInput = ['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName);
+
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 't') {
         e.preventDefault();
-        const newId = `tab_${Date.now().toString(36)}`;
-        await browserController.createTab(newId, 'https://example.com');
-        setInspectTabId(newId);
+        handleCreateNewTab();
         return;
       }
 
       if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 't') {
         e.preventDefault();
-        const restored = await browserController.reopenLastClosedTab();
-        if (restored) setInspectTabId(restored.id);
+        handleReopenTab();
         return;
       }
 
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'w') {
         e.preventDefault();
         if (browserState.active_tab_id) {
-          await browserController.closeTab(browserState.active_tab_id);
+          handleCloseTab(undefined, browserState.active_tab_id);
         }
         return;
       }
@@ -518,26 +537,26 @@ export const BrowserView: React.FC = () => {
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'l') {
+      if ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'l' || e.key.toLowerCase() === 'k') || (e.altKey && e.key.toLowerCase() === 'd')) {
         e.preventDefault();
         omniboxInputRef.current?.focus();
         omniboxInputRef.current?.select();
         return;
       }
 
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') {
+      if (((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'r') || e.key === 'F5') {
         e.preventDefault();
         await browserController.reload();
         return;
       }
 
-      if (e.altKey && e.key === 'ArrowLeft') {
+      if (e.altKey && e.key === 'ArrowLeft' && !isInput) {
         e.preventDefault();
         await browserController.goBack();
         return;
       }
 
-      if (e.altKey && e.key === 'ArrowRight') {
+      if (e.altKey && e.key === 'ArrowRight' && !isInput) {
         e.preventDefault();
         await browserController.goForward();
         return;
@@ -549,6 +568,7 @@ export const BrowserView: React.FC = () => {
   }, [browserState.active_tab_id]);
 
   const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
+  const isNewTab = !activeTab || !activeTab.url || activeTab.url === 'edith://newtab' || activeTab.url === 'about:blank';
 
   // Tab switching
   const handleSwitchTab = async (tabId: string) => {
@@ -566,13 +586,14 @@ export const BrowserView: React.FC = () => {
         await browserController.switchTab(tabId);
       }
       setInspectTabId(tabId);
+      browserController.saveSession();
     } catch (err) {
       console.error('Failed to switch tab:', err);
     }
   };
 
   // Tab creation
-  const handleCreateNewTab = async () => {
+  const handleCreateNewTab = async (url: string = 'edith://newtab') => {
     const newId = `tab_${Date.now().toString(36)}`;
     try {
       let b;
@@ -580,32 +601,95 @@ export const BrowserView: React.FC = () => {
         const rect = viewportRef.current.getBoundingClientRect();
         b = { x: rect.left, y: rect.top, width: rect.width, height: rect.height };
       }
-      await browserController.createTab(newId, 'https://example.com', b);
+      await browserController.createTab(newId, url, b);
       setInspectTabId(newId);
+      browserController.saveSession();
     } catch (err) {
       console.error('Failed to create new tab:', err);
     }
   };
 
   // Tab closure
-  const handleCloseTab = async (e: React.MouseEvent, tabId: string) => {
-    e.stopPropagation();
+  const handleCloseTab = async (e?: React.MouseEvent, tabId?: string) => {
+    if (e) e.stopPropagation();
+    const targetId = tabId || browserState.active_tab_id;
+    if (!targetId) return;
     try {
-      await browserController.closeTab(tabId);
+      await browserController.closeTab(targetId);
+      browserController.saveSession();
     } catch (err) {
       console.error('Failed to close tab:', err);
     }
   };
 
+  // Phase 5.6D Tab Operations
+  const handleDuplicateTab = async (tabId: string) => {
+    try {
+      await browserController.duplicateTab(tabId);
+      browserController.saveSession();
+    } catch (e) {
+      console.error('Failed to duplicate tab', e);
+    }
+  };
+
+  const handleTogglePinTab = async (tabId: string) => {
+    try {
+      await browserController.togglePinTab(tabId);
+      browserController.saveSession();
+    } catch (e) {
+      console.error('Failed to toggle pin tab', e);
+    }
+  };
+
+  const handleCloseOtherTabs = async (tabId: string) => {
+    try {
+      await browserController.closeOtherTabs(tabId);
+      browserController.saveSession();
+    } catch (e) {
+      console.error('Failed to close other tabs', e);
+    }
+  };
+
+  const handleCloseTabsToRight = async (tabId: string) => {
+    try {
+      await browserController.closeTabsToRight(tabId);
+      browserController.saveSession();
+    } catch (e) {
+      console.error('Failed to close tabs to right', e);
+    }
+  };
+
+  const handleReopenTab = async () => {
+    try {
+      const restored = await browserController.reopenLastClosedTab();
+      if (restored) setInspectTabId(restored.id);
+      browserController.saveSession();
+    } catch (e) {
+      console.error('Failed to reopen last closed tab', e);
+    }
+  };
+
   // Navigation
-  const handleNavigate = async (e?: React.FormEvent) => {
+  const handleNavigate = async (e?: React.FormEvent, customUrl?: string) => {
     if (e) e.preventDefault();
-    if (!inputUrl.trim() || !browserState.active_tab_id) return;
+    const rawTarget = (customUrl || inputUrl).trim();
+    if (!rawTarget || !browserState.active_tab_id) return;
+
+    let finalUrl = rawTarget;
+    if (finalUrl === 'edith://newtab' || finalUrl === 'about:blank') {
+      // Stay on new tab
+    } else if (!finalUrl.includes('://') && !finalUrl.includes('.') && !finalUrl.startsWith('localhost')) {
+      // Search query via DuckDuckGo
+      finalUrl = `https://duckduckgo.com/?q=${encodeURIComponent(finalUrl)}`;
+    } else if (!finalUrl.includes('://')) {
+      finalUrl = `https://${finalUrl}`;
+    }
 
     setIsLoading(true);
     try {
-      const navigatedUrl = await browserController.navigateTab(browserState.active_tab_id, inputUrl);
+      const navigatedUrl = await browserController.navigateTab(browserState.active_tab_id, finalUrl);
       setInputUrl(navigatedUrl);
+      browserController.saveSession();
       setTimeout(async () => {
         if (browserState.active_tab_id) {
           await browserController.observeTab(browserState.active_tab_id);
@@ -622,7 +706,7 @@ export const BrowserView: React.FC = () => {
   const handleOmniboxKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Escape') {
       if (activeTab) {
-        setInputUrl(activeTab.url);
+        setInputUrl(activeTab.url === 'edith://newtab' ? '' : activeTab.url);
       }
       omniboxInputRef.current?.blur();
     }
@@ -797,12 +881,48 @@ export const BrowserView: React.FC = () => {
       {/* Tactical Multi-Tab Strip */}
       <div className="h-9 bg-[#040711] border-b border-white/[0.08] px-2 flex items-center gap-1.5 shrink-0 z-10 overflow-x-auto">
         <div className="flex items-center gap-1">
-          {browserState.tabs.map((tab) => {
+          {/* Pinned Tabs (Phase 5.6D) */}
+          {browserState.tabs.filter((t) => t.is_pinned).map((tab) => {
             const isActive = tab.id === browserState.active_tab_id;
             return (
               <div
                 key={tab.id}
                 onClick={() => handleSwitchTab(tab.id)}
+                onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
+                className={`group relative flex items-center justify-center w-8 h-7 rounded-lg text-xs font-mono transition-all cursor-pointer select-none shrink-0 ${
+                  isActive
+                    ? 'bg-[#091122] text-cyan-300 border border-cyan-500/40 shadow-cyan-glow-xs'
+                    : 'bg-white/[0.03] text-slate-400 hover:text-slate-200 hover:bg-white/[0.06] border border-transparent'
+                }`}
+                title={`Pinned: ${tab.title || tab.url}`}
+              >
+                {tab.is_loading ? (
+                  <Loader2 className="w-3.5 h-3.5 text-cyan-400 animate-spin shrink-0" />
+                ) : tab.favicon ? (
+                  <img
+                    src={tab.favicon}
+                    alt=""
+                    className="w-3.5 h-3.5 shrink-0 rounded-sm"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = 'none';
+                    }}
+                  />
+                ) : (
+                  <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
+                )}
+                <span className="absolute -top-0.5 -right-0.5 w-1.5 h-1.5 bg-cyan-400 rounded-full" />
+              </div>
+            );
+          })}
+
+          {/* Regular Tabs */}
+          {browserState.tabs.filter((t) => !t.is_pinned).map((tab) => {
+            const isActive = tab.id === browserState.active_tab_id;
+            return (
+              <div
+                key={tab.id}
+                onClick={() => handleSwitchTab(tab.id)}
+                onContextMenu={(e) => handleTabContextMenu(e, tab.id)}
                 className={`group relative flex items-center gap-2 h-7 px-3 rounded-lg text-xs font-mono transition-all cursor-pointer select-none max-w-[200px] min-w-[130px] ${
                   isActive
                     ? 'bg-[#091122] text-cyan-300 border border-cyan-500/40 shadow-cyan-glow-xs'
@@ -824,7 +944,7 @@ export const BrowserView: React.FC = () => {
                   <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
                 )}
                 <span className="truncate flex-1 text-[11px]">
-                  {tab.title || tab.url || 'New Tab'}
+                  {tab.url === 'edith://newtab' ? 'New Tab' : (tab.title || tab.url || 'New Tab')}
                 </span>
                 {/* Phase 5.5 Control Pill */}
                 {tabControls[tab.id]?.control_state === 'AI_CONTROLLED' ? (
@@ -853,7 +973,7 @@ export const BrowserView: React.FC = () => {
             );
           })}
           <button
-            onClick={handleCreateNewTab}
+            onClick={() => handleCreateNewTab('edith://newtab')}
             className="w-7 h-7 rounded-lg flex items-center justify-center text-slate-400 hover:text-cyan-400 hover:bg-white/[0.05] transition"
             title="New Tab (Ctrl+T)"
           >
@@ -861,6 +981,106 @@ export const BrowserView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Phase 5.6D Tab Context Menu Popup */}
+      {contextMenu && (
+        <div
+          style={{ top: `${contextMenu.y}px`, left: `${contextMenu.x}px` }}
+          className="fixed z-50 bg-[#091122] border border-cyan-500/30 shadow-2xl rounded-xl p-1 text-xs text-slate-200 font-mono flex flex-col gap-0.5 min-w-[170px] backdrop-blur-md animate-fadeIn"
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={() => {
+              handleCreateNewTab('edith://newtab');
+              setContextMenu(null);
+            }}
+            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <span className="flex items-center gap-2"><Plus className="w-3.5 h-3.5 text-cyan-400" /> New Tab</span>
+            <span className="text-[10px] text-slate-500">Ctrl+T</span>
+          </button>
+          <button
+            onClick={() => {
+              browserController.reload();
+              setContextMenu(null);
+            }}
+            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <span className="flex items-center gap-2"><RotateCw className="w-3.5 h-3.5 text-cyan-400" /> Reload</span>
+            <span className="text-[10px] text-slate-500">Ctrl+R</span>
+          </button>
+          <button
+            onClick={() => {
+              handleDuplicateTab(contextMenu.tabId);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            <Copy className="w-3.5 h-3.5 text-indigo-400" />
+            Duplicate Tab
+          </button>
+          <button
+            onClick={() => {
+              handleTogglePinTab(contextMenu.tabId);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-cyan-500/20 hover:text-cyan-200 text-left transition"
+          >
+            {browserState.tabs.find((t) => t.id === contextMenu.tabId)?.is_pinned ? (
+              <>
+                <PinOff className="w-3.5 h-3.5 text-amber-400" />
+                Unpin Tab
+              </>
+            ) : (
+              <>
+                <Pin className="w-3.5 h-3.5 text-cyan-400" />
+                Pin Tab
+              </>
+            )}
+          </button>
+          <div className="h-px bg-white/10 my-0.5" />
+          <button
+            onClick={() => {
+              handleCloseTab(undefined, contextMenu.tabId);
+              setContextMenu(null);
+            }}
+            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-red-500/20 hover:text-red-200 text-left transition"
+          >
+            <span className="flex items-center gap-2"><X className="w-3.5 h-3.5 text-red-400" /> Close Tab</span>
+            <span className="text-[10px] text-slate-500">Ctrl+W</span>
+          </button>
+          <button
+            onClick={() => {
+              handleCloseOtherTabs(contextMenu.tabId);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-300 text-left transition"
+          >
+            <Trash2 className="w-3.5 h-3.5 text-slate-400" />
+            Close Other Tabs
+          </button>
+          <button
+            onClick={() => {
+              handleCloseTabsToRight(contextMenu.tabId);
+              setContextMenu(null);
+            }}
+            className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg hover:bg-white/10 text-slate-300 text-left transition"
+          >
+            <ArrowRight className="w-3.5 h-3.5 text-slate-400" />
+            Close Tabs to Right
+          </button>
+          <button
+            onClick={() => {
+              handleReopenTab();
+              setContextMenu(null);
+            }}
+            className="flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-blue-500/20 hover:text-blue-200 text-left transition"
+          >
+            <span className="flex items-center gap-2"><History className="w-3.5 h-3.5 text-blue-400" /> Reopen Closed</span>
+            <span className="text-[10px] text-slate-500">Ctrl+Shift+T</span>
+          </button>
+        </div>
+      )}
 
       {/* Tactical Browser HUD Toolbar & Omnibox */}
       <div className="h-11 bg-[#050914] border-b border-white/[0.08] px-3 flex items-center gap-2 shrink-0 z-10">
@@ -2145,13 +2365,204 @@ export const BrowserView: React.FC = () => {
         </div>
       )}
 
-      {/* Center Viewport Canvas (Native Multi-WebView Target Area) */}
+      {/* Center Viewport Canvas (Native Multi-WebView Target Area or New Tab Page) */}
       <div
         ref={viewportRef}
         id="edith-browser-viewport-container"
-        className="flex-1 w-full bg-[#000000] relative overflow-hidden flex flex-col items-center justify-center"
+        className="flex-1 w-full bg-[#02050e] relative overflow-hidden flex flex-col items-center justify-start"
       >
-        {!isTauri() && (
+        {isNewTab ? (
+          /* Phase 5.6D Native E.D.I.T.H. New Tab Page */
+          <div className="w-full h-full overflow-y-auto px-6 py-8 flex flex-col items-center animate-fadeIn z-20">
+            <div className="max-w-4xl w-full flex flex-col items-center gap-6">
+              {/* E.D.I.T.H. Branding & Status */}
+              <div className="flex flex-col items-center text-center gap-1.5 mt-2">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-8 h-8 text-cyan-400 animate-pulse" />
+                  <h1 className="text-2xl font-black tracking-wider text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 via-blue-400 to-indigo-300 font-mono">
+                    E.D.I.T.H. BROWSER
+                  </h1>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-400 font-mono">
+                  <span>Native Multi-WebView2 Core</span>
+                  <span>•</span>
+                  <span className="flex items-center gap-1 text-cyan-300">
+                    <Users className="w-3 h-3 text-cyan-400" />
+                    Profile: <strong>{activeTab?.profile_id || 'profile_default'}</strong>
+                  </span>
+                  <span>•</span>
+                  <span className="text-emerald-400">Security Enforced</span>
+                </div>
+              </div>
+
+              {/* Central Omnibox Search Field */}
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (newTabSearchQuery.trim()) {
+                    handleNavigate(e, newTabSearchQuery.trim());
+                  }
+                }}
+                className="w-full max-w-2xl relative flex items-center shadow-2xl"
+              >
+                <div className="w-full flex items-center bg-[#070e1c]/90 border border-cyan-500/30 focus-within:border-cyan-400 rounded-2xl px-4 py-2.5 backdrop-blur-xl transition">
+                  <Search className="w-5 h-5 text-cyan-400 mr-3 shrink-0" />
+                  <input
+                    type="text"
+                    value={newTabSearchQuery}
+                    onChange={(e) => setNewTabSearchQuery(e.target.value)}
+                    placeholder="Search with DuckDuckGo or enter web address..."
+                    className="bg-transparent text-sm text-slate-100 placeholder-slate-500 focus:outline-none flex-1 font-mono"
+                    autoFocus
+                  />
+                  <button
+                    type="submit"
+                    className="px-3 py-1 rounded-xl bg-cyan-600 hover:bg-cyan-500 text-black font-bold text-xs transition font-mono shadow-md"
+                  >
+                    Go
+                  </button>
+                </div>
+              </form>
+
+              {/* Quick Launch Shortcut Tiles */}
+              <div className="w-full grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+                {[
+                  { name: 'Google', url: 'https://www.google.com', icon: Globe, color: 'text-blue-400' },
+                  { name: 'GitHub', url: 'https://github.com', icon: Code2, color: 'text-purple-400' },
+                  { name: 'Wikipedia', url: 'https://en.wikipedia.org', icon: Globe, color: 'text-slate-300' },
+                  { name: 'Rust Docs', url: 'https://doc.rust-lang.org', icon: Terminal, color: 'text-amber-400' },
+                  { name: 'Tauri v2', url: 'https://v2.tauri.app', icon: Cpu, color: 'text-cyan-400' },
+                  { name: 'DuckDuckGo', url: 'https://duckduckgo.com', icon: Search, color: 'text-emerald-400' },
+                ].map((item) => (
+                  <button
+                    key={item.name}
+                    onClick={() => handleNavigate(undefined, item.url)}
+                    className="flex flex-col items-center justify-center p-3 rounded-xl bg-black/40 border border-white/5 hover:border-cyan-500/40 hover:bg-cyan-950/20 transition group shadow-sm"
+                  >
+                    <item.icon className={`w-5 h-5 ${item.color} mb-1.5 group-hover:scale-110 transition-transform`} />
+                    <span className="text-xs font-mono text-slate-300 group-hover:text-cyan-200">{item.name}</span>
+                  </button>
+                ))}
+              </div>
+
+              {/* Bookmarks & Recent History Grid */}
+              <div className="w-full grid grid-cols-1 md:grid-cols-2 gap-4">
+                {/* Bookmarks Section */}
+                <div className="p-4 rounded-2xl bg-[#040813]/80 border border-amber-500/20 backdrop-blur-md flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-amber-300 font-mono">
+                      <Bookmark className="w-4 h-4 text-amber-400" />
+                      Bookmarks ({bookmarksList.length})
+                    </div>
+                    <button
+                      onClick={() => setShowBookmarksPanel(true)}
+                      className="text-[10px] text-amber-400/80 hover:text-amber-200 font-mono transition"
+                    >
+                      View All →
+                    </button>
+                  </div>
+                  {bookmarksList.length === 0 ? (
+                    <div className="text-center py-6 text-slate-500 text-xs font-mono">
+                      No bookmarks saved yet. Star pages from the top address bar.
+                    </div>
+                  ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                      {bookmarksList.slice(0, 6).map((bm) => (
+                        <div
+                          key={bm.id}
+                          onClick={() => handleNavigate(undefined, bm.url)}
+                          className="flex items-center gap-2 p-2 rounded-lg bg-black/40 border border-white/5 hover:border-amber-500/30 cursor-pointer group transition"
+                        >
+                          <Bookmark className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <div className="truncate flex-1">
+                            <div className="text-xs text-amber-200 font-medium truncate group-hover:text-amber-100">{bm.title}</div>
+                            <div className="text-[10px] text-slate-500 truncate">{bm.url}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                {/* Recent History Section */}
+                <div className="p-4 rounded-2xl bg-[#040813]/80 border border-blue-500/20 backdrop-blur-md flex flex-col gap-2.5">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2 text-xs font-bold text-blue-300 font-mono">
+                      <History className="w-4 h-4 text-blue-400" />
+                      Recent History ({historyList.length})
+                    </div>
+                    <button
+                      onClick={() => setShowHistoryPanel(true)}
+                      className="text-[10px] text-blue-400/80 hover:text-blue-200 font-mono transition"
+                    >
+                      View All →
+                    </button>
+                  </div>
+                  {historyList.length === 0 ? (
+                    <div className="text-center py-6 text-slate-500 text-xs font-mono">
+                      No recent browsing history.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col gap-1">
+                      {historyList.slice(0, 5).map((entry) => (
+                        <div
+                          key={entry.id}
+                          onClick={() => handleNavigate(undefined, entry.url)}
+                          className="flex items-center justify-between p-1.5 rounded-lg bg-black/40 border border-white/5 hover:border-blue-500/30 cursor-pointer group transition"
+                        >
+                          <div className="flex items-center gap-2 truncate flex-1">
+                            <Globe className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+                            <div className="truncate flex-1">
+                              <div className="text-xs text-blue-200 font-medium truncate group-hover:text-blue-100">{entry.title}</div>
+                              <div className="text-[10px] text-slate-500 truncate">{entry.url}</div>
+                            </div>
+                          </div>
+                          <span className="text-[9px] text-slate-500 font-mono shrink-0 ml-2">
+                            {new Date(entry.last_visited_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Quick Feature Drawers Launcher */}
+              <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-mono">
+                <button
+                  onClick={() => setShowHistoryPanel(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#060c18] border border-blue-500/30 text-blue-300 hover:bg-blue-950/40 transition"
+                >
+                  <History className="w-3.5 h-3.5" /> History (5.6A)
+                </button>
+                <button
+                  onClick={() => setShowBookmarksPanel(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0c0903] border border-amber-500/30 text-amber-300 hover:bg-amber-950/40 transition"
+                >
+                  <Bookmark className="w-3.5 h-3.5" /> Bookmarks (5.6A)
+                </button>
+                <button
+                  onClick={() => setShowDownloadsPanel(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#030e09] border border-emerald-500/30 text-emerald-300 hover:bg-emerald-950/40 transition"
+                >
+                  <Download className="w-3.5 h-3.5" /> Downloads (5.6B)
+                </button>
+                <button
+                  onClick={() => setShowProfilesPanel(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#030c14] border border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/40 transition"
+                >
+                  <Users className="w-3.5 h-3.5" /> Profiles (5.6C)
+                </button>
+                <button
+                  onClick={() => setShowAgentPanel(true)}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#0c0414] border border-purple-500/30 text-purple-300 hover:bg-purple-950/40 transition"
+                >
+                  <Bot className="w-3.5 h-3.5" /> AI Agent HUD (4C)
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : !isTauri() ? (
           <div className="flex flex-col items-center text-center p-8 max-w-lg bg-[#050914]/80 rounded-2xl border border-cyan-500/20 backdrop-blur-xl shadow-2xl">
             <Globe className="w-12 h-12 text-cyan-400 mb-4 animate-pulse" />
             <h3 className="text-base font-bold text-slate-100 mb-1">
@@ -2175,7 +2586,7 @@ export const BrowserView: React.FC = () => {
               </div>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Status Bar Footer */}

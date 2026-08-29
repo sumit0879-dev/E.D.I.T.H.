@@ -154,6 +154,7 @@ pub struct BrowserTabInfo {
     pub error: Option<String>,
     pub created_at: u64,
     pub profile_id: String,
+    pub is_pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -604,7 +605,7 @@ pub async fn browser_create_tab(
     let new_tab = BrowserTabInfo {
         id: tab_id.clone(),
         label: label.clone(),
-        url: target_url_str,
+        url: target_url_str.clone(),
         title: default_title,
         favicon,
         is_active: true,
@@ -614,6 +615,7 @@ pub async fn browser_create_tab(
         error: None,
         created_at: current_timestamp(),
         profile_id: target_profile_id,
+        is_pinned: false,
     };
 
     {
@@ -626,10 +628,12 @@ pub async fn browser_create_tab(
         *state.is_visible.lock().unwrap() = true;
     }
 
-    // Phase 5.6A: Automatic History Recording on Navigation
-    if let Some(db_state) = app.try_state::<crate::db::DbState>() {
-        if let Ok(conn) = db_state.conn.lock() {
-            let _ = crate::db::add_browser_history_entry(&conn, &new_tab.url, &new_tab.title, Some(&new_tab.id));
+    // Phase 5.6A: Automatic History Recording on Navigation (Skip for New Tab pages)
+    if target_url_str != "edith://newtab" && target_url_str != "about:blank" && !target_url_str.is_empty() {
+        if let Some(db_state) = app.try_state::<crate::db::DbState>() {
+            if let Ok(conn) = db_state.conn.lock() {
+                let _ = crate::db::add_browser_history_entry(&conn, &new_tab.url, &new_tab.title, Some(&new_tab.id));
+            }
         }
     }
 
@@ -768,6 +772,152 @@ pub async fn browser_reopen_last_closed_tab(
     } else {
         Ok(None)
     }
+}
+
+// Phase 5.6D Tab Commands (Duplicate, Pin, Close Others/Right, Session Save/Restore)
+#[tauri::command]
+pub async fn browser_duplicate_tab(
+    app: AppHandle,
+    tab_id: String,
+    bounds: Option<BrowserViewportBounds>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserTabInfo, String> {
+    let source_tab = {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter().find(|t| t.id == tab_id).cloned()
+    }.ok_or_else(|| format!("Tab '{}' not found for duplication.", tab_id))?;
+
+    let new_tab_id = format!("tab_{}", current_timestamp());
+    browser_create_tab(app, new_tab_id, Some(source_tab.url), bounds, Some(source_tab.profile_id), state).await
+}
+
+#[tauri::command]
+pub async fn browser_toggle_pin_tab(
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserTabInfo, String> {
+    let mut tabs = state.tabs.lock().unwrap();
+    let tab = tabs.iter_mut().find(|t| t.id == tab_id)
+        .ok_or_else(|| format!("Tab '{}' not found.", tab_id))?;
+    tab.is_pinned = !tab.is_pinned;
+    Ok(tab.clone())
+}
+
+#[tauri::command]
+pub async fn browser_close_other_tabs(
+    app: AppHandle,
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<Vec<String>, String> {
+    let to_close: Vec<String> = {
+        let tabs = state.tabs.lock().unwrap();
+        tabs.iter()
+            .filter(|t| t.id != tab_id && !t.is_pinned)
+            .map(|t| t.id.clone())
+            .collect()
+    };
+
+    let mut closed_ids = Vec::new();
+    for id in to_close {
+        let _ = browser_close_tab(app.clone(), id.clone(), state.clone()).await;
+        closed_ids.push(id);
+    }
+
+    Ok(closed_ids)
+}
+
+#[tauri::command]
+pub async fn browser_close_tabs_to_right(
+    app: AppHandle,
+    tab_id: String,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<Vec<String>, String> {
+    let to_close: Vec<String> = {
+        let tabs = state.tabs.lock().unwrap();
+        if let Some(pos) = tabs.iter().position(|t| t.id == tab_id) {
+            tabs.iter()
+                .skip(pos + 1)
+                .filter(|t| !t.is_pinned)
+                .map(|t| t.id.clone())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    };
+
+    let mut closed_ids = Vec::new();
+    for id in to_close {
+        let _ = browser_close_tab(app.clone(), id.clone(), state.clone()).await;
+        closed_ids.push(id);
+    }
+
+    Ok(closed_ids)
+}
+
+#[tauri::command]
+pub async fn browser_save_session(
+    db_state: tauri::State<'_, crate::db::DbState>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<bool, String> {
+    let tabs = state.tabs.lock().unwrap().clone();
+    let records: Vec<crate::db::BrowserTabRecord> = tabs.iter().enumerate().map(|(i, t)| {
+        crate::db::BrowserTabRecord {
+            id: t.id.clone(),
+            url: t.url.clone(),
+            title: t.title.clone(),
+            profile_id: t.profile_id.clone(),
+            is_pinned: t.is_pinned,
+            is_active: t.is_active,
+            position: i as i64,
+        }
+    }).collect();
+
+    let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+    crate::db::save_browser_tabs(&conn, &records).map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
+#[tauri::command]
+pub async fn browser_restore_session(
+    app: AppHandle,
+    bounds: Option<BrowserViewportBounds>,
+    db_state: tauri::State<'_, crate::db::DbState>,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<Vec<BrowserTabInfo>, String> {
+    let saved_tabs = {
+        let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+        crate::db::load_browser_tabs(&conn).map_err(|e| e.to_string())?
+    };
+
+    if saved_tabs.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut restored = Vec::new();
+    for tab in saved_tabs {
+        let tab_id = tab.id.clone();
+        let profile_id = tab.profile_id.clone();
+        let url = tab.url.clone();
+        let is_pinned = tab.is_pinned;
+
+        match browser_create_tab(app.clone(), tab_id, Some(url), bounds.clone(), Some(profile_id), state.clone()).await {
+            Ok(mut created) => {
+                if is_pinned {
+                    let mut tabs = state.tabs.lock().unwrap();
+                    if let Some(t) = tabs.iter_mut().find(|t| t.id == created.id) {
+                        t.is_pinned = true;
+                        created.is_pinned = true;
+                    }
+                }
+                restored.push(created);
+            }
+            Err(e) => {
+                eprintln!("Failed to restore tab {}: {}", tab.id, e);
+            }
+        }
+    }
+
+    Ok(restored)
 }
 
 #[tauri::command]

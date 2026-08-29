@@ -1666,5 +1666,66 @@ export async function browserProfileCleanupTemporary(profileId: string): Promise
   return await invoke<boolean>('browser_profile_cleanup_temporary', { profileId });
 }
 
+// ============================================================================
+// Phase 5.6D: Tab UX, Pinning, Duplication, Session Restore Invocations
+// ============================================================================
+
+export async function browserDuplicateTab(tabId: string, bounds?: BrowserViewportBounds): Promise<BrowserTabInfo> {
+  if (!isTauri()) {
+    return {
+      id: `tab_${Date.now()}`,
+      label: `tab_${Date.now()}`,
+      url: 'https://example.com',
+      title: 'Duplicated Tab',
+      is_active: true,
+      is_loading: false,
+      can_go_back: false,
+      can_go_forward: false,
+      created_at: Date.now(),
+      is_pinned: false,
+    };
+  }
+  return await invoke<BrowserTabInfo>('browser_duplicate_tab', { tabId, bounds });
+}
+
+export async function browserTogglePinTab(tabId: string): Promise<BrowserTabInfo> {
+  if (!isTauri()) {
+    return {
+      id: tabId,
+      label: tabId,
+      url: 'https://example.com',
+      title: 'Pinned Tab',
+      is_active: true,
+      is_loading: false,
+      can_go_back: false,
+      can_go_forward: false,
+      created_at: Date.now(),
+      is_pinned: true,
+    };
+  }
+  return await invoke<BrowserTabInfo>('browser_toggle_pin_tab', { tabId });
+}
+
+export async function browserCloseOtherTabs(tabId: string): Promise<string[]> {
+  if (!isTauri()) return [];
+  return await invoke<string[]>('browser_close_other_tabs', { tabId });
+}
+
+export async function browserCloseTabsToRight(tabId: string): Promise<string[]> {
+  if (!isTauri()) return [];
+  return await invoke<string[]>('browser_close_tabs_to_right', { tabId });
+}
+
+export async function browserSaveSession(): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_save_session');
+}
+
+export async function browserRestoreSession(bounds?: BrowserViewportBounds): Promise<BrowserTabInfo[]> {
+  if (!isTauri()) return [];
+  return await invoke<BrowserTabInfo[]>('browser_restore_session', { bounds });
+}
+
+
 
 

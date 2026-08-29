@@ -245,6 +245,7 @@ export interface BrowserTabInfo {
   error?: string;
   created_at: number;
   profile_id?: string;
+  is_pinned?: boolean;
 }
 
 export interface BrowserMultiStateInfo {

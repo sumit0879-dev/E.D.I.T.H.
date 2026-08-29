@@ -618,7 +618,57 @@ class BrowserController {
   public async cleanupTemporaryProfile(profileId: string): Promise<boolean> {
     return await tauriService.browserProfileCleanupTemporary(profileId);
   }
+
+  // Phase 5.6D: Tab Duplication, Pinning, Mass Close & Session Restoration
+  public async duplicateTab(tabId: string): Promise<BrowserTabInfo> {
+    const tab = await tauriService.browserDuplicateTab(tabId, this.currentBounds || undefined);
+    this.tabs.push(tab);
+    this.activeTabId = tab.id;
+    this.notify();
+    return tab;
+  }
+
+  public async togglePinTab(tabId: string): Promise<BrowserTabInfo> {
+    const tab = await tauriService.browserTogglePinTab(tabId);
+    const idx = this.tabs.findIndex((t) => t.id === tabId);
+    if (idx !== -1) {
+      this.tabs[idx] = tab;
+    }
+    this.notify();
+    return tab;
+  }
+
+  public async closeOtherTabs(tabId: string): Promise<void> {
+    await tauriService.browserCloseOtherTabs(tabId);
+    this.tabs = this.tabs.filter((t) => t.id === tabId || t.is_pinned);
+    this.activeTabId = tabId;
+    this.notify();
+  }
+
+  public async closeTabsToRight(tabId: string): Promise<void> {
+    await tauriService.browserCloseTabsToRight(tabId);
+    const idx = this.tabs.findIndex((t) => t.id === tabId);
+    if (idx !== -1) {
+      this.tabs = this.tabs.filter((t, i) => i <= idx || t.is_pinned);
+    }
+    this.notify();
+  }
+
+  public async saveSession(): Promise<boolean> {
+    return await tauriService.browserSaveSession();
+  }
+
+  public async restoreSession(): Promise<BrowserTabInfo[]> {
+    const restored = await tauriService.browserRestoreSession(this.currentBounds || undefined);
+    if (restored.length > 0) {
+      this.tabs = restored;
+      this.activeTabId = restored[0].id;
+      this.notify();
+    }
+    return restored;
+  }
 }
 
 export const browserController = new BrowserController();
 export default browserController;
+
