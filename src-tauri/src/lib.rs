@@ -18,6 +18,7 @@ pub mod browser_tools;
 pub mod browser_agent;
 pub mod browser_risk;
 pub mod browser_orchestrator;
+pub mod browser_control;
 pub mod weather;
 
 use db::DbState;
@@ -239,6 +240,13 @@ pub fn run() {
             browser_orchestrator::browser_orchestrator_run_task,
             browser_orchestrator::browser_orchestrator_cancel_task,
             browser_orchestrator::browser_orchestrator_get_current_task,
+            browser_control::browser_request_ai_control,
+            browser_control::browser_takeover_tab,
+            browser_control::browser_release_ai_control,
+            browser_control::browser_pause_ai_control,
+            browser_control::browser_resume_ai_control,
+            browser_control::browser_get_tab_control_info,
+            browser_control::browser_get_all_tab_controls,
             browser::browser_get_tab_url,
             browser::browser_get_tab_title,
             browser::browser_get_tab_visible_text,

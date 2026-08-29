@@ -19,6 +19,8 @@ import type {
   BrowserOrchestrationTask,
   BrowserSubtaskResult,
   BrowserOrchestrationResult,
+  BrowserControlState,
+  TabControlInfo,
 } from '../types';
 
 /**
@@ -443,6 +445,35 @@ class BrowserController {
 
   public async getCurrentOrchestration(): Promise<BrowserOrchestrationTask | null> {
     return await tauriService.browserOrchestratorGetCurrentTask();
+  }
+
+  // --- Phase 5.5 Human <-> AI Browser Control / Takeover APIs ---
+  public async requestAiControl(tabId: string, taskId?: string): Promise<TabControlInfo> {
+    return await tauriService.browserRequestAiControl(tabId, taskId);
+  }
+
+  public async takeoverTab(tabId: string, reason?: string): Promise<TabControlInfo> {
+    return await tauriService.browserTakeoverTab(tabId, reason);
+  }
+
+  public async releaseAiControl(tabId: string): Promise<TabControlInfo> {
+    return await tauriService.browserReleaseAiControl(tabId);
+  }
+
+  public async pauseAiControl(tabId: string): Promise<TabControlInfo> {
+    return await tauriService.browserPauseAiControl(tabId);
+  }
+
+  public async resumeAiControl(tabId: string): Promise<TabControlInfo> {
+    return await tauriService.browserResumeAiControl(tabId);
+  }
+
+  public async getTabControlInfo(tabId: string): Promise<TabControlInfo> {
+    return await tauriService.browserGetTabControlInfo(tabId);
+  }
+
+  public async getAllTabControls(): Promise<TabControlInfo[]> {
+    return await tauriService.browserGetAllTabControls();
   }
 }
 

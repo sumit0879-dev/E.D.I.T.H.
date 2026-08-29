@@ -455,3 +455,19 @@ export interface BrowserOrchestrationResult {
   duration_ms: number;
   error?: string;
 }
+
+// --- Phase 5.5 Human <-> AI Browser Control / Takeover Types ---
+export type BrowserControlState =
+  | 'USER_CONTROLLED'
+  | 'AI_CONTROLLED'
+  | 'AI_PAUSED'
+  | 'WAITING_FOR_APPROVAL'
+  | 'TRANSITIONING';
+
+export interface TabControlInfo {
+  tab_id: string;
+  control_state: BrowserControlState;
+  last_transition: number;
+  ai_task_id?: string;
+  reason?: string;
+}

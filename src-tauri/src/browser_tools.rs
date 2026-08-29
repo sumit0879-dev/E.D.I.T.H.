@@ -360,6 +360,23 @@ pub async fn execute_browser_tool(
 
     // Phase 5.3: Centralized Host-Enforced Risk & Safety Assessment
     let target_tab_id = args.get("tab_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+
+    // Phase 5.5: Human <-> AI Control Ownership & Takeover Verification (Step 9)
+    if !target_tab_id.is_empty() {
+        if let Err(ctrl_err) = crate::browser_control::GLOBAL_CONTROL_MGR.verify_ai_action_permitted(&target_tab_id, tool_name) {
+            return Ok(BrowserToolExecutionResult {
+                success: false,
+                tool_name: tool_name.to_string(),
+                tab_id: Some(target_tab_id),
+                data: None,
+                error: Some(ctrl_err),
+                error_code: Some("CONTROL_TAKEOVER_BLOCKED".to_string()),
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+    }
+
+    // Phase 5.3: Central Host-Enforced Risk & Safety Assessment Before Execution
     let action_url = args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
     let action_element_id = args.get("element_id").and_then(|v| v.as_str()).map(|s| s.to_string());
     let action_text = args.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());

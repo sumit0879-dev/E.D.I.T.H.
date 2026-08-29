@@ -32,6 +32,8 @@ import type {
   BrowserOrchestrationTask,
   BrowserSubtaskResult,
   BrowserOrchestrationResult,
+  BrowserControlState,
+  TabControlInfo,
 } from '../types';
 
 export const isTauri = () => {
@@ -1305,5 +1307,89 @@ export async function browserOrchestratorCancelTask(orchestrationId: string): Pr
 export async function browserOrchestratorGetCurrentTask(): Promise<BrowserOrchestrationTask | null> {
   if (!isTauri()) return null;
   return await invoke<BrowserOrchestrationTask | null>('browser_orchestrator_get_current_task');
+}
+
+// --- Phase 5.5 Human <-> AI Browser Control / Takeover APIs ---
+export async function browserRequestAiControl(tabId: string, taskId?: string): Promise<TabControlInfo> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      control_state: 'AI_CONTROLLED',
+      last_transition: Date.now(),
+      ai_task_id: taskId,
+      reason: 'Simulated AI control',
+    };
+  }
+  return await invoke<TabControlInfo>('browser_request_ai_control', { tabId, taskId });
+}
+
+export async function browserTakeoverTab(tabId: string, reason?: string): Promise<TabControlInfo> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      control_state: 'USER_CONTROLLED',
+      last_transition: Date.now(),
+      ai_task_id: undefined,
+      reason: reason || 'Simulated human takeover',
+    };
+  }
+  return await invoke<TabControlInfo>('browser_takeover_tab', { tabId, reason });
+}
+
+export async function browserReleaseAiControl(tabId: string): Promise<TabControlInfo> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      control_state: 'USER_CONTROLLED',
+      last_transition: Date.now(),
+      ai_task_id: undefined,
+      reason: 'Simulated AI release',
+    };
+  }
+  return await invoke<TabControlInfo>('browser_release_ai_control', { tabId });
+}
+
+export async function browserPauseAiControl(tabId: string): Promise<TabControlInfo> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      control_state: 'AI_PAUSED',
+      last_transition: Date.now(),
+      ai_task_id: undefined,
+      reason: 'Simulated AI pause',
+    };
+  }
+  return await invoke<TabControlInfo>('browser_pause_ai_control', { tabId });
+}
+
+export async function browserResumeAiControl(tabId: string): Promise<TabControlInfo> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      control_state: 'AI_CONTROLLED',
+      last_transition: Date.now(),
+      ai_task_id: undefined,
+      reason: 'Simulated AI resume',
+    };
+  }
+  return await invoke<TabControlInfo>('browser_resume_ai_control', { tabId });
+}
+
+export async function browserGetTabControlInfo(tabId: string): Promise<TabControlInfo> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      control_state: 'USER_CONTROLLED',
+      last_transition: Date.now(),
+      ai_task_id: undefined,
+      reason: 'Default user control',
+    };
+  }
+  return await invoke<TabControlInfo>('browser_get_tab_control_info', { tabId });
+}
+
+export async function browserGetAllTabControls(): Promise<TabControlInfo[]> {
+  if (!isTauri()) return [];
+  return await invoke<TabControlInfo[]>('browser_get_all_tab_controls');
 }
 

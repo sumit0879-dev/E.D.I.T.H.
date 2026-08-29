@@ -42,8 +42,10 @@ import type {
   BrowserRiskAuditEntry,
   BrowserOrchestrationResult,
   BrowserOrchestrationTask,
+  TabControlInfo,
+  BrowserControlState,
 } from '../types';
-import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch } from 'lucide-react';
+import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -95,6 +97,40 @@ export const BrowserView: React.FC = () => {
   const [currentOrchId, setCurrentOrchId] = useState<string | null>(null);
   const [orchResult, setOrchResult] = useState<BrowserOrchestrationResult | null>(null);
   const [orchLiveStatus, setOrchLiveStatus] = useState<any>(null);
+
+  // Phase 5.5 Human <-> AI Browser Control States
+  const [tabControls, setTabControls] = useState<Record<string, TabControlInfo>>({});
+
+  const fetchTabControls = useCallback(async () => {
+    try {
+      const controls = await browserController.getAllTabControls();
+      const map: Record<string, TabControlInfo> = {};
+      controls.forEach((c) => {
+        map[c.tab_id] = c;
+      });
+      setTabControls(map);
+    } catch (e) {
+      console.warn('Failed to fetch tab controls', e);
+    }
+  }, []);
+
+  const handleTakeover = async (tabId: string) => {
+    try {
+      const res = await browserController.takeoverTab(tabId, 'Operator clicked Take Control');
+      setTabControls((prev) => ({ ...prev, [tabId]: res }));
+    } catch (e) {
+      console.error('Takeover failed', e);
+    }
+  };
+
+  const handleGrantAi = async (tabId: string) => {
+    try {
+      const res = await browserController.requestAiControl(tabId);
+      setTabControls((prev) => ({ ...prev, [tabId]: res }));
+    } catch (e) {
+      console.error('Grant AI failed', e);
+    }
+  };
 
   const fetchRiskAuditLogs = useCallback(async () => {
     setIsFetchingLogs(true);
@@ -561,6 +597,14 @@ export const BrowserView: React.FC = () => {
                 <span className="truncate flex-1 text-[11px]">
                   {tab.title || tab.url || 'New Tab'}
                 </span>
+                {/* Phase 5.5 Control Pill */}
+                {tabControls[tab.id]?.control_state === 'AI_CONTROLLED' ? (
+                  <span className="px-1 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[9px] font-bold shrink-0" title="AI Controlled">🤖 AI</span>
+                ) : tabControls[tab.id]?.control_state === 'AI_PAUSED' ? (
+                  <span className="px-1 py-0.5 rounded bg-amber-500/30 text-amber-300 text-[9px] font-bold shrink-0" title="AI Paused">⏸️</span>
+                ) : (
+                  <span className="px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[9px] font-bold shrink-0" title="Human Controlled">👤</span>
+                )}
                 {browserState.tabs.length > 1 && (
                   <button
                     onClick={(e) => handleCloseTab(e, tab.id)}
@@ -611,6 +655,31 @@ export const BrowserView: React.FC = () => {
             <RotateCw className="w-3.5 h-3.5" />
           </button>
         </div>
+
+        {/* Phase 5.5 Human <-> AI Control Toggle */}
+        {browserState.active_tab_id && (
+          <div className="flex items-center shrink-0">
+            {tabControls[browserState.active_tab_id]?.control_state === 'AI_CONTROLLED' ? (
+              <button
+                onClick={() => handleTakeover(browserState.active_tab_id!)}
+                className="flex items-center gap-1 px-2.5 py-1 rounded-xl bg-red-600 hover:bg-red-500 text-white font-bold text-[11px] font-mono shadow-md transition animate-pulse"
+                title="Immediate Human Takeover: AI will instantly stop all actions on this tab"
+              >
+                <UserCheck className="w-3.5 h-3.5" />
+                <span>Take Control</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => handleGrantAi(browserState.active_tab_id!)}
+                className="flex items-center gap-1 px-2 py-1 rounded-xl bg-purple-950/60 border border-purple-500/30 text-purple-300 hover:bg-purple-900/50 hover:border-purple-400 font-mono text-[11px] transition"
+                title="Grant AI Control to this Tab"
+              >
+                <Bot className="w-3.5 h-3.5 text-purple-400" />
+                <span className="hidden sm:inline">Grant AI</span>
+              </button>
+            )}
+          </div>
+        )}
 
         {/* Omnibox URL / Search Bar */}
         <form onSubmit={handleNavigate} className="flex-1 flex items-center">
