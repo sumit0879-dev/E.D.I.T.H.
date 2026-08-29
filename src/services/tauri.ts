@@ -22,6 +22,8 @@ import type {
   BrowserActionResult,
   BrowserToolDefinition,
   BrowserToolExecutionResult,
+  BrowserTaskState,
+  BrowserTaskResult,
 } from '../types';
 
 export const isTauri = () => {
@@ -1136,3 +1138,38 @@ export async function browserExecuteTool(
     arguments: argumentsObj,
   });
 }
+
+// --- Phase 4C Autonomous Browser Agent APIs ---
+export async function browserAgentRunTask(
+  goal: string,
+  maxSteps?: number,
+  timeoutMs?: number
+): Promise<BrowserTaskResult> {
+  if (!isTauri()) {
+    return {
+      task_id: 'sim_task',
+      status: 'Completed',
+      goal,
+      summary: 'Simulated task execution in non-Tauri mode.',
+      steps_taken: 1,
+      duration_ms: 100,
+      final_tab_id: 'tab_a',
+    };
+  }
+  return await invoke<BrowserTaskResult>('browser_agent_run_task', {
+    goal,
+    maxSteps,
+    timeoutMs,
+  });
+}
+
+export async function browserAgentCancelTask(taskId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_agent_cancel_task', { taskId });
+}
+
+export async function browserAgentGetCurrentTask(): Promise<BrowserTaskState | null> {
+  if (!isTauri()) return null;
+  return await invoke<BrowserTaskState | null>('browser_agent_get_current_task');
+}
+

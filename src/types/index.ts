@@ -224,3 +224,37 @@ export interface BrowserToolExecutionResult {
   error_code?: string;
   duration_ms: number;
 }
+
+export type BrowserTaskStatus =
+  | 'Planning'
+  | 'Running'
+  | 'Waiting'
+  | 'Completed'
+  | 'Failed'
+  | 'Cancelled'
+  | 'TimedOut';
+
+export interface BrowserTaskState {
+  task_id: string;
+  goal: string;
+  status: BrowserTaskStatus;
+  current_tab_id: string;
+  step_count: number;
+  max_steps: number;
+  started_at: number;
+  timeout_ms: number;
+  last_observation?: string;
+  last_action?: string;
+  last_error?: string;
+}
+
+export interface BrowserTaskResult {
+  task_id: string;
+  status: BrowserTaskStatus;
+  goal: string;
+  summary: string;
+  steps_taken: number;
+  duration_ms: number;
+  final_tab_id: string;
+  error?: string;
+}

@@ -15,6 +15,7 @@ pub mod screen;
 pub mod windows;
 pub mod browser;
 pub mod browser_tools;
+pub mod browser_agent;
 pub mod weather;
 
 use db::DbState;
@@ -190,6 +191,7 @@ pub fn run() {
                 path: std::sync::Mutex::new(String::new()),
             });
             app.manage(browser::BrowserState::default());
+            app.manage(browser_agent::BrowserAgentManager::default());
             Ok(())
         })
         .on_window_event(|_window, event| match event {
@@ -226,6 +228,9 @@ pub fn run() {
             browser::browser_select_option,
             browser_tools::browser_get_tool_definitions_cmd,
             browser_tools::browser_execute_tool_cmd,
+            browser_agent::browser_agent_run_task,
+            browser_agent::browser_agent_cancel_task,
+            browser_agent::browser_agent_get_current_task,
             browser::browser_get_tab_url,
             browser::browser_get_tab_title,
             browser::browser_get_tab_visible_text,

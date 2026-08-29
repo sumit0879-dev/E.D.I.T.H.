@@ -23,15 +23,21 @@ import {
   Play,
   Clock,
   ShieldCheck,
+  Bot,
+  Square,
+  Flame,
+  Check,
 } from 'lucide-react';
 import { browserController } from '../services/browserController';
 import { isTauri } from '../services/tauri';
+import { listen } from '@tauri-apps/api/event';
 import type {
   BrowserTabInfo,
   BrowserMultiStateInfo,
   PageObservationSnapshot,
   ScreenshotResult,
   BrowserActionResult,
+  BrowserTaskResult,
   ElementInfo,
 } from '../types';
 
@@ -63,6 +69,15 @@ export const BrowserView: React.FC = () => {
   const [isExecutingAction, setIsExecutingAction] = useState(false);
   const [lastActionResult, setLastActionResult] = useState<BrowserActionResult | null>(null);
 
+  // Phase 4C Autonomous Browser Agent States
+  const [showAgentPanel, setShowAgentPanel] = useState(false);
+  const [agentGoal, setAgentGoal] = useState<string>('Open example.com, observe the page title, click More information, and verify the new URL.');
+  const [agentMaxSteps, setAgentMaxSteps] = useState<number>(10);
+  const [isAgentRunning, setIsAgentRunning] = useState<boolean>(false);
+  const [currentTaskId, setCurrentTaskId] = useState<string | null>(null);
+  const [agentLiveStatus, setAgentLiveStatus] = useState<{ step: number; max_steps: number; message: string; status: string } | null>(null);
+  const [agentTaskResult, setAgentTaskResult] = useState<BrowserTaskResult | null>(null);
+
   const viewportRef = useRef<HTMLDivElement>(null);
   const omniboxInputRef = useRef<HTMLInputElement>(null);
 
@@ -79,6 +94,28 @@ export const BrowserView: React.FC = () => {
       }).catch((e) => console.warn('Failed to sync browser bounds:', e));
     }
   }, []);
+
+  // Listen for agent status events from Rust backend
+  useEffect(() => {
+    if (!isTauri()) return;
+
+    const unlistenStatus = listen<{ task_id: string; status: string; step?: number; max_steps?: number; message?: string; summary?: string; error?: string }>(
+      'browser-agent-status',
+      (event) => {
+        const payload = event.payload;
+        setAgentLiveStatus({
+          step: payload.step || 0,
+          max_steps: payload.max_steps || agentMaxSteps,
+          message: payload.message || payload.summary || payload.error || payload.status,
+          status: payload.status,
+        });
+      }
+    );
+
+    return () => {
+      unlistenStatus.then((un) => un()).catch(() => {});
+    };
+  }, [agentMaxSteps]);
 
   // Initialize tabs and subscribe to browser state
   useEffect(() => {
@@ -329,7 +366,7 @@ export const BrowserView: React.FC = () => {
     }
   };
 
-  // Phase 4A Action Layer Execution with Verification Loop (Step 16)
+  // Phase 4A Action Layer Execution with Verification Loop
   const handleExecuteAction = async () => {
     const targetId = browserState.active_tab_id || 'tab_a';
     setIsExecutingAction(true);
@@ -381,6 +418,51 @@ export const BrowserView: React.FC = () => {
     } finally {
       setIsExecutingAction(false);
     }
+  };
+
+  // Phase 4C Autonomous Browser Agent Execution
+  const handleRunAutonomousTask = async () => {
+    if (!agentGoal.trim() || isAgentRunning) return;
+    setIsAgentRunning(true);
+    setAgentTaskResult(null);
+    setAgentLiveStatus({ step: 0, max_steps: agentMaxSteps, message: 'Initializing autonomous task...', status: 'Planning' });
+
+    try {
+      const res = await browserController.runAgentTask(agentGoal, agentMaxSteps, 120000);
+      setAgentTaskResult(res);
+      setCurrentTaskId(res.task_id);
+    } catch (err: any) {
+      setAgentTaskResult({
+        task_id: 'error_task',
+        status: 'Failed',
+        goal: agentGoal,
+        summary: `Autonomous agent failed: ${err}`,
+        steps_taken: 0,
+        duration_ms: 0,
+        final_tab_id: browserState.active_tab_id || 'tab_a',
+        error: String(err),
+      });
+    } finally {
+      setIsAgentRunning(false);
+    }
+  };
+
+  const handleCancelAutonomousTask = async () => {
+    if (!currentTaskId && !isAgentRunning) return;
+    try {
+      if (currentTaskId) {
+        await browserController.cancelAgentTask(currentTaskId);
+      }
+      setIsAgentRunning(false);
+      setAgentLiveStatus({ step: 0, max_steps: agentMaxSteps, message: 'Task cancelled by operator.', status: 'Cancelled' });
+    } catch (e) {
+      console.warn('Error cancelling task:', e);
+    }
+  };
+
+  const setPresetGoal = (goal: string) => {
+    setAgentGoal(goal);
+    setShowAgentPanel(true);
   };
 
   return (
@@ -497,8 +579,21 @@ export const BrowserView: React.FC = () => {
           </div>
         </form>
 
-        {/* Action Controls: Live DOM Observer, Action Playground, & Screenshot */}
+        {/* Action Controls: AI Agent (4C), Actions (4A), Live DOM Observer, & Screenshot */}
         <div className="flex items-center space-x-1.5">
+          <button
+            onClick={() => setShowAgentPanel(!showAgentPanel)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
+              showAgentPanel
+                ? 'bg-purple-600/30 border-purple-400 text-purple-200 shadow-purple-glow-xs'
+                : 'bg-[#090e1a] border-white/[0.08] text-slate-300 hover:text-purple-300'
+            }`}
+            title="Toggle Phase 4C Autonomous Browser Agent Control HUD"
+          >
+            <Bot className="w-3.5 h-3.5 text-purple-400" />
+            <span className="hidden sm:inline">AI Agent (4C)</span>
+          </button>
+
           <button
             onClick={() => setShowActionPanel(!showActionPanel)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
@@ -533,6 +628,149 @@ export const BrowserView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Phase 4C Autonomous Browser Agent Control HUD Drawer */}
+      {showAgentPanel && (
+        <div className="bg-[#080415] border-b border-purple-500/30 p-3 text-xs text-purple-200 flex flex-col gap-2 shrink-0 z-10 font-mono animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-purple-300">
+              <Bot className="w-4 h-4 text-purple-400" />
+              Phase 4C Autonomous Browser Agent Control Loop
+            </div>
+            <button
+              onClick={() => setShowAgentPanel(false)}
+              className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+            >
+              Close
+            </button>
+          </div>
+
+          {/* Goal Input Bar & Execution Controls */}
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              value={agentGoal}
+              onChange={(e) => setAgentGoal(e.target.value)}
+              placeholder="Enter natural language browser goal (e.g. Open example.com, click More info)..."
+              disabled={isAgentRunning}
+              className="bg-[#120924] border border-purple-500/30 focus:border-purple-400 rounded-lg px-3 py-1.5 text-xs text-slate-100 flex-1 focus:outline-none"
+            />
+            <div className="flex items-center gap-1 text-[11px] text-slate-400">
+              <span>Steps:</span>
+              <input
+                type="number"
+                min="1"
+                max="20"
+                value={agentMaxSteps}
+                onChange={(e) => setAgentMaxSteps(Number(e.target.value))}
+                disabled={isAgentRunning}
+                className="w-12 bg-[#120924] border border-purple-500/30 rounded px-1.5 py-1 text-xs text-center text-white focus:outline-none"
+              />
+            </div>
+            {isAgentRunning ? (
+              <button
+                onClick={handleCancelAutonomousTask}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-[11px] transition shadow-md"
+              >
+                <Square className="w-3.5 h-3.5" />
+                Cancel Task
+              </button>
+            ) : (
+              <button
+                onClick={handleRunAutonomousTask}
+                disabled={!agentGoal.trim()}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-purple-600 hover:bg-purple-500 text-white font-bold text-[11px] transition shadow-md disabled:opacity-50"
+              >
+                <Play className="w-3.5 h-3.5" />
+                Run Autonomous Task
+              </button>
+            )}
+          </div>
+
+          {/* Goal Presets for Feasibility Verification */}
+          <div className="flex flex-wrap items-center gap-1 text-[10px]">
+            <span className="text-slate-400">Presets:</span>
+            <button
+              onClick={() => setPresetGoal('Open https://example.com and observe the page title and visible text.')}
+              className="px-2 py-0.5 rounded bg-purple-950/60 border border-purple-500/20 text-purple-300 hover:border-purple-400"
+            >
+              Task A: Observe example.com
+            </button>
+            <button
+              onClick={() => setPresetGoal('Open https://example.com, click the More information link, and verify the resulting URL.')}
+              className="px-2 py-0.5 rounded bg-purple-950/60 border border-purple-500/20 text-purple-300 hover:border-purple-400"
+            >
+              Task B: Click link & verify
+            </button>
+            <button
+              onClick={() => setPresetGoal('Open https://www.wikipedia.org, switch to tab_a, and report the title of each tab.')}
+              className="px-2 py-0.5 rounded bg-purple-950/60 border border-purple-500/20 text-purple-300 hover:border-purple-400"
+            >
+              Task E: Multi-tab observe
+            </button>
+            <button
+              onClick={() => setPresetGoal('Attempt to type "secret123" into any password field.')}
+              className="px-2 py-0.5 rounded bg-purple-950/60 border border-purple-500/20 text-purple-300 hover:border-purple-400"
+            >
+              Task F: Password Refusal Test
+            </button>
+          </div>
+
+          {/* Live Progress Tracker */}
+          {agentLiveStatus && (
+            <div className="p-2 rounded-lg bg-[#140b28] border border-purple-500/30 flex items-center justify-between text-[11px]">
+              <div className="flex items-center gap-2">
+                {isAgentRunning ? (
+                  <Loader2 className="w-4 h-4 text-purple-400 animate-spin" />
+                ) : agentLiveStatus.status === 'Completed' ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-yellow-400" />
+                )}
+                <span>
+                  <span className="font-bold text-white">[{agentLiveStatus.status.toUpperCase()}]</span> {agentLiveStatus.message}
+                </span>
+              </div>
+              <div className="text-slate-400 text-[10px]">
+                Step: <span className="text-purple-300 font-bold">{agentLiveStatus.step}</span> / {agentLiveStatus.max_steps}
+              </div>
+            </div>
+          )}
+
+          {/* Structured Task Result Card */}
+          {agentTaskResult && (
+            <div className={`p-2.5 rounded-lg border text-[11px] ${
+              agentTaskResult.status === 'Completed'
+                ? 'bg-emerald-950/40 border-emerald-500/40 text-emerald-200'
+                : agentTaskResult.status === 'Cancelled'
+                ? 'bg-yellow-950/40 border-yellow-500/40 text-yellow-200'
+                : 'bg-red-950/40 border-red-500/40 text-red-200'
+            }`}>
+              <div className="flex items-center justify-between font-bold">
+                <div className="flex items-center gap-1.5">
+                  {agentTaskResult.status === 'Completed' ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-400" />
+                  ) : (
+                    <AlertTriangle className="w-4 h-4 text-red-400" />
+                  )}
+                  <span>Task Result: [{agentTaskResult.status.toUpperCase()}]</span>
+                </div>
+                <div className="text-[10px] text-slate-300">
+                  {agentTaskResult.steps_taken} steps in {agentTaskResult.duration_ms} ms | Final Tab: {agentTaskResult.final_tab_id}
+                </div>
+              </div>
+              <div className="mt-1 text-slate-200 leading-relaxed font-sans bg-black/30 p-2 rounded">
+                {agentTaskResult.summary}
+              </div>
+              {agentTaskResult.error && (
+                <div className="mt-1 text-red-300 font-bold text-[10px]">
+                  Error: {agentTaskResult.error}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Phase 4A Action Layer Playground Drawer */}
       {showActionPanel && (
@@ -786,8 +1024,8 @@ export const BrowserView: React.FC = () => {
               In Tauri desktop mode, independent native WebView2 child instances are hosted inside this viewport container.
             </p>
             <div className="w-full bg-slate-900/90 rounded-xl p-3 border border-white/5 text-left font-mono text-[10px] space-y-2">
-              <div className="text-emerald-400 flex items-center gap-1.5">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Phase 4A Action Layer Active
+              <div className="text-purple-400 flex items-center gap-1.5">
+                <Bot className="w-3.5 h-3.5" /> Phase 4C Autonomous Browser Agent Active
               </div>
               <div className="text-cyan-300">
                 Active Tab: <span className="text-white font-bold">{activeTab?.id || 'None'}</span> ({activeTab?.label})
@@ -818,7 +1056,7 @@ export const BrowserView: React.FC = () => {
         <div className="flex items-center gap-3">
           <span className="text-slate-500">Shortcuts: Ctrl+T, Ctrl+W, Ctrl+Shift+T, Ctrl+Tab, Ctrl+L</span>
           <span className="text-slate-600">|</span>
-          <span className="text-cyan-400/80">Phase 4A Action Layer</span>
+          <span className="text-purple-400/80">Phase 4C Autonomous Agent Loop</span>
         </div>
       </div>
     </div>

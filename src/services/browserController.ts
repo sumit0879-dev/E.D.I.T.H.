@@ -9,6 +9,8 @@ import type {
   BrowserActionResult,
   BrowserToolDefinition,
   BrowserToolExecutionResult,
+  BrowserTaskState,
+  BrowserTaskResult,
 } from '../types';
 
 /**
@@ -331,6 +333,25 @@ class BrowserController {
       await this.refreshMultiState();
     }
     return res;
+  }
+
+  // --- Phase 4C Autonomous Browser Agent APIs ---
+  public async runAgentTask(
+    goal: string,
+    maxSteps?: number,
+    timeoutMs?: number
+  ): Promise<BrowserTaskResult> {
+    const res = await tauriService.browserAgentRunTask(goal, maxSteps, timeoutMs);
+    await this.refreshMultiState();
+    return res;
+  }
+
+  public async cancelAgentTask(taskId: string): Promise<boolean> {
+    return await tauriService.browserAgentCancelTask(taskId);
+  }
+
+  public async getCurrentAgentTask(): Promise<BrowserTaskState | null> {
+    return await tauriService.browserAgentGetCurrentTask();
   }
 
   // --- Legacy Phase 1 Delegate Methods ---
