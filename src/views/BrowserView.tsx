@@ -49,8 +49,11 @@ import type {
   BrowserDownload,
   BrowserProfile,
   BrowserProfileType,
+  PrivacyStatus,
+  PrivacyRule,
+  TabPrivacyStats,
 } from '../types';
-import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu } from 'lucide-react';
+import { Shield, ShieldOff, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -358,6 +361,84 @@ export const BrowserView: React.FC = () => {
     window.addEventListener('click', handleWindowClick);
     return () => window.removeEventListener('click', handleWindowClick);
   }, []);
+
+  // Phase 5.6E Content Blocking & Web Request Privacy Policy States
+  const [showPrivacyPanel, setShowPrivacyPanel] = useState(false);
+  const [privacyStatus, setPrivacyStatus] = useState<PrivacyStatus | null>(null);
+  const [isFetchingPrivacy, setIsFetchingPrivacy] = useState(false);
+  const [customRulePattern, setCustomRulePattern] = useState('');
+  const [customRuleCategory, setCustomRuleCategory] = useState<'AD' | 'TRACKER' | 'CUSTOM'>('CUSTOM');
+  const [privacyRulesList, setPrivacyRulesList] = useState<PrivacyRule[]>([]);
+
+  const fetchPrivacyStatus = useCallback(async (tabId?: string, profileId?: string) => {
+    setIsFetchingPrivacy(true);
+    try {
+      const status = await browserController.getPrivacyStatus(tabId, profileId);
+      setPrivacyStatus(status);
+      const rules = await browserController.listPrivacyRules(profileId);
+      setPrivacyRulesList(rules);
+    } catch (e) {
+      console.warn('Failed to fetch privacy status', e);
+    } finally {
+      setIsFetchingPrivacy(false);
+    }
+  }, []);
+
+  const handleTogglePrivacyProtection = async () => {
+    if (!privacyStatus) return;
+    try {
+      const next = !privacyStatus.enabled;
+      await browserController.togglePrivacyProtection(next);
+      setPrivacyStatus((prev: PrivacyStatus | null) => (prev ? { ...prev, enabled: next } : null));
+    } catch (e) {
+      console.error('Failed to toggle privacy protection', e);
+    }
+  };
+
+  const handleToggleSiteAllowlist = async (domain: string) => {
+    if (!domain) return;
+    try {
+      const isAllowlisted = privacyStatus?.allowlisted_domains.includes(domain);
+      if (isAllowlisted) {
+        await browserController.removeAllowlistDomain(domain);
+      } else {
+        await browserController.allowlistDomain(domain);
+      }
+      fetchPrivacyStatus(browserState.active_tab_id || undefined);
+    } catch (e) {
+      console.error('Failed to toggle site allowlist', e);
+    }
+  };
+
+  const handleAddCustomRule = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customRulePattern.trim()) return;
+    try {
+      await browserController.addPrivacyRule(customRulePattern.trim(), 'DOMAIN', customRuleCategory);
+      setCustomRulePattern('');
+      fetchPrivacyStatus(browserState.active_tab_id || undefined);
+    } catch (e) {
+      console.error('Failed to add custom rule', e);
+    }
+  };
+
+  const handleRemoveCustomRule = async (ruleId: string) => {
+    try {
+      await browserController.removePrivacyRule(ruleId);
+      fetchPrivacyStatus(browserState.active_tab_id || undefined);
+    } catch (e) {
+      console.error('Failed to remove custom rule', e);
+    }
+  };
+
+  const handleResetTabStats = async (tabId: string) => {
+    try {
+      await browserController.resetTabPrivacyStats(tabId);
+      fetchPrivacyStatus(tabId);
+    } catch (e) {
+      console.error('Failed to reset tab stats', e);
+    }
+  };
 
   const fetchRiskAuditLogs = useCallback(async () => {
     setIsFetchingLogs(true);
@@ -1243,6 +1324,7 @@ export const BrowserView: React.FC = () => {
           <button
             onClick={() => {
               setShowProfilesPanel(!showProfilesPanel);
+              setShowPrivacyPanel(false);
               setShowDownloadsPanel(false);
               setShowHistoryPanel(false);
               setShowBookmarksPanel(false);
@@ -1260,6 +1342,38 @@ export const BrowserView: React.FC = () => {
             {profilesList.find((p) => p.is_active) && (
               <span className="px-1 py-0.2 rounded bg-cyan-950/80 border border-cyan-500/30 text-cyan-300 text-[9px]">
                 {profilesList.find((p) => p.is_active)?.name.slice(0, 8)}
+              </span>
+            )}
+          </button>
+
+          {/* Phase 5.6E Privacy & Content Blocker Shield Button */}
+          <button
+            onClick={() => {
+              setShowPrivacyPanel(!showPrivacyPanel);
+              setShowProfilesPanel(false);
+              setShowDownloadsPanel(false);
+              setShowHistoryPanel(false);
+              setShowBookmarksPanel(false);
+              if (!showPrivacyPanel) fetchPrivacyStatus(browserState.active_tab_id || undefined);
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
+              showPrivacyPanel
+                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-emerald-glow-xs'
+                : privacyStatus?.enabled === false
+                ? 'bg-red-950/40 border-red-500/40 text-red-300'
+                : 'bg-[#090e1a] border-white/[0.08] text-slate-300 hover:text-emerald-300'
+            }`}
+            title="Toggle Privacy & Content Blocker (5.6E)"
+          >
+            {privacyStatus?.enabled === false ? (
+              <ShieldOff className="w-3.5 h-3.5 text-red-400" />
+            ) : (
+              <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            )}
+            <span className="hidden sm:inline">Shield</span>
+            {privacyStatus?.tab_stats && privacyStatus.tab_stats.blocked_total > 0 && (
+              <span className="px-1 py-0.2 rounded-full bg-emerald-500 text-black text-[9px] font-bold">
+                {privacyStatus.tab_stats.blocked_total}
               </span>
             )}
           </button>
@@ -1758,6 +1872,182 @@ export const BrowserView: React.FC = () => {
               ))}
             </div>
           )}
+        </div>
+      )}
+
+      {/* Phase 5.6E Privacy & Content Blocker Drawer */}
+      {showPrivacyPanel && (
+        <div className="bg-[#030d0a] border-b border-emerald-500/30 p-3.5 text-xs text-emerald-200 flex flex-col gap-3 shrink-0 z-10 max-h-96 overflow-y-auto animate-fadeIn font-mono">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-emerald-300">
+              <ShieldCheck className="w-4 h-4 text-emerald-400" />
+              Phase 5.6E Host Content Blocking & Privacy Engine
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => fetchPrivacyStatus(browserState.active_tab_id || undefined)}
+                disabled={isFetchingPrivacy}
+                className="flex items-center gap-1 text-[11px] text-emerald-300 bg-emerald-950/60 hover:bg-emerald-900/60 border border-emerald-500/30 px-2 py-0.5 rounded transition"
+              >
+                <RotateCw className={`w-3 h-3 ${isFetchingPrivacy ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+              <button
+                onClick={() => setShowPrivacyPanel(false)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          {/* Master Toggle & Current Site Card */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            {/* Protection Controls */}
+            <div className="bg-black/50 p-3 rounded-xl border border-white/5 flex flex-col gap-2.5">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-200 text-xs">Host Request Filtering:</span>
+                <button
+                  onClick={handleTogglePrivacyProtection}
+                  className={`px-3 py-1 rounded-lg text-xs font-bold font-mono transition ${
+                    privacyStatus?.enabled
+                      ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-400'
+                      : 'bg-red-950 text-red-300 border border-red-500'
+                  }`}
+                >
+                  {privacyStatus?.enabled ? 'PROTECTION ON' : 'PROTECTION OFF'}
+                </button>
+              </div>
+
+              <div className="text-[11px] text-slate-400 flex flex-col gap-1 border-t border-white/5 pt-2">
+                <div className="flex justify-between">
+                  <span>Ad Blocking:</span>
+                  <span className={privacyStatus?.block_ads ? 'text-emerald-400' : 'text-slate-500'}>
+                    {privacyStatus?.block_ads ? 'Active' : 'Disabled'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Tracker & Telemetry Blocking:</span>
+                  <span className={privacyStatus?.block_trackers ? 'text-emerald-400' : 'text-slate-500'}>
+                    {privacyStatus?.block_trackers ? 'Active' : 'Disabled'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Do-Not-Track & GPC:</span>
+                  <span className="text-cyan-400">Enforced</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Compiled Rule Count:</span>
+                  <span className="text-slate-200 font-bold">{privacyStatus?.total_rules_loaded || 48} rules</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Current Site Status */}
+            <div className="bg-black/50 p-3 rounded-xl border border-white/5 flex flex-col gap-2.5">
+              <div className="flex items-center justify-between">
+                <span className="font-bold text-slate-200 text-xs">Current Site Policy:</span>
+                {(() => {
+                  const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
+                  let domain = '';
+                  if (activeTab?.url) {
+                    try { domain = new URL(activeTab.url).hostname; } catch {}
+                  }
+                  const isAllowlisted = domain && privacyStatus?.allowlisted_domains.includes(domain);
+                  return domain ? (
+                    <button
+                      onClick={() => handleToggleSiteAllowlist(domain)}
+                      className={`px-2.5 py-1 rounded-lg text-xs font-mono transition border ${
+                        isAllowlisted
+                          ? 'bg-amber-950/80 border-amber-500 text-amber-300'
+                          : 'bg-emerald-950/80 border-emerald-500 text-emerald-300'
+                      }`}
+                    >
+                      {isAllowlisted ? 'Allowlisted (Bypassed)' : 'Protected (Active)'}
+                    </button>
+                  ) : (
+                    <span className="text-slate-500 text-[11px]">No active site</span>
+                  );
+                })()}
+              </div>
+
+              {/* Per-Tab Statistics */}
+              <div className="grid grid-cols-3 gap-2 border-t border-white/5 pt-2 text-center">
+                <div className="bg-white/5 p-2 rounded-lg">
+                  <div className="text-[10px] text-slate-400">Ads Blocked</div>
+                  <div className="text-sm font-bold text-emerald-400">{privacyStatus?.tab_stats?.blocked_ads || 0}</div>
+                </div>
+                <div className="bg-white/5 p-2 rounded-lg">
+                  <div className="text-[10px] text-slate-400">Trackers</div>
+                  <div className="text-sm font-bold text-cyan-400">{privacyStatus?.tab_stats?.blocked_trackers || 0}</div>
+                </div>
+                <div className="bg-white/5 p-2 rounded-lg">
+                  <div className="text-[10px] text-slate-400">Total Filtered</div>
+                  <div className="text-sm font-bold text-slate-100">{privacyStatus?.tab_stats?.blocked_total || 0}</div>
+                </div>
+              </div>
+
+              {browserState.active_tab_id && (
+                <button
+                  onClick={() => handleResetTabStats(browserState.active_tab_id!)}
+                  className="text-[10px] text-slate-400 hover:text-slate-200 underline text-right"
+                >
+                  Reset Tab Counters
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Custom Blocking Rules Form & List */}
+          <div className="bg-black/40 p-3 rounded-xl border border-white/5 flex flex-col gap-2">
+            <div className="font-bold text-slate-200 text-xs">Custom Domain & Pattern Rules:</div>
+            <form onSubmit={handleAddCustomRule} className="flex gap-2">
+              <input
+                type="text"
+                value={customRulePattern}
+                onChange={(e) => setCustomRulePattern(e.target.value)}
+                placeholder="Domain or pattern (e.g. adserver.net, /track/)..."
+                className="bg-black/60 border border-white/10 rounded px-2.5 py-1 text-xs text-slate-200 placeholder-slate-500 focus:outline-none flex-1 font-mono"
+              />
+              <select
+                value={customRuleCategory}
+                onChange={(e) => setCustomRuleCategory(e.target.value as any)}
+                className="bg-black/60 border border-white/10 rounded px-2 py-1 text-xs text-slate-200 focus:outline-none font-mono"
+              >
+                <option value="CUSTOM">Custom</option>
+                <option value="AD">Ad</option>
+                <option value="TRACKER">Tracker</option>
+              </select>
+              <button
+                type="submit"
+                className="px-3 py-1 rounded bg-emerald-600 hover:bg-emerald-500 text-black font-bold text-xs transition font-mono"
+              >
+                Add Rule
+              </button>
+            </form>
+
+            {/* Rules List */}
+            {privacyRulesList.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto mt-1">
+                {privacyRulesList.map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex items-center gap-1.5 px-2 py-0.5 rounded bg-white/5 border border-white/10 text-[10px] text-slate-300"
+                  >
+                    <span className="font-mono text-emerald-300">{r.pattern}</span>
+                    <span className="text-slate-500">({r.category})</span>
+                    <button
+                      onClick={() => handleRemoveCustomRule(r.id)}
+                      className="text-slate-500 hover:text-red-400 ml-1"
+                      title="Delete Rule"
+                    >
+                      <X className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       )}
 
@@ -2552,6 +2842,15 @@ export const BrowserView: React.FC = () => {
                   className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#030c14] border border-cyan-500/30 text-cyan-300 hover:bg-cyan-950/40 transition"
                 >
                   <Users className="w-3.5 h-3.5" /> Profiles (5.6C)
+                </button>
+                <button
+                  onClick={() => {
+                    setShowPrivacyPanel(true);
+                    fetchPrivacyStatus(browserState.active_tab_id || undefined);
+                  }}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-[#030d0a] border border-emerald-500/30 text-emerald-300 hover:bg-emerald-950/40 transition"
+                >
+                  <ShieldCheck className="w-3.5 h-3.5" /> Shield / Privacy (5.6E)
                 </button>
                 <button
                   onClick={() => setShowAgentPanel(true)}

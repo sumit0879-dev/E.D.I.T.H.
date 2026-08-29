@@ -568,6 +568,9 @@ pub async fn browser_create_tab(
         // Inject live DOM observer script
         builder = builder.initialization_script(LIVE_OBSERVER_INIT_SCRIPT);
 
+        // Phase 5.6E: Privacy & Content Blocker Pre-flight Script (Step 10)
+        builder = builder.initialization_script(crate::browser_privacy::PRIVACY_PREFLIGHT_INIT_SCRIPT);
+
         // Native Navigation Policy Callback
         builder = builder.on_navigation(|nav_url| {
             // Block javascript: and file: schemes from remote navigation

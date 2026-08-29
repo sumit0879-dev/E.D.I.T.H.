@@ -631,6 +631,70 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["profile_id"]
             }),
         },
+        // Phase 5.6E: Content Blocking & Privacy Policy Tools
+        ToolDefinition {
+            name: "browser_protection_status".to_string(),
+            description: "Get current content blocking, ad-blocking, and privacy protection status and statistics.".to_string(),
+            category: "privacy".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Optional tab ID to get per-tab tracker and ad blocking stats."
+                    }
+                }
+            }),
+        },
+        ToolDefinition {
+            name: "browser_site_protection_status".to_string(),
+            description: "Check if a specific domain is allowlisted or actively protected by content filtering.".to_string(),
+            category: "privacy".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Domain name to check (e.g. example.com)."
+                    }
+                },
+                "required": ["domain"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_site_allow".to_string(),
+            description: "Add a domain exception to bypass content blocking on that specific origin. Requires operator approval.".to_string(),
+            category: "privacy".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Domain to allowlist (e.g. example.com)."
+                    }
+                },
+                "required": ["domain"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_site_disallow".to_string(),
+            description: "Remove a domain from the privacy allowlist and resume active blocking. Requires operator approval.".to_string(),
+            category: "privacy".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "domain": {
+                        "type": "string",
+                        "description": "Domain to remove from allowlist."
+                    }
+                },
+                "required": ["domain"]
+            }),
+        },
     ]
 }
 
@@ -1646,6 +1710,113 @@ pub async fn execute_browser_tool(
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
             }
+        }
+
+        // Phase 5.6E: Privacy & Content Blocking Tool Execution
+        "browser_protection_status" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str());
+            let stats = tab_id.map(|tid| crate::browser_privacy::GLOBAL_POLICY_ENGINE.get_tab_stats(tid));
+            let db_state = app.try_state::<crate::db::DbState>();
+            let settings = if let Some(dbs) = db_state {
+                if let Ok(conn) = dbs.conn.lock() {
+                    crate::db::get_browser_privacy_settings(&conn, "global").ok()
+                } else { None }
+            } else { None };
+
+            Ok(BrowserToolExecutionResult {
+                success: true,
+                tool_name: tool_name.to_string(),
+                tab_id: tab_id.map(|s| s.to_string()),
+                data: Some(json!({
+                    "enabled": settings.as_ref().map(|s| s.enabled).unwrap_or(true),
+                    "block_ads": settings.as_ref().map(|s| s.block_ads).unwrap_or(true),
+                    "block_trackers": settings.as_ref().map(|s| s.block_trackers).unwrap_or(true),
+                    "tab_stats": stats,
+                })),
+                error: None,
+                error_code: None,
+                duration_ms: start.elapsed().as_millis() as u64,
+            })
+        }
+
+        "browser_site_protection_status" => {
+            let domain = args.get("domain").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'domain'.".to_string())?;
+            let clean = domain.trim().to_lowercase();
+            let db_state = app.try_state::<crate::db::DbState>();
+            let mut is_allowlisted = false;
+            if let Some(dbs) = db_state {
+                if let Ok(conn) = dbs.conn.lock() {
+                    if let Ok(list) = crate::db::list_browser_privacy_allowlist(&conn, None) {
+                        is_allowlisted = list.iter().any(|a| a.domain == clean);
+                    }
+                }
+            }
+
+            Ok(BrowserToolExecutionResult {
+                success: true,
+                tool_name: tool_name.to_string(),
+                tab_id: None,
+                data: Some(json!({
+                    "domain": clean,
+                    "is_allowlisted": is_allowlisted,
+                    "protection_active": !is_allowlisted,
+                })),
+                error: None,
+                error_code: None,
+                duration_ms: start.elapsed().as_millis() as u64,
+            })
+        }
+
+        "browser_site_allow" => {
+            let domain = args.get("domain").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'domain'.".to_string())?;
+            let clean = domain.trim().to_lowercase();
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "Database state not available".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            crate::db::add_browser_privacy_allowlist(&conn, &clean, "global")
+                .map_err(|e| e.to_string())?;
+
+            Ok(BrowserToolExecutionResult {
+                success: true,
+                tool_name: tool_name.to_string(),
+                tab_id: None,
+                data: Some(json!({
+                    "domain": clean,
+                    "status": "ALLOWLISTED",
+                    "message": format!("Domain '{}' added to privacy allowlist.", clean)
+                })),
+                error: None,
+                error_code: None,
+                duration_ms: start.elapsed().as_millis() as u64,
+            })
+        }
+
+        "browser_site_disallow" => {
+            let domain = args.get("domain").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'domain'.".to_string())?;
+            let clean = domain.trim().to_lowercase();
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "Database state not available".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            let removed = crate::db::remove_browser_privacy_allowlist(&conn, &clean, None)
+                .map_err(|e| e.to_string())?;
+
+            Ok(BrowserToolExecutionResult {
+                success: true,
+                tool_name: tool_name.to_string(),
+                tab_id: None,
+                data: Some(json!({
+                    "domain": clean,
+                    "removed": removed,
+                    "status": "PROTECTED",
+                    "message": format!("Domain '{}' removed from allowlist. Protection resumed.", clean)
+                })),
+                error: None,
+                error_code: None,
+                duration_ms: start.elapsed().as_millis() as u64,
+            })
         }
 
         _ => Err(format!("UNKNOWN_BROWSER_TOOL: Tool '{}' is not registered in the Browser Tool Layer.", tool_name)),

@@ -22,6 +22,7 @@ pub mod browser_control;
 pub mod browser_storage;
 pub mod browser_download;
 pub mod browser_profile;
+pub mod browser_privacy;
 pub mod weather;
 
 use db::DbState;
@@ -285,6 +286,15 @@ pub fn run() {
             browser_profile::browser_profile_delete,
             browser_profile::browser_profile_create_temporary,
             browser_profile::browser_profile_cleanup_temporary,
+            browser_privacy::browser_privacy_get_status,
+            browser_privacy::browser_privacy_toggle_protection,
+            browser_privacy::browser_privacy_allowlist_domain,
+            browser_privacy::browser_privacy_remove_allowlist,
+            browser_privacy::browser_privacy_add_block_rule,
+            browser_privacy::browser_privacy_remove_block_rule,
+            browser_privacy::browser_privacy_list_rules,
+            browser_privacy::browser_privacy_get_tab_stats,
+            browser_privacy::browser_privacy_reset_stats,
             browser::browser_get_tab_url,
             browser::browser_get_tab_title,
             browser::browser_get_tab_visible_text,

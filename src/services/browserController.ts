@@ -667,6 +667,43 @@ class BrowserController {
     }
     return restored;
   }
+
+  // --- Phase 5.6E Content Blocking & Privacy Policy ---
+  public async getPrivacyStatus(tabId?: string, profileId?: string) {
+    return await tauriService.browserPrivacyGetStatus(tabId, profileId);
+  }
+
+  public async togglePrivacyProtection(enabled: boolean, profileId?: string) {
+    return await tauriService.browserPrivacyToggleProtection(enabled, profileId);
+  }
+
+  public async allowlistDomain(domain: string, profileId?: string) {
+    return await tauriService.browserPrivacyAllowlistDomain(domain, profileId);
+  }
+
+  public async removeAllowlistDomain(domain: string, profileId?: string) {
+    return await tauriService.browserPrivacyRemoveAllowlist(domain, profileId);
+  }
+
+  public async addPrivacyRule(pattern: string, ruleType?: string, category?: string, profileId?: string) {
+    return await tauriService.browserPrivacyAddBlockRule(pattern, ruleType, category, profileId);
+  }
+
+  public async removePrivacyRule(ruleId: string) {
+    return await tauriService.browserPrivacyRemoveBlockRule(ruleId);
+  }
+
+  public async listPrivacyRules(profileId?: string) {
+    return await tauriService.browserPrivacyListRules(profileId);
+  }
+
+  public async getTabPrivacyStats(tabId: string) {
+    return await tauriService.browserPrivacyGetTabStats(tabId);
+  }
+
+  public async resetTabPrivacyStats(tabId: string) {
+    return await tauriService.browserPrivacyResetStats(tabId);
+  }
 }
 
 export const browserController = new BrowserController();

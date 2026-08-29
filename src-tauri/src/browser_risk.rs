@@ -454,6 +454,27 @@ impl BrowserRiskEngine {
             };
         }
 
+        // Phase 5.6E: Content Blocking & Privacy Policy Risk Rules (Step 16)
+        if tool == "browser_protection_status" || tool == "browser_site_protection_status" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Low,
+                decision: BrowserRiskDecision::Allow,
+                policy_code: "SAFE_PRIVACY_QUERY".to_string(),
+                reason: "Inspecting content blocking and privacy status is permitted.".to_string(),
+                user_explanation: "Action permitted.".to_string(),
+            };
+        }
+
+        if tool == "browser_site_allow" || tool == "browser_site_disallow" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Medium,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "PRIVACY_SITE_ALLOWLIST_APPROVAL".to_string(),
+                reason: "Modifying site privacy exceptions and allowlists requires operator confirmation.".to_string(),
+                user_explanation: "Approval required: the agent requests to modify privacy protection settings for this site.".to_string(),
+            };
+        }
+
         if tool.contains("cookie") || tool.contains("credential") || tool.contains("password") || tool.contains("export_storage") {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Blocked,

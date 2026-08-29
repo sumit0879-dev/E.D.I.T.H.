@@ -547,4 +547,36 @@ export interface BrowserProfile {
   is_active: boolean;
 }
 
+// --- Phase 5.6E Content Blocking & Privacy Policy Types ---
+export interface TabPrivacyStats {
+  tab_id: string;
+  blocked_ads: number;
+  blocked_trackers: number;
+  blocked_total: number;
+  current_origin: string;
+  is_site_allowlisted: boolean;
+}
+
+export interface PrivacyStatus {
+  enabled: boolean;
+  block_ads: boolean;
+  block_trackers: boolean;
+  send_dnt: boolean;
+  send_gpc: boolean;
+  total_rules_loaded: number;
+  allowlisted_domains: string[];
+  tab_stats?: TabPrivacyStats;
+}
+
+export interface PrivacyRule {
+  id: string;
+  pattern: string;
+  rule_type: string;
+  action: string;
+  category: string;
+  profile_id: string;
+  enabled: boolean;
+  created_at: number;
+}
+
 

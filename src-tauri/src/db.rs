@@ -110,6 +110,49 @@ pub struct BrowserTabRecord {
     pub position: i64,
 }
 
+// Phase 5.6E: Privacy & Content Blocking Models
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserPrivacySettingsRecord {
+    pub profile_id: String,
+    pub enabled: bool,
+    pub block_ads: bool,
+    pub block_trackers: bool,
+    pub send_dnt: bool,
+    pub send_gpc: bool,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserPrivacyAllowlistRecord {
+    pub id: String,
+    pub domain: String,
+    pub profile_id: String,
+    pub created_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserPrivacyRuleRecord {
+    pub id: String,
+    pub pattern: String,
+    pub rule_type: String, // 'DOMAIN', 'WILDCARD', 'REGEX', 'KEYWORD'
+    pub action: String,    // 'BLOCK', 'ALLOW'
+    pub category: String,  // 'AD', 'TRACKER', 'MALWARE', 'CUSTOM'
+    pub profile_id: String,
+    pub enabled: bool,
+    pub created_at: u64,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserPrivacySourceRecord {
+    pub id: String,
+    pub name: String,
+    pub url: String,
+    pub version: String,
+    pub rule_count: i64,
+    pub updated_at: u64,
+}
+
 pub struct DbState {
     pub conn: Mutex<Connection>,
 }
@@ -133,25 +176,32 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
         CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, title TEXT, timestamp TEXT);
         CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, text TEXT, time TEXT);
 
-        CREATE TABLE IF NOT EXISTS custom_apps (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT UNIQUE,
-            path TEXT,
-            keywords TEXT
-        );
-        CREATE TABLE IF NOT EXISTS plugin_states (
+        CREATE TABLE IF NOT EXISTS memories (
             id TEXT PRIMARY KEY,
-            enabled INTEGER NOT NULL DEFAULT 1
+            content TEXT NOT NULL,
+            category TEXT NOT NULL,
+            source TEXT NOT NULL,
+            confidence REAL NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
         );
 
-        -- Phase 5.6A: Browser History & Bookmarks Persistent Storage
+        CREATE TABLE IF NOT EXISTS knowledge_items (
+            id TEXT PRIMARY KEY,
+            title TEXT NOT NULL,
+            path TEXT NOT NULL,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL,
+            tags TEXT,
+            summary TEXT
+        );
+
+        -- Phase 5.6A: Browser History & Bookmarks Tables
         CREATE TABLE IF NOT EXISTS browser_history (
             id TEXT PRIMARY KEY,
             url TEXT NOT NULL,
             title TEXT NOT NULL,
-            visited_at INTEGER NOT NULL,
-            tab_id TEXT,
-            visit_count INTEGER DEFAULT 1,
+            visit_count INTEGER NOT NULL DEFAULT 1,
             last_visited_at INTEGER NOT NULL
         );
         CREATE INDEX IF NOT EXISTS idx_browser_history_visited_at ON browser_history(last_visited_at DESC);
@@ -224,6 +274,50 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
             is_pinned INTEGER NOT NULL DEFAULT 0,
             is_active INTEGER NOT NULL DEFAULT 0,
             position INTEGER NOT NULL DEFAULT 0
+        );
+
+        -- Phase 5.6E: Content Blocking & Web Request Privacy Policy Engine
+        CREATE TABLE IF NOT EXISTS browser_privacy_settings (
+            profile_id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            block_ads INTEGER NOT NULL DEFAULT 1,
+            block_trackers INTEGER NOT NULL DEFAULT 1,
+            send_dnt INTEGER NOT NULL DEFAULT 1,
+            send_gpc INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
+        );
+
+        INSERT OR IGNORE INTO browser_privacy_settings (profile_id, enabled, block_ads, block_trackers, send_dnt, send_gpc, created_at, updated_at)
+        VALUES ('global', 1, 1, 1, 1, 1, 1700000000000, 1700000000000);
+
+        CREATE TABLE IF NOT EXISTS browser_privacy_allowlist (
+            id TEXT PRIMARY KEY,
+            domain TEXT NOT NULL,
+            profile_id TEXT NOT NULL DEFAULT 'global',
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_privacy_allowlist_domain ON browser_privacy_allowlist(domain);
+
+        CREATE TABLE IF NOT EXISTS browser_privacy_rules (
+            id TEXT PRIMARY KEY,
+            pattern TEXT NOT NULL,
+            rule_type TEXT NOT NULL,
+            action TEXT NOT NULL,
+            category TEXT NOT NULL,
+            profile_id TEXT NOT NULL DEFAULT 'global',
+            enabled INTEGER NOT NULL DEFAULT 1,
+            created_at INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS idx_privacy_rules_profile ON browser_privacy_rules(profile_id);
+
+        CREATE TABLE IF NOT EXISTS browser_privacy_sources (
+            id TEXT PRIMARY KEY,
+            name TEXT NOT NULL,
+            url TEXT NOT NULL,
+            version TEXT NOT NULL,
+            rule_count INTEGER NOT NULL,
+            updated_at INTEGER NOT NULL
         );
         "
     )?;
@@ -1070,6 +1164,248 @@ pub fn clear_browser_tabs(conn: &Connection) -> Result<()> {
     conn.execute("DELETE FROM browser_tabs", [])?;
     Ok(())
 }
+
+// ============================================================================
+// Phase 5.6E: Privacy & Content Blocking Database Helpers
+// ============================================================================
+
+pub fn get_browser_privacy_settings(conn: &Connection, profile_id: &str) -> Result<BrowserPrivacySettingsRecord> {
+    let mut stmt = conn.prepare(
+        "SELECT profile_id, enabled, block_ads, block_trackers, send_dnt, send_gpc, created_at, updated_at
+         FROM browser_privacy_settings
+         WHERE profile_id = ?1
+         LIMIT 1"
+    )?;
+
+    let mut rows = stmt.query_map(params![profile_id], |row| {
+        Ok(BrowserPrivacySettingsRecord {
+            profile_id: row.get(0)?,
+            enabled: row.get::<_, i64>(1)? != 0,
+            block_ads: row.get::<_, i64>(2)? != 0,
+            block_trackers: row.get::<_, i64>(3)? != 0,
+            send_dnt: row.get::<_, i64>(4)? != 0,
+            send_gpc: row.get::<_, i64>(5)? != 0,
+            created_at: row.get(6)?,
+            updated_at: row.get(7)?,
+        })
+    })?;
+
+    if let Some(r) = rows.next() {
+        r
+    } else {
+        // Fallback to global settings
+        let mut global_stmt = conn.prepare(
+            "SELECT profile_id, enabled, block_ads, block_trackers, send_dnt, send_gpc, created_at, updated_at
+             FROM browser_privacy_settings
+             WHERE profile_id = 'global'
+             LIMIT 1"
+        )?;
+        let mut global_rows = global_stmt.query_map([], |row| {
+            Ok(BrowserPrivacySettingsRecord {
+                profile_id: profile_id.to_string(),
+                enabled: row.get::<_, i64>(1)? != 0,
+                block_ads: row.get::<_, i64>(2)? != 0,
+                block_trackers: row.get::<_, i64>(3)? != 0,
+                send_dnt: row.get::<_, i64>(4)? != 0,
+                send_gpc: row.get::<_, i64>(5)? != 0,
+                created_at: row.get(6)?,
+                updated_at: row.get(7)?,
+            })
+        })?;
+        if let Some(gr) = global_rows.next() {
+            gr
+        } else {
+            Ok(BrowserPrivacySettingsRecord {
+                profile_id: profile_id.to_string(),
+                enabled: true,
+                block_ads: true,
+                block_trackers: true,
+                send_dnt: true,
+                send_gpc: true,
+                created_at: 1700000000000,
+                updated_at: 1700000000000,
+            })
+        }
+    }
+}
+
+pub fn upsert_browser_privacy_settings(conn: &Connection, settings: &BrowserPrivacySettingsRecord) -> Result<()> {
+    conn.execute(
+        "INSERT INTO browser_privacy_settings (profile_id, enabled, block_ads, block_trackers, send_dnt, send_gpc, created_at, updated_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+         ON CONFLICT(profile_id) DO UPDATE SET
+            enabled = excluded.enabled,
+            block_ads = excluded.block_ads,
+            block_trackers = excluded.block_trackers,
+            send_dnt = excluded.send_dnt,
+            send_gpc = excluded.send_gpc,
+            updated_at = excluded.updated_at",
+        params![
+            settings.profile_id,
+            if settings.enabled { 1 } else { 0 },
+            if settings.block_ads { 1 } else { 0 },
+            if settings.block_trackers { 1 } else { 0 },
+            if settings.send_dnt { 1 } else { 0 },
+            if settings.send_gpc { 1 } else { 0 },
+            settings.created_at,
+            settings.updated_at
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn list_browser_privacy_allowlist(conn: &Connection, profile_id: Option<&str>) -> Result<Vec<BrowserPrivacyAllowlistRecord>> {
+    let mut list = Vec::new();
+    if let Some(pid) = profile_id {
+        let mut stmt = conn.prepare(
+            "SELECT id, domain, profile_id, created_at
+             FROM browser_privacy_allowlist
+             WHERE profile_id = ?1 OR profile_id = 'global'
+             ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map(params![pid], |row| {
+            Ok(BrowserPrivacyAllowlistRecord {
+                id: row.get(0)?,
+                domain: row.get(1)?,
+                profile_id: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        for r in rows {
+            list.push(r?);
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, domain, profile_id, created_at
+             FROM browser_privacy_allowlist
+             ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(BrowserPrivacyAllowlistRecord {
+                id: row.get(0)?,
+                domain: row.get(1)?,
+                profile_id: row.get(2)?,
+                created_at: row.get(3)?,
+            })
+        })?;
+        for r in rows {
+            list.push(r?);
+        }
+    }
+    Ok(list)
+}
+
+pub fn add_browser_privacy_allowlist(conn: &Connection, domain: &str, profile_id: &str) -> Result<BrowserPrivacyAllowlistRecord> {
+    let id = format!("al_{}", uuid::Uuid::new_v4());
+    let now = chrono::Utc::now().timestamp_millis() as u64;
+    conn.execute(
+        "INSERT INTO browser_privacy_allowlist (id, domain, profile_id, created_at)
+         VALUES (?1, ?2, ?3, ?4)",
+        params![id, domain, profile_id, now],
+    )?;
+    Ok(BrowserPrivacyAllowlistRecord {
+        id,
+        domain: domain.to_string(),
+        profile_id: profile_id.to_string(),
+        created_at: now,
+    })
+}
+
+pub fn remove_browser_privacy_allowlist(conn: &Connection, domain: &str, profile_id: Option<&str>) -> Result<bool> {
+    let count = if let Some(pid) = profile_id {
+        conn.execute(
+            "DELETE FROM browser_privacy_allowlist WHERE domain = ?1 AND (profile_id = ?2 OR profile_id = 'global')",
+            params![domain, pid],
+        )?
+    } else {
+        conn.execute(
+            "DELETE FROM browser_privacy_allowlist WHERE domain = ?1",
+            params![domain],
+        )?
+    };
+    Ok(count > 0)
+}
+
+pub fn list_browser_privacy_rules(conn: &Connection, profile_id: Option<&str>) -> Result<Vec<BrowserPrivacyRuleRecord>> {
+    let mut list = Vec::new();
+    if let Some(pid) = profile_id {
+        let mut stmt = conn.prepare(
+            "SELECT id, pattern, rule_type, action, category, profile_id, enabled, created_at
+             FROM browser_privacy_rules
+             WHERE profile_id = ?1 OR profile_id = 'global'
+             ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map(params![pid], |row| {
+            Ok(BrowserPrivacyRuleRecord {
+                id: row.get(0)?,
+                pattern: row.get(1)?,
+                rule_type: row.get(2)?,
+                action: row.get(3)?,
+                category: row.get(4)?,
+                profile_id: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? != 0,
+                created_at: row.get(7)?,
+            })
+        })?;
+        for r in rows {
+            list.push(r?);
+        }
+    } else {
+        let mut stmt = conn.prepare(
+            "SELECT id, pattern, rule_type, action, category, profile_id, enabled, created_at
+             FROM browser_privacy_rules
+             ORDER BY created_at DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(BrowserPrivacyRuleRecord {
+                id: row.get(0)?,
+                pattern: row.get(1)?,
+                rule_type: row.get(2)?,
+                action: row.get(3)?,
+                category: row.get(4)?,
+                profile_id: row.get(5)?,
+                enabled: row.get::<_, i64>(6)? != 0,
+                created_at: row.get(7)?,
+            })
+        })?;
+        for r in rows {
+            list.push(r?);
+        }
+    }
+    Ok(list)
+}
+
+pub fn add_browser_privacy_rule(conn: &Connection, rule: &BrowserPrivacyRuleRecord) -> Result<()> {
+    conn.execute(
+        "INSERT INTO browser_privacy_rules (id, pattern, rule_type, action, category, profile_id, enabled, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            rule.id,
+            rule.pattern,
+            rule.rule_type,
+            rule.action,
+            rule.category,
+            rule.profile_id,
+            if rule.enabled { 1 } else { 0 },
+            rule.created_at
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn delete_browser_privacy_rule(conn: &Connection, rule_id: &str) -> Result<bool> {
+    let count = conn.execute("DELETE FROM browser_privacy_rules WHERE id = ?1", params![rule_id])?;
+    Ok(count > 0)
+}
+
+pub fn toggle_browser_privacy_rule(conn: &Connection, rule_id: &str, enabled: bool) -> Result<bool> {
+    let count = conn.execute(
+        "UPDATE browser_privacy_rules SET enabled = ?1 WHERE id = ?2",
+        params![if enabled { 1 } else { 0 }, rule_id],
+    )?;
+    Ok(count > 0)
+}
+
 
 
 

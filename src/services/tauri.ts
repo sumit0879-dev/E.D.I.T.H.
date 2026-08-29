@@ -39,6 +39,9 @@ import type {
   BrowserBookmark,
   BrowserDownload,
   BrowserProfile,
+  PrivacyStatus,
+  PrivacyRule,
+  TabPrivacyStats,
 } from '../types';
 
 export const isTauri = () => {
@@ -1724,6 +1727,130 @@ export async function browserSaveSession(): Promise<boolean> {
 export async function browserRestoreSession(bounds?: BrowserViewportBounds): Promise<BrowserTabInfo[]> {
   if (!isTauri()) return [];
   return await invoke<BrowserTabInfo[]>('browser_restore_session', { bounds });
+}
+
+// --- Phase 5.6E Privacy & Content Blocking IPC ---
+
+export async function browserPrivacyGetStatus(
+  tabId?: string,
+  profileId?: string
+): Promise<PrivacyStatus> {
+  if (!isTauri()) {
+    return {
+      enabled: true,
+      block_ads: true,
+      block_trackers: true,
+      send_dnt: true,
+      send_gpc: true,
+      total_rules_loaded: 48,
+      allowlisted_domains: [],
+      tab_stats: tabId
+        ? {
+            tab_id: tabId,
+            blocked_ads: 0,
+            blocked_trackers: 0,
+            blocked_total: 0,
+            current_origin: '',
+            is_site_allowlisted: false,
+          }
+        : undefined,
+    };
+  }
+  return await invoke<PrivacyStatus>('browser_privacy_get_status', {
+    tabId,
+    profileId,
+  });
+}
+
+export async function browserPrivacyToggleProtection(
+  enabled: boolean,
+  profileId?: string
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_privacy_toggle_protection', {
+    enabled,
+    profileId,
+  });
+}
+
+export async function browserPrivacyAllowlistDomain(
+  domain: string,
+  profileId?: string
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_privacy_allowlist_domain', {
+    domain,
+    profileId,
+  });
+}
+
+export async function browserPrivacyRemoveAllowlist(
+  domain: string,
+  profileId?: string
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_privacy_remove_allowlist', {
+    domain,
+    profileId,
+  });
+}
+
+export async function browserPrivacyAddBlockRule(
+  pattern: string,
+  ruleType?: string,
+  category?: string,
+  profileId?: string
+): Promise<string> {
+  if (!isTauri()) return 'mock_rule_' + Date.now();
+  return await invoke<string>('browser_privacy_add_block_rule', {
+    pattern,
+    ruleType,
+    category,
+    profileId,
+  });
+}
+
+export async function browserPrivacyRemoveBlockRule(
+  ruleId: string
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_privacy_remove_block_rule', {
+    ruleId,
+  });
+}
+
+export async function browserPrivacyListRules(
+  profileId?: string
+): Promise<PrivacyRule[]> {
+  if (!isTauri()) return [];
+  return await invoke<PrivacyRule[]>('browser_privacy_list_rules', {
+    profileId,
+  });
+}
+
+export async function browserPrivacyGetTabStats(
+  tabId: string
+): Promise<TabPrivacyStats> {
+  if (!isTauri()) {
+    return {
+      tab_id: tabId,
+      blocked_ads: 0,
+      blocked_trackers: 0,
+      blocked_total: 0,
+      current_origin: '',
+      is_site_allowlisted: false,
+    };
+  }
+  return await invoke<TabPrivacyStats>('browser_privacy_get_tab_stats', {
+    tabId,
+  });
+}
+
+export async function browserPrivacyResetStats(
+  tabId: string
+): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_privacy_reset_stats', { tabId });
 }
 
 
