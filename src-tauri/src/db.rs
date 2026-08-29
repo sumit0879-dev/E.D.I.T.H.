@@ -220,6 +220,8 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
             id TEXT PRIMARY KEY,
             url TEXT NOT NULL,
             title TEXT NOT NULL,
+            visited_at INTEGER NOT NULL DEFAULT 0,
+            tab_id TEXT,
             visit_count INTEGER NOT NULL DEFAULT 1,
             last_visited_at INTEGER NOT NULL
         );
@@ -355,6 +357,8 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
     )?;
 
     // Non-destructive migrations for profile-scoping history & bookmarks (Step 24 & 25)
+    let _ = conn.execute("ALTER TABLE browser_history ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0;", []);
+    let _ = conn.execute("ALTER TABLE browser_history ADD COLUMN tab_id TEXT;", []);
     let _ = conn.execute("ALTER TABLE browser_history ADD COLUMN profile_id TEXT DEFAULT 'profile_default';", []);
     let _ = conn.execute("ALTER TABLE browser_bookmarks ADD COLUMN profile_id TEXT DEFAULT 'profile_default';", []);
     // Phase 5.6F-C: Non-destructive migration for tab group association
