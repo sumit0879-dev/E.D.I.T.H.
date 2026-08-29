@@ -46,8 +46,9 @@ import type {
   BrowserControlState,
   BrowserHistoryEntry,
   BrowserBookmark,
+  BrowserDownload,
 } from '../types';
-import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2 } from 'lucide-react';
+import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -211,6 +212,68 @@ export const BrowserView: React.FC = () => {
     }
   };
 
+  // Phase 5.6B Download Manager States
+  const [showDownloadsPanel, setShowDownloadsPanel] = useState(false);
+  const [downloadsList, setDownloadsList] = useState<BrowserDownload[]>([]);
+  const [isFetchingDownloads, setIsFetchingDownloads] = useState(false);
+
+  const fetchDownloads = useCallback(async () => {
+    setIsFetchingDownloads(true);
+    try {
+      const res = await browserController.getDownloads(50);
+      setDownloadsList(res);
+    } catch (e) {
+      console.warn('Failed to fetch downloads', e);
+    } finally {
+      setIsFetchingDownloads(false);
+    }
+  }, []);
+
+  const handleCancelDownload = async (id: string) => {
+    try {
+      await browserController.cancelDownload(id);
+      fetchDownloads();
+    } catch (e) {
+      console.error('Failed to cancel download', e);
+    }
+  };
+
+  const handleDeleteDownloadRecord = async (id: string) => {
+    try {
+      await browserController.deleteDownloadRecord(id);
+      fetchDownloads();
+    } catch (e) {
+      console.error('Failed to delete download record', e);
+    }
+  };
+
+  const handleClearDownloadRecords = async () => {
+    if (confirm('Clear download history records? (Files on disk will not be deleted)')) {
+      try {
+        await browserController.clearDownloadRecords();
+        fetchDownloads();
+      } catch (e) {
+        console.error('Failed to clear download records', e);
+      }
+    }
+  };
+
+  const handleShowInFolder = async (id: string) => {
+    try {
+      await browserController.showDownloadInFolder(id);
+    } catch (e) {
+      console.error('Failed to show in folder', e);
+    }
+  };
+
+  const handleOpenFile = async (id: string) => {
+    try {
+      await browserController.openDownloadFile(id);
+    } catch (e) {
+      console.error('Failed to open file', e);
+    }
+  };
+
   const fetchRiskAuditLogs = useCallback(async () => {
     setIsFetchingLogs(true);
     try {
@@ -240,7 +303,7 @@ export const BrowserView: React.FC = () => {
     }
   }, []);
 
-  // Listen for agent status events from Rust backend
+  // Listen for agent status events & download progress events from Rust backend
   useEffect(() => {
     if (!isTauri()) return;
 
@@ -257,8 +320,26 @@ export const BrowserView: React.FC = () => {
       }
     );
 
+    const unlistenDownload = listen<BrowserDownload>(
+      'browser-download-progress',
+      (event) => {
+        const payload = event.payload;
+        setDownloadsList((prev) => {
+          const idx = prev.findIndex((d) => d.id === payload.id);
+          if (idx >= 0) {
+            const next = [...prev];
+            next[idx] = payload;
+            return next;
+          } else {
+            return [payload, ...prev];
+          }
+        });
+      }
+    );
+
     return () => {
       unlistenStatus.then((un) => un()).catch(() => {});
+      unlistenDownload.then((un) => un()).catch(() => {});
     };
   }, [agentMaxSteps]);
 
@@ -825,6 +906,7 @@ export const BrowserView: React.FC = () => {
             onClick={() => {
               setShowHistoryPanel(!showHistoryPanel);
               setShowBookmarksPanel(false);
+              setShowDownloadsPanel(false);
               if (!showHistoryPanel) fetchHistory();
             }}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
@@ -836,6 +918,30 @@ export const BrowserView: React.FC = () => {
           >
             <History className="w-3.5 h-3.5 text-blue-400" />
             <span className="hidden sm:inline">History</span>
+          </button>
+
+          {/* Phase 5.6B Downloads Button */}
+          <button
+            onClick={() => {
+              setShowDownloadsPanel(!showDownloadsPanel);
+              setShowHistoryPanel(false);
+              setShowBookmarksPanel(false);
+              if (!showDownloadsPanel) fetchDownloads();
+            }}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
+              showDownloadsPanel
+                ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300 shadow-emerald-glow-xs'
+                : 'bg-[#090e1a] border-white/[0.08] text-slate-300 hover:text-emerald-300'
+            }`}
+            title="Toggle Downloads Manager (5.6B)"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">Downloads</span>
+            {downloadsList.filter((d) => d.status === 'DOWNLOADING').length > 0 && (
+              <span className="px-1 py-0.2 rounded-full bg-emerald-500 text-black text-[9px] font-bold animate-pulse">
+                {downloadsList.filter((d) => d.status === 'DOWNLOADING').length}
+              </span>
+            )}
           </button>
 
           <button
@@ -914,6 +1020,133 @@ export const BrowserView: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Phase 5.6B Downloads Drawer */}
+      {showDownloadsPanel && (
+        <div className="bg-[#030d09] border-b border-emerald-500/30 p-3 text-xs text-emerald-200 flex flex-col gap-2.5 shrink-0 z-10 max-h-80 overflow-y-auto animate-fadeIn font-mono">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-emerald-300">
+              <Download className="w-4 h-4 text-emerald-400" />
+              Phase 5.6B Download Manager ({downloadsList.length} items)
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleClearDownloadRecords}
+                className="flex items-center gap-1 text-[10px] text-slate-300 hover:text-red-300 bg-white/5 hover:bg-red-950/40 border border-white/10 px-2 py-0.5 rounded transition"
+                title="Clear download records (files remain on disk)"
+              >
+                <Trash2 className="w-3 h-3" />
+                Clear Records
+              </button>
+              <button
+                onClick={() => setShowDownloadsPanel(false)}
+                className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+
+          {downloadsList.length === 0 ? (
+            <div className="text-slate-400 text-center py-4 text-[11px]">No downloads recorded yet.</div>
+          ) : (
+            <div className="flex flex-col gap-1.5 max-h-60 overflow-y-auto">
+              {downloadsList.map((dl) => (
+                <div
+                  key={dl.id}
+                  className="flex flex-col bg-black/50 border border-white/5 hover:border-emerald-500/30 p-2 rounded-lg text-[11px] gap-1 transition"
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 truncate flex-1">
+                      <FileText className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                      <span className="text-emerald-200 font-bold truncate">{dl.filename}</span>
+                      {dl.tab_id && (
+                        <span className="text-[9px] px-1 py-0.2 rounded bg-cyan-950 text-cyan-300 border border-cyan-500/30">
+                          {dl.tab_id}
+                        </span>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <span className={`text-[9px] px-1.5 py-0.5 rounded font-bold ${
+                        dl.status === 'COMPLETED'
+                          ? 'bg-emerald-950/80 text-emerald-400 border border-emerald-500/40'
+                          : dl.status === 'DOWNLOADING'
+                          ? 'bg-cyan-950/80 text-cyan-300 border border-cyan-500/40 animate-pulse'
+                          : dl.status === 'CANCELLED'
+                          ? 'bg-amber-950/80 text-amber-400 border border-amber-500/40'
+                          : 'bg-red-950/80 text-red-400 border border-red-500/40'
+                      }`}>
+                        {dl.status}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Progress bar during downloading */}
+                  {dl.status === 'DOWNLOADING' && (
+                    <div className="w-full bg-black/60 rounded-full h-1.5 overflow-hidden border border-white/10 my-0.5">
+                      <div
+                        className="bg-emerald-400 h-full transition-all duration-200"
+                        style={{ width: `${Math.round(dl.progress * 100)}%` }}
+                      />
+                    </div>
+                  )}
+
+                  <div className="flex items-center justify-between text-[10px] text-slate-400 mt-0.5">
+                    <div className="flex items-center gap-3 truncate">
+                      <span>{(dl.received_bytes / 1024).toFixed(1)} KB{dl.total_bytes ? ` / ${(dl.total_bytes / 1024).toFixed(1)} KB (${Math.round(dl.progress * 100)}%)` : ''}</span>
+                      <span className="truncate max-w-[240px]" title={dl.destination}>{dl.destination}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {dl.status === 'DOWNLOADING' && (
+                        <button
+                          onClick={() => handleCancelDownload(dl.id)}
+                          className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-red-950/60 hover:bg-red-900/60 text-red-300 border border-red-500/30 transition"
+                          title="Cancel Download"
+                        >
+                          <XCircle className="w-3 h-3" />
+                          Cancel
+                        </button>
+                      )}
+                      {dl.status === 'COMPLETED' && (
+                        <>
+                          <button
+                            onClick={() => handleOpenFile(dl.id)}
+                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-emerald-950/60 hover:bg-emerald-900/60 text-emerald-300 border border-emerald-500/30 transition"
+                            title="Open downloaded file (or folder if executable)"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Open
+                          </button>
+                          <button
+                            onClick={() => handleShowInFolder(dl.id)}
+                            className="flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/5 hover:bg-white/10 text-slate-300 border border-white/10 transition"
+                            title="Show in explorer folder"
+                          >
+                            <Folder className="w-3 h-3" />
+                            Folder
+                          </button>
+                        </>
+                      )}
+                      <button
+                        onClick={() => handleDeleteDownloadRecord(dl.id)}
+                        className="text-slate-500 hover:text-red-400 p-0.5 transition"
+                        title="Remove download record"
+                      >
+                        <Trash2 className="w-3 h-3" />
+                      </button>
+                    </div>
+                  </div>
+                  {dl.error && (
+                    <div className="text-[10px] text-red-400 bg-red-950/40 px-1.5 py-0.5 rounded border border-red-500/20">
+                      Error: {dl.error}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Phase 5.6A Bookmarks Drawer */}
       {showBookmarksPanel && (

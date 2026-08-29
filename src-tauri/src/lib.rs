@@ -20,6 +20,7 @@ pub mod browser_risk;
 pub mod browser_orchestrator;
 pub mod browser_control;
 pub mod browser_storage;
+pub mod browser_download;
 pub mod weather;
 
 use db::DbState;
@@ -261,6 +262,14 @@ pub fn run() {
             browser_storage::browser_bookmark_is_bookmarked,
             browser_storage::browser_bookmark_create_folder,
             browser_storage::browser_bookmark_delete_folder,
+            browser_download::browser_download_start,
+            browser_download::browser_download_cancel,
+            browser_download::browser_download_list,
+            browser_download::browser_download_get,
+            browser_download::browser_download_delete_record,
+            browser_download::browser_download_clear_records,
+            browser_download::browser_download_show_in_folder,
+            browser_download::browser_download_open_file,
             browser::browser_get_tab_url,
             browser::browser_get_tab_title,
             browser::browser_get_tab_visible_text,

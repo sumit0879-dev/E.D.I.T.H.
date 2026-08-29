@@ -495,6 +495,79 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
                 "required": ["tab_id", "url"]
             }),
         },
+
+        // --- Phase 5.6B: Download Manager Tools (Step 16) ---
+        ToolDefinition {
+            name: "browser_downloads_recent".to_string(),
+            description: "Retrieve recent browser downloads with progress, file size, destination, and status.".to_string(),
+            category: "downloads".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "limit": {
+                        "type": "number",
+                        "description": "Maximum number of download records to retrieve (default 20, max 50)."
+                    }
+                }
+            }),
+        },
+        ToolDefinition {
+            name: "browser_download_get".to_string(),
+            description: "Get detailed progress, status, and metadata for a specific download ID.".to_string(),
+            category: "downloads".to_string(),
+            risk_level: "LOW_RISK_ACTION".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "download_id": {
+                        "type": "string",
+                        "description": "Unique download identifier."
+                    }
+                },
+                "required": ["download_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_download_cancel".to_string(),
+            description: "Cancel an in-progress file download by download ID.".to_string(),
+            category: "downloads".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "download_id": {
+                        "type": "string",
+                        "description": "Target download ID to cancel."
+                    }
+                },
+                "required": ["download_id"]
+            }),
+        },
+        ToolDefinition {
+            name: "browser_download_start".to_string(),
+            description: "Start a bounded file download to the safe downloads folder. Requires operator approval.".to_string(),
+            category: "downloads".to_string(),
+            risk_level: "REQUIRE_APPROVAL".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": {
+                        "type": "string",
+                        "description": "Originating browser tab ID."
+                    },
+                    "url": {
+                        "type": "string",
+                        "description": "HTTP/HTTPS URL of file to download."
+                    },
+                    "suggested_filename": {
+                        "type": "string",
+                        "description": "Optional suggested filename for the downloaded file."
+                    }
+                },
+                "required": ["url"]
+            }),
+        },
     ]
 }
 
@@ -1318,6 +1391,90 @@ pub async fn execute_browser_tool(
                     data: None,
                     error: Some(e),
                     error_code: Some("NAVIGATION_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        // --- Phase 5.6B: Download Manager Tools (Step 16) ---
+        "browser_downloads_recent" => {
+            let limit = args.get("limit").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(20);
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "Database state not initialized.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            let res = crate::db::list_browser_downloads(&conn, Some(limit))
+                .map_err(|e| e.to_string())?;
+
+            Ok(BrowserToolExecutionResult {
+                success: true,
+                tool_name: tool_name.to_string(),
+                tab_id: None,
+                data: Some(json!({ "downloads": res, "count": res.len() })),
+                error: None,
+                error_code: None,
+                duration_ms: start.elapsed().as_millis() as u64,
+            })
+        }
+
+        "browser_download_get" => {
+            let download_id = args.get("download_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'download_id'.".to_string())?;
+            let db_state = app.try_state::<crate::db::DbState>()
+                .ok_or_else(|| "Database state not initialized.".to_string())?;
+            let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
+            let res = crate::db::get_browser_download(&conn, download_id)
+                .map_err(|e| e.to_string())?;
+
+            Ok(BrowserToolExecutionResult {
+                success: res.is_some(),
+                tool_name: tool_name.to_string(),
+                tab_id: None,
+                data: Some(json!({ "download": res })),
+                error: if res.is_none() { Some("Download record not found.".to_string()) } else { None },
+                error_code: if res.is_none() { Some("DOWNLOAD_NOT_FOUND".to_string()) } else { None },
+                duration_ms: start.elapsed().as_millis() as u64,
+            })
+        }
+
+        "browser_download_cancel" => {
+            let download_id = args.get("download_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'download_id'.".to_string())?;
+            let cancelled = crate::browser_download::GLOBAL_DOWNLOAD_MGR.cancel_download(download_id);
+
+            Ok(BrowserToolExecutionResult {
+                success: true,
+                tool_name: tool_name.to_string(),
+                tab_id: None,
+                data: Some(json!({ "cancelled": cancelled, "download_id": download_id })),
+                error: None,
+                error_code: None,
+                duration_ms: start.elapsed().as_millis() as u64,
+            })
+        }
+
+        "browser_download_start" => {
+            let url = args.get("url").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'url'.".to_string())?;
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let suggested_filename = args.get("suggested_filename").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+            match crate::browser_download::GLOBAL_DOWNLOAD_MGR.start_download(app, url.to_string(), tab_id.clone(), suggested_filename) {
+                Ok(rec) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id,
+                    data: Some(json!({ "download": rec })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id,
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("DOWNLOAD_START_FAILED".to_string()),
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
             }

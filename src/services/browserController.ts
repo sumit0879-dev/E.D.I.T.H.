@@ -24,6 +24,7 @@ import type {
   BrowserHistoryEntry,
   BrowserBookmarkFolder,
   BrowserBookmark,
+  BrowserDownload,
 } from '../types';
 
 /**
@@ -536,6 +537,43 @@ class BrowserController {
 
   public async deleteBookmarkFolder(folderId: string): Promise<boolean> {
     return await tauriService.browserBookmarkDeleteFolder(folderId);
+  }
+
+  // --- Phase 5.6B Browser Download Manager Methods ---
+  public async startDownload(
+    url: string,
+    tabId?: string,
+    suggestedFilename?: string
+  ): Promise<BrowserDownload> {
+    return await tauriService.browserDownloadStart(url, tabId, suggestedFilename);
+  }
+
+  public async cancelDownload(downloadId: string): Promise<boolean> {
+    return await tauriService.browserDownloadCancel(downloadId);
+  }
+
+  public async getDownloads(limit?: number): Promise<BrowserDownload[]> {
+    return await tauriService.browserDownloadList(limit);
+  }
+
+  public async getDownload(downloadId: string): Promise<BrowserDownload | null> {
+    return await tauriService.browserDownloadGet(downloadId);
+  }
+
+  public async deleteDownloadRecord(downloadId: string): Promise<boolean> {
+    return await tauriService.browserDownloadDeleteRecord(downloadId);
+  }
+
+  public async clearDownloadRecords(): Promise<number> {
+    return await tauriService.browserDownloadClearRecords();
+  }
+
+  public async showDownloadInFolder(downloadId: string): Promise<boolean> {
+    return await tauriService.browserDownloadShowInFolder(downloadId);
+  }
+
+  public async openDownloadFile(downloadId: string): Promise<boolean> {
+    return await tauriService.browserDownloadOpenFile(downloadId);
   }
 }
 

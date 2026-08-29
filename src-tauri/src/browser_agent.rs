@@ -397,6 +397,10 @@ AVAILABLE TOOLS:
 - browser_bookmarks_search: {{\"query\": \"<search_term>\"}}
 - browser_bookmark_add: {{\"title\": \"<title>\", \"url\": \"https://...\"}}
 - browser_bookmark_open: {{\"tab_id\": \"<tab_id>\", \"url\": \"https://...\"}}
+- browser_downloads_recent: {{\"limit\": 20}}
+- browser_download_get: {{\"download_id\": \"<id>\"}}
+- browser_download_cancel: {{\"download_id\": \"<id>\"}}
+- browser_download_start: {{\"tab_id\": \"<tab_id>\", \"url\": \"https://...\", \"suggested_filename\": \"file.pdf\"}}
 
 Output ONLY ONE tool call per turn. Wait for the tool result before taking the next action.",
         goal, initial_tab_id

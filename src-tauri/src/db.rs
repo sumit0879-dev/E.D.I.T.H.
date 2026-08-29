@@ -67,6 +67,24 @@ pub struct BrowserBookmark {
     pub updated_at: u64,
 }
 
+// Phase 5.6B: Browser Download Model
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct BrowserDownloadRecord {
+    pub id: String,
+    pub url: String,
+    pub filename: String,
+    pub suggested_filename: String,
+    pub destination: String,
+    pub total_bytes: Option<u64>,
+    pub received_bytes: u64,
+    pub progress: f64,
+    pub status: String,
+    pub started_at: u64,
+    pub completed_at: Option<u64>,
+    pub error: Option<String>,
+    pub tab_id: Option<String>,
+}
+
 pub struct DbState {
     pub conn: Mutex<Connection>,
 }
@@ -132,6 +150,29 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
         );
         CREATE INDEX IF NOT EXISTS idx_browser_bookmarks_url ON browser_bookmarks(url);
         CREATE INDEX IF NOT EXISTS idx_browser_bookmarks_folder ON browser_bookmarks(folder_id);
+
+        -- Phase 5.6B: Browser Downloads Persistent Storage
+        CREATE TABLE IF NOT EXISTS browser_downloads (
+            id TEXT PRIMARY KEY,
+            url TEXT NOT NULL,
+            filename TEXT NOT NULL,
+            suggested_filename TEXT NOT NULL,
+            destination TEXT NOT NULL,
+            total_bytes INTEGER,
+            received_bytes INTEGER NOT NULL,
+            progress REAL NOT NULL,
+            status TEXT NOT NULL,
+            started_at INTEGER NOT NULL,
+            completed_at INTEGER,
+            error TEXT,
+            tab_id TEXT
+        );
+        CREATE INDEX IF NOT EXISTS idx_browser_downloads_started_at ON browser_downloads(started_at DESC);
+
+        -- Step 19 Restart Recovery: Mark in-flight downloads as Failed on application startup
+        UPDATE browser_downloads 
+        SET status = 'FAILED', error = 'Interrupted by application restart' 
+        WHERE status IN ('DOWNLOADING', 'QUEUED');
         "
     )?;
 
@@ -711,5 +752,118 @@ pub fn delete_bookmark_folder(conn: &Connection, folder_id: &str) -> Result<bool
     conn.execute("UPDATE browser_bookmarks SET folder_id = NULL WHERE folder_id = ?1", params![folder_id])?;
     let count = conn.execute("DELETE FROM browser_bookmark_folders WHERE id = ?1", params![folder_id])?;
     Ok(count > 0)
+}
+
+// ============================================================================
+// Phase 5.6B: Browser Downloads Database Helpers
+// ============================================================================
+
+pub fn upsert_browser_download(conn: &Connection, record: &BrowserDownloadRecord) -> Result<()> {
+    conn.execute(
+        "INSERT INTO browser_downloads (
+            id, url, filename, suggested_filename, destination,
+            total_bytes, received_bytes, progress, status,
+            started_at, completed_at, error, tab_id
+        ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
+        ON CONFLICT(id) DO UPDATE SET
+            received_bytes = excluded.received_bytes,
+            total_bytes = excluded.total_bytes,
+            progress = excluded.progress,
+            status = excluded.status,
+            completed_at = excluded.completed_at,
+            error = excluded.error;",
+        params![
+            record.id,
+            record.url,
+            record.filename,
+            record.suggested_filename,
+            record.destination,
+            record.total_bytes,
+            record.received_bytes,
+            record.progress,
+            record.status,
+            record.started_at,
+            record.completed_at,
+            record.error,
+            record.tab_id
+        ],
+    )?;
+    Ok(())
+}
+
+pub fn get_browser_download(conn: &Connection, id: &str) -> Result<Option<BrowserDownloadRecord>> {
+    let mut stmt = conn.prepare(
+        "SELECT id, url, filename, suggested_filename, destination,
+                total_bytes, received_bytes, progress, status,
+                started_at, completed_at, error, tab_id
+         FROM browser_downloads WHERE id = ?1 LIMIT 1"
+    )?;
+
+    let mut rows = stmt.query(params![id])?;
+    if let Some(row) = rows.next()? {
+        Ok(Some(BrowserDownloadRecord {
+            id: row.get(0)?,
+            url: row.get(1)?,
+            filename: row.get(2)?,
+            suggested_filename: row.get(3)?,
+            destination: row.get(4)?,
+            total_bytes: row.get(5)?,
+            received_bytes: row.get(6)?,
+            progress: row.get(7)?,
+            status: row.get(8)?,
+            started_at: row.get(9)?,
+            completed_at: row.get(10)?,
+            error: row.get(11)?,
+            tab_id: row.get(12)?,
+        }))
+    } else {
+        Ok(None)
+    }
+}
+
+pub fn list_browser_downloads(conn: &Connection, limit: Option<u32>) -> Result<Vec<BrowserDownloadRecord>> {
+    let lim = limit.unwrap_or(50).clamp(1, 200);
+    let mut stmt = conn.prepare(
+        "SELECT id, url, filename, suggested_filename, destination,
+                total_bytes, received_bytes, progress, status,
+                started_at, completed_at, error, tab_id
+         FROM browser_downloads
+         ORDER BY started_at DESC
+         LIMIT ?1"
+    )?;
+
+    let rows = stmt.query_map(params![lim], |row| {
+        Ok(BrowserDownloadRecord {
+            id: row.get(0)?,
+            url: row.get(1)?,
+            filename: row.get(2)?,
+            suggested_filename: row.get(3)?,
+            destination: row.get(4)?,
+            total_bytes: row.get(5)?,
+            received_bytes: row.get(6)?,
+            progress: row.get(7)?,
+            status: row.get(8)?,
+            started_at: row.get(9)?,
+            completed_at: row.get(10)?,
+            error: row.get(11)?,
+            tab_id: row.get(12)?,
+        })
+    })?;
+
+    let mut downloads = Vec::new();
+    for r in rows {
+        downloads.push(r?);
+    }
+    Ok(downloads)
+}
+
+pub fn delete_browser_download_record(conn: &Connection, id: &str) -> Result<bool> {
+    let count = conn.execute("DELETE FROM browser_downloads WHERE id = ?1", params![id])?;
+    Ok(count > 0)
+}
+
+pub fn clear_all_browser_download_records(conn: &Connection) -> Result<usize> {
+    let count = conn.execute("DELETE FROM browser_downloads", [])?;
+    Ok(count)
 }
 

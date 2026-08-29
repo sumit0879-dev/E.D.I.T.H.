@@ -499,3 +499,30 @@ export interface BrowserBookmark {
   created_at: number;
   updated_at: number;
 }
+
+// --- Phase 5.6B Browser Download Manager Types ---
+export type DownloadStatus =
+  | 'QUEUED'
+  | 'DOWNLOADING'
+  | 'PAUSED'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'BLOCKED';
+
+export interface BrowserDownload {
+  id: string;
+  url: string;
+  filename: string;
+  suggested_filename: string;
+  destination: string;
+  total_bytes?: number;
+  received_bytes: number;
+  progress: number;
+  status: DownloadStatus;
+  started_at: number;
+  completed_at?: number;
+  error?: string;
+  tab_id?: string;
+}
+

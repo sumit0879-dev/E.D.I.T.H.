@@ -37,6 +37,7 @@ import type {
   BrowserHistoryEntry,
   BrowserBookmarkFolder,
   BrowserBookmark,
+  BrowserDownload,
 } from '../types';
 
 export const isTauri = () => {
@@ -1502,4 +1503,67 @@ export async function browserBookmarkDeleteFolder(folderId: string): Promise<boo
   if (!isTauri()) return true;
   return await invoke<boolean>('browser_bookmark_delete_folder', { folderId });
 }
+
+// --- Phase 5.6B Browser Download Manager Tauri Methods ---
+export async function browserDownloadStart(
+  url: string,
+  tabId?: string,
+  suggestedFilename?: string
+): Promise<BrowserDownload> {
+  if (!isTauri()) {
+    return {
+      id: 'mock-dl-' + Date.now(),
+      url,
+      filename: suggestedFilename || 'mock_file.bin',
+      suggested_filename: suggestedFilename || 'mock_file.bin',
+      destination: '/mock/downloads/' + (suggestedFilename || 'mock_file.bin'),
+      received_bytes: 0,
+      progress: 0,
+      status: 'DOWNLOADING',
+      started_at: Date.now(),
+      tab_id: tabId,
+    };
+  }
+  return await invoke<BrowserDownload>('browser_download_start', {
+    url,
+    tabId,
+    suggestedFilename,
+  });
+}
+
+export async function browserDownloadCancel(downloadId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_download_cancel', { downloadId });
+}
+
+export async function browserDownloadList(limit?: number): Promise<BrowserDownload[]> {
+  if (!isTauri()) return [];
+  return await invoke<BrowserDownload[]>('browser_download_list', { limit });
+}
+
+export async function browserDownloadGet(downloadId: string): Promise<BrowserDownload | null> {
+  if (!isTauri()) return null;
+  return await invoke<BrowserDownload | null>('browser_download_get', { downloadId });
+}
+
+export async function browserDownloadDeleteRecord(downloadId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_download_delete_record', { downloadId });
+}
+
+export async function browserDownloadClearRecords(): Promise<number> {
+  if (!isTauri()) return 0;
+  return await invoke<number>('browser_download_clear_records');
+}
+
+export async function browserDownloadShowInFolder(downloadId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_download_show_in_folder', { downloadId });
+}
+
+export async function browserDownloadOpenFile(downloadId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_download_open_file', { downloadId });
+}
+
 

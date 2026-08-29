@@ -382,14 +382,44 @@ impl BrowserRiskEngine {
             };
         }
 
-        // 5. Download / Upload Risk Assessment (Step 9)
-        if tool.contains("download") {
+        // Phase 5.6B: Download Manager Risk Policies (Step 8, 9, 17)
+        if tool == "browser_downloads_recent" || tool == "browser_download_get" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Low,
+                decision: BrowserRiskDecision::Allow,
+                policy_code: "SAFE_DOWNLOAD_QUERY".to_string(),
+                reason: "Querying download history permitted.".to_string(),
+                user_explanation: "Action permitted.".to_string(),
+            };
+        }
+
+        if tool == "browser_download_cancel" {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Medium,
+                decision: BrowserRiskDecision::RequireApproval,
+                policy_code: "DOWNLOAD_CANCEL_APPROVAL".to_string(),
+                reason: "Cancelling an active download requires operator confirmation.".to_string(),
+                user_explanation: "Approval required: this action cancels an in-progress file download.".to_string(),
+            };
+        }
+
+        if tool == "browser_download_start" || tool.contains("download") {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Medium,
                 decision: BrowserRiskDecision::RequireApproval,
                 policy_code: "FILE_DOWNLOAD_ACTION".to_string(),
                 reason: "File download requires operator confirmation to prevent untrusted payload retrieval.".to_string(),
-                user_explanation: "Approval required: the page requests to download a local file.".to_string(),
+                user_explanation: "Approval required: the agent requests to download an external file to disk.".to_string(),
+            };
+        }
+
+        if tool.contains("execute") || tool.contains("run_download") {
+            return BrowserRiskAssessment {
+                risk_level: BrowserRiskLevel::Blocked,
+                decision: BrowserRiskDecision::Block,
+                policy_code: "BLOCKED_BINARY_EXECUTION".to_string(),
+                reason: "Automatic execution of downloaded binaries is strictly blocked for security.".to_string(),
+                user_explanation: "Blocked: autonomous execution of downloaded files is prohibited.".to_string(),
             };
         }
 
