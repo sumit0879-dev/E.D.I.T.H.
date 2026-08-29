@@ -28,6 +28,10 @@ import type {
   BrowserRiskAssessment,
   BrowserRiskAuditEntry,
   PendingBrowserActionApproval,
+  BrowserTabWork,
+  BrowserOrchestrationTask,
+  BrowserSubtaskResult,
+  BrowserOrchestrationResult,
 } from '../types';
 
 export const isTauri = () => {
@@ -1252,5 +1256,52 @@ export async function browserResolveActionApproval(
     approvalId,
     decision,
   });
+}
+
+// --- Phase 5.4 Autonomous Multi-Tab Task Orchestration APIs ---
+export async function browserOrchestratorRunTask(
+  goal: string,
+  subtaskGoals?: string[],
+  globalMaxSteps?: number,
+  timeoutMs?: number
+): Promise<BrowserOrchestrationResult> {
+  if (!isTauri()) {
+    return {
+      orchestration_id: 'sim_orch_1',
+      status: 'COMPLETED',
+      goal,
+      subtask_results: [
+        {
+          work_id: 'work_1',
+          tab_id: 'tab_a',
+          status: 'COMPLETED',
+          summary: 'Simulated subtask 1 completed.',
+          evidence: ['Title: Simulated'],
+          steps_taken: 1,
+          duration_ms: 50,
+        },
+      ],
+      combined_summary: 'Master Goal completed in simulated environment.',
+      completed_count: 1,
+      failed_count: 0,
+      duration_ms: 100,
+    };
+  }
+  return await invoke<BrowserOrchestrationResult>('browser_orchestrator_run_task', {
+    goal,
+    subtaskGoals,
+    globalMaxSteps,
+    timeoutMs,
+  });
+}
+
+export async function browserOrchestratorCancelTask(orchestrationId: string): Promise<boolean> {
+  if (!isTauri()) return true;
+  return await invoke<boolean>('browser_orchestrator_cancel_task', { orchestrationId });
+}
+
+export async function browserOrchestratorGetCurrentTask(): Promise<BrowserOrchestrationTask | null> {
+  if (!isTauri()) return null;
+  return await invoke<BrowserOrchestrationTask | null>('browser_orchestrator_get_current_task');
 }
 

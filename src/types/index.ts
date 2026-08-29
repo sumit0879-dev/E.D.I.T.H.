@@ -373,3 +373,83 @@ export interface PendingBrowserActionApproval {
   created_at: number;
   status: string;
 }
+
+// --- Phase 5.4 Autonomous Multi-Tab Task Orchestration Types ---
+export type TabOwnership = 'USER' | 'AGENT_TEMPORARY' | 'AGENT_SHARED';
+
+export type OrchestrationStatus =
+  | 'PLANNING'
+  | 'RUNNING'
+  | 'WAITING_FOR_APPROVAL'
+  | 'WAITING_FOR_TABS'
+  | 'COMPLETED'
+  | 'PARTIALLY_COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED'
+  | 'TIMED_OUT';
+
+export type TabWorkStatus =
+  | 'QUEUED'
+  | 'RUNNING'
+  | 'WAITING'
+  | 'COMPLETED'
+  | 'FAILED'
+  | 'CANCELLED';
+
+export interface BrowserTabWork {
+  work_id: string;
+  orchestration_id: string;
+  tab_id: string;
+  ownership: TabOwnership;
+  objective: string;
+  status: TabWorkStatus;
+  step_count: number;
+  max_steps: number;
+  depends_on?: string;
+  last_observation?: string;
+  last_action?: string;
+  last_error?: string;
+  summary?: string;
+  evidence: string[];
+  started_at: number;
+  duration_ms: number;
+}
+
+export interface BrowserOrchestrationTask {
+  orchestration_id: string;
+  goal: string;
+  status: OrchestrationStatus;
+  started_at: number;
+  timeout_ms: number;
+  global_step_count: number;
+  global_max_steps: number;
+  max_concurrent_tabs: number;
+  subtasks: BrowserTabWork[];
+  completed_count: number;
+  failed_count: number;
+  final_summary?: string;
+  error?: string;
+}
+
+export interface BrowserSubtaskResult {
+  work_id: string;
+  tab_id: string;
+  status: TabWorkStatus;
+  summary: string;
+  evidence: string[];
+  steps_taken: number;
+  duration_ms: number;
+  error?: string;
+}
+
+export interface BrowserOrchestrationResult {
+  orchestration_id: string;
+  status: OrchestrationStatus;
+  goal: string;
+  subtask_results: BrowserSubtaskResult[];
+  combined_summary: string;
+  completed_count: number;
+  failed_count: number;
+  duration_ms: number;
+  error?: string;
+}

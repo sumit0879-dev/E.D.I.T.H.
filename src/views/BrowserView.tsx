@@ -40,8 +40,10 @@ import type {
   BrowserTaskResult,
   ElementInfo,
   BrowserRiskAuditEntry,
+  BrowserOrchestrationResult,
+  BrowserOrchestrationTask,
 } from '../types';
-import { Shield, AlertOctagon, FileCheck, CheckCircle } from 'lucide-react';
+import { Shield, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
@@ -84,6 +86,15 @@ export const BrowserView: React.FC = () => {
   const [showRiskPanel, setShowRiskPanel] = useState(false);
   const [riskAuditLogs, setRiskAuditLogs] = useState<BrowserRiskAuditEntry[]>([]);
   const [isFetchingLogs, setIsFetchingLogs] = useState(false);
+
+  // Phase 5.4 Multi-Tab Orchestration States
+  const [showOrchestratorPanel, setShowOrchestratorPanel] = useState(false);
+  const [orchGoal, setOrchGoal] = useState<string>('Compare documentation across 3 research tabs.');
+  const [orchSubgoals, setOrchSubgoals] = useState<string>('Observe https://en.wikipedia.org\nObserve https://www.rust-lang.org\nObserve https://v2.tauri.app');
+  const [isOrchRunning, setIsOrchRunning] = useState<boolean>(false);
+  const [currentOrchId, setCurrentOrchId] = useState<string | null>(null);
+  const [orchResult, setOrchResult] = useState<BrowserOrchestrationResult | null>(null);
+  const [orchLiveStatus, setOrchLiveStatus] = useState<any>(null);
 
   const fetchRiskAuditLogs = useCallback(async () => {
     setIsFetchingLogs(true);
@@ -484,6 +495,38 @@ export const BrowserView: React.FC = () => {
     setShowAgentPanel(true);
   };
 
+  const handleRunOrchestration = async () => {
+    if (!orchGoal.trim()) return;
+    setIsOrchRunning(true);
+    setOrchResult(null);
+    try {
+      const subGoalsList = orchSubgoals
+        .split('\n')
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      const res = await browserController.runMultiTabOrchestration(orchGoal, subGoalsList);
+      setOrchResult(res);
+      setCurrentOrchId(res.orchestration_id);
+    } catch (e: any) {
+      console.error('Orchestration failed', e);
+    } finally {
+      setIsOrchRunning(false);
+    }
+  };
+
+  const handleCancelOrchestration = async () => {
+    if (currentOrchId) {
+      await browserController.cancelOrchestration(currentOrchId);
+    }
+    setIsOrchRunning(false);
+  };
+
+  const setPresetOrch = (goal: string, subgoals: string[]) => {
+    setOrchGoal(goal);
+    setOrchSubgoals(subgoals.join('\n'));
+    setShowOrchestratorPanel(true);
+  };
+
   return (
     <div className="flex flex-col h-full w-full bg-[#000000] text-slate-100 select-none overflow-hidden font-sans">
       {/* Tactical Multi-Tab Strip */}
@@ -614,6 +657,19 @@ export const BrowserView: React.FC = () => {
           </button>
 
           <button
+            onClick={() => setShowOrchestratorPanel(!showOrchestratorPanel)}
+            className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
+              showOrchestratorPanel
+                ? 'bg-indigo-600/30 border-indigo-400 text-indigo-200 shadow-indigo-glow-xs'
+                : 'bg-[#090e1a] border-white/[0.08] text-slate-300 hover:text-indigo-300'
+            }`}
+            title="Toggle Phase 5.4 Multi-Tab Task Orchestration Engine"
+          >
+            <Network className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden sm:inline">Orchestrator (5.4)</span>
+          </button>
+
+          <button
             onClick={() => setShowActionPanel(!showActionPanel)}
             className={`flex items-center gap-1.5 px-2.5 py-1 rounded-xl text-[11px] font-mono transition border ${
               showActionPanel
@@ -726,6 +782,107 @@ export const BrowserView: React.FC = () => {
                   </div>
                 </div>
               ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Phase 5.4 Autonomous Multi-Tab Task Orchestration Drawer */}
+      {showOrchestratorPanel && (
+        <div className="bg-[#050616] border-b border-indigo-500/30 p-3 text-xs text-indigo-200 flex flex-col gap-2.5 shrink-0 z-10 font-mono animate-fadeIn">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2 font-bold text-indigo-300">
+              <Network className="w-4 h-4 text-indigo-400" />
+              Phase 5.4 Autonomous Multi-Tab Task Orchestrator
+            </div>
+            <button
+              onClick={() => setShowOrchestratorPanel(false)}
+              className="text-slate-400 hover:text-white text-xs px-2 py-0.5 rounded bg-white/10"
+            >
+              Close
+            </button>
+          </div>
+
+          {/* Master Goal & Subtask Breakdown */}
+          <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={orchGoal}
+                onChange={(e) => setOrchGoal(e.target.value)}
+                placeholder="Enter master multi-tab objective (e.g. Compare documentation across 3 sites)..."
+                disabled={isOrchRunning}
+                className="bg-[#0e1026] border border-indigo-500/30 focus:border-indigo-400 rounded-lg px-3 py-1.5 text-xs text-slate-100 flex-1 focus:outline-none"
+              />
+              {isOrchRunning ? (
+                <button
+                  onClick={handleCancelOrchestration}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-white font-bold text-[11px] transition shadow-md"
+                >
+                  <Square className="w-3.5 h-3.5" />
+                  Cancel Orchestration
+                </button>
+              ) : (
+                <button
+                  onClick={handleRunOrchestration}
+                  disabled={!orchGoal.trim()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white font-bold text-[11px] transition shadow-md disabled:opacity-50"
+                >
+                  <Play className="w-3.5 h-3.5" />
+                  Run Multi-Tab Task
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-col gap-1 text-[11px]">
+              <span className="text-slate-400">Subtask Objectives (One per line/tab):</span>
+              <textarea
+                value={orchSubgoals}
+                onChange={(e) => setOrchSubgoals(e.target.value)}
+                disabled={isOrchRunning}
+                rows={3}
+                placeholder="Observe https://en.wikipedia.org&#10;Observe https://www.rust-lang.org&#10;Observe https://v2.tauri.app"
+                className="bg-[#0e1026] border border-indigo-500/30 focus:border-indigo-400 rounded-lg p-2 text-[11px] text-slate-100 focus:outline-none resize-none font-mono"
+              />
+            </div>
+          </div>
+
+          {/* Presets */}
+          <div className="flex flex-wrap items-center gap-1 text-[10px]">
+            <span className="text-slate-400">Presets:</span>
+            <button
+              onClick={() => setPresetOrch(
+                'Compare tech stack overviews across 3 research tabs.',
+                ['Observe https://en.wikipedia.org', 'Observe https://www.rust-lang.org', 'Observe https://v2.tauri.app']
+              )}
+              className="px-2 py-0.5 rounded bg-indigo-950/60 border border-indigo-500/20 text-indigo-300 hover:border-indigo-400"
+            >
+              Scenario A: 3-Tab Research
+            </button>
+            <button
+              onClick={() => setPresetOrch(
+                'Gather package information across Tab A and Tab B.',
+                ['Observe https://crates.io', 'Observe https://npmjs.com']
+              )}
+              className="px-2 py-0.5 rounded bg-indigo-950/60 border border-indigo-500/20 text-indigo-300 hover:border-indigo-400"
+            >
+              Scenario B: 2-Tab Package Search
+            </button>
+          </div>
+
+          {/* Orchestration Results Display */}
+          {orchResult && (
+            <div className="p-2.5 rounded-lg bg-[#0e1026] border border-indigo-500/30 flex flex-col gap-1.5 text-[11px]">
+              <div className="flex items-center justify-between font-bold">
+                <span className="flex items-center gap-1.5 text-indigo-300">
+                  <CheckCircle className="w-3.5 h-3.5 text-emerald-400" />
+                  Orchestration Outcome: {orchResult.status} ({orchResult.completed_count} completed, {orchResult.failed_count} failed)
+                </span>
+                <span className="text-slate-400 text-[10px]">{orchResult.duration_ms}ms</span>
+              </div>
+              <pre className="text-[10px] text-slate-300 whitespace-pre-wrap bg-black/40 p-2 rounded border border-white/5 max-h-32 overflow-y-auto">
+                {orchResult.combined_summary}
+              </pre>
             </div>
           )}
         </div>

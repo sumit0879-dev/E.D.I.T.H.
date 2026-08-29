@@ -15,6 +15,10 @@ import type {
   BrowserRiskAssessment,
   BrowserRiskAuditEntry,
   PendingBrowserActionApproval,
+  BrowserTabWork,
+  BrowserOrchestrationTask,
+  BrowserSubtaskResult,
+  BrowserOrchestrationResult,
 } from '../types';
 
 /**
@@ -416,6 +420,29 @@ class BrowserController {
     decision: string
   ): Promise<PendingBrowserActionApproval> {
     return await tauriService.browserResolveActionApproval(approvalId, decision);
+  }
+
+  // --- Phase 5.4 Autonomous Multi-Tab Task Orchestration APIs ---
+  public async runMultiTabOrchestration(
+    goal: string,
+    subtaskGoals?: string[],
+    globalMaxSteps?: number,
+    timeoutMs?: number
+  ): Promise<BrowserOrchestrationResult> {
+    return await tauriService.browserOrchestratorRunTask(
+      goal,
+      subtaskGoals,
+      globalMaxSteps,
+      timeoutMs
+    );
+  }
+
+  public async cancelOrchestration(orchestrationId: string): Promise<boolean> {
+    return await tauriService.browserOrchestratorCancelTask(orchestrationId);
+  }
+
+  public async getCurrentOrchestration(): Promise<BrowserOrchestrationTask | null> {
+    return await tauriService.browserOrchestratorGetCurrentTask();
   }
 }
 
