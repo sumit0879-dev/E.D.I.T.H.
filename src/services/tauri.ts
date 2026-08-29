@@ -20,6 +20,8 @@ import type {
   ScreenshotResult,
   ElementInfo,
   BrowserActionResult,
+  BrowserToolDefinition,
+  BrowserToolExecutionResult,
 } from '../types';
 
 export const isTauri = () => {
@@ -1109,4 +1111,28 @@ export async function browserGetVisibleText(): Promise<string> {
   return await invoke<string>('browser_get_visible_text');
 }
 
+// --- Phase 4B AI Browser Tool Integration APIs ---
+export async function browserGetToolDefinitions(): Promise<BrowserToolDefinition[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  return await invoke<BrowserToolDefinition[]>('browser_get_tool_definitions_cmd');
+}
 
+export async function browserExecuteTool(
+  toolName: string,
+  argumentsObj: Record<string, any>
+): Promise<BrowserToolExecutionResult> {
+  if (!isTauri()) {
+    return {
+      success: true,
+      tool_name: toolName,
+      data: { simulated: true },
+      duration_ms: 1,
+    };
+  }
+  return await invoke<BrowserToolExecutionResult>('browser_execute_tool_cmd', {
+    toolName,
+    arguments: argumentsObj,
+  });
+}

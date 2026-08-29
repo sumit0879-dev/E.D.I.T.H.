@@ -7,6 +7,8 @@ import type {
   PageObservationSnapshot,
   ScreenshotResult,
   BrowserActionResult,
+  BrowserToolDefinition,
+  BrowserToolExecutionResult,
 } from '../types';
 
 /**
@@ -72,6 +74,16 @@ class BrowserController {
 
   public getActiveTab(): BrowserTabInfo | undefined {
     return this.tabs.find((t) => t.id === this.activeTabId);
+  }
+
+  public async refreshMultiState(): Promise<BrowserMultiStateInfo> {
+    const multi = await tauriService.browserGetMultiState();
+    this.tabs = multi.tabs;
+    this.activeTabId = multi.active_tab_id;
+    this.isVisible = multi.is_visible;
+    if (multi.bounds) this.currentBounds = multi.bounds;
+    this.notify();
+    return multi;
   }
 
   public async createTab(
@@ -303,6 +315,22 @@ class BrowserController {
   public async getTabVisibleText(tabId: string): Promise<string> {
     const obs = await this.observeTab(tabId);
     return obs.visible_text;
+  }
+
+  // --- Phase 4B AI Browser Tool Integration APIs ---
+  public async getToolDefinitions(): Promise<BrowserToolDefinition[]> {
+    return await tauriService.browserGetToolDefinitions();
+  }
+
+  public async executeTool(
+    toolName: string,
+    argumentsObj: Record<string, any>
+  ): Promise<BrowserToolExecutionResult> {
+    const res = await tauriService.browserExecuteTool(toolName, argumentsObj);
+    if (res.success) {
+      await this.refreshMultiState();
+    }
+    return res;
   }
 
   // --- Legacy Phase 1 Delegate Methods ---

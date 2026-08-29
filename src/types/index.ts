@@ -207,5 +207,20 @@ export type ViewTab =
   | 'plugins' 
   | 'settings';
 
+export interface BrowserToolDefinition {
+  name: string;
+  description: string;
+  category: 'observation' | 'navigation' | 'interaction';
+  risk_level: 'OBSERVE' | 'LOW_RISK_ACTION' | 'BLOCKED_FOR_AI';
+  parameters: Record<string, any>;
+}
 
-
+export interface BrowserToolExecutionResult {
+  success: boolean;
+  tool_name: string;
+  tab_id?: string;
+  data?: any;
+  error?: string;
+  error_code?: string;
+  duration_ms: number;
+}

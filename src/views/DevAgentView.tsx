@@ -27,6 +27,8 @@ interface AgentMessage {
 
 const quickAgentPrompts = [
   { label: 'Analyze Architecture', prompt: 'Analyze the architecture, dependencies, and entrypoints of this project.' },
+  { label: 'Browser: Observe Tab', prompt: 'Use the browser tool to observe tab_a and summarize its content and interactive elements.' },
+  { label: 'Browser: Open URL', prompt: 'Use the browser tool to open https://example.com in tab_a.' },
   { label: 'Find Bugs & Issues', prompt: 'Audit the codebase for missing error handlers, memory leaks, or unhandled exceptions.' },
   { label: 'Performance Review', prompt: 'Review performance bottlenecks and recommend async / caching optimizations.' },
   { label: 'Generate Docs', prompt: 'Generate a clean technical architecture guide for this project.' },

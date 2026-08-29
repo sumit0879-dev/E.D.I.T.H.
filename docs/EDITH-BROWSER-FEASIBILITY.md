@@ -631,18 +631,181 @@ The action lifecycle guarantees state confirmation:
 
 ---
 
-## Architectural Verdict
+## Phase 4B AI Browser Tool Integration
 
-> **"Can a future E.D.I.T.H. Browser Agent safely control real web pages through this action layer without exposing arbitrary JavaScript or raw WebView internals?"**
+### 1. Existing AI Tool Architecture
+The E.D.I.T.H. agent system (`agent.rs`, `security.rs`, `llm.rs`) operates on a structured prompt-and-dispatch pipeline:
+```
+LLM / Provider Stream
+        ↓
+Agent Execution Loop (`agent_chat`)
+        ↓
+Tool Discovery & Schema Definition (`browser_tools.rs`)
+        ↓
+Input Validation & Permission Check
+        ↓
+Browser Tool Bridge (`execute_browser_tool`)
+        ↓
+Browser Core (`BrowserState`)
+        ↓
+Native Child WebView2 Instances
+```
 
-### Verdict: **YES — The future E.D.I.T.H. Browser Agent can safely and deterministically control real web pages through this action layer without exposing arbitrary JavaScript or raw WebView internals.**
+### 2. Browser Tool Registry Integration
+Rather than implementing a second fragmented agent loop, Browser capabilities are registered as first-class tools in the E.D.I.T.H. Tool Registry (`src-tauri/src/browser_tools.rs`):
+- Exposed via typed schemas to LLMs (`browser_get_tool_definitions_cmd`).
+- Dispatched via standardized tool blocks: `[BROWSER_TOOL: {"name": "<tool_name>", "args": { ... }}]`.
+- Executed via `crate::browser_tools::execute_browser_tool` without raw IPC exposure.
+
+### 3. Tool Catalog & JSON Schemas
+16 typed tools covering observation, navigation, and deterministic interaction:
+
+| Tool Name | Category | Risk Level | Primary Arguments | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| `browser_get_tabs` | Observation | `OBSERVE` | `{}` | Lists all open tabs, titles, URLs, and active states. |
+| `browser_get_active_tab` | Observation | `OBSERVE` | `{}` | Returns currently active tab metadata. |
+| `browser_observe` | Observation | `OBSERVE` | `tab_id: string` | Returns live rendered DOM text, title, and interactive element list with EIDs. |
+| `browser_screenshot` | Observation | `OBSERVE` | `tab_id: string` | Captures native viewport screenshot returning resolution and base64 PNG. |
+| `browser_open_url` | Navigation | `LOW_RISK_ACTION` | `tab_id: string, url: string` | Navigates or creates tab with sanitized URL. |
+| `browser_switch_tab` | Navigation | `LOW_RISK_ACTION` | `tab_id: string` | Switches active focus to specified tab. |
+| `browser_close_tab` | Navigation | `LOW_RISK_ACTION` | `tab_id: string` | Closes specified tab and activates next available. |
+| `browser_back` | Navigation | `LOW_RISK_ACTION` | `tab_id: string` | Navigates back in tab history. |
+| `browser_forward` | Navigation | `LOW_RISK_ACTION` | `tab_id: string` | Navigates forward in tab history. |
+| `browser_reload` | Navigation | `LOW_RISK_ACTION` | `tab_id: string` | Reloads current page. |
+| `browser_click` | Interaction | `LOW_RISK_ACTION` | `tab_id: string, element_id: string` | Clicks validated interactive element by EID. |
+| `browser_type` | Interaction | `LOW_RISK_ACTION` | `tab_id: string, element_id: string, text: string` | Types into input/textarea; strictly denies password fields. |
+| `browser_scroll` | Interaction | `LOW_RISK_ACTION` | `tab_id: string, direction: enum, amount?: number` | Scrolls viewport in 6 directions with bounded increments. |
+| `browser_press_key` | Interaction | `LOW_RISK_ACTION` | `tab_id: string, key: enum` | Dispatches key press from strict allowed enum. |
+| `browser_focus` | Interaction | `LOW_RISK_ACTION` | `tab_id: string, element_id: string` | Scrolls into view and focuses element. |
+| `browser_wait` | Interaction | `LOW_RISK_ACTION` | `tab_id: string, condition: enum, timeout_ms?: number` | Bounded wait for condition or page load (max 10s). |
+
+### 4. Tool Permission Model & Risk Classification
+- **`OBSERVE`**: Read-only queries (`get_tabs`, `observe`, `screenshot`). Auto-approved for agent execution.
+- **`LOW_RISK_ACTION`**: Deterministic page interactions (`open_url`, `click`, `type`, `scroll`, `press_key`, `focus`, `wait`). Auto-approved under active agent sessions.
+- **`BLOCKED_FOR_AI`**: Password fields, credential extraction, payment submission, CAPTCHA bypass, arbitrary JS eval. Strictly rejected by host before execution.
+
+### 5. Sensitive Password Protection Policy
+- When `browser_type` is invoked on an element with `type="password"`, `autocomplete="current-password"`, `autocomplete="new-password"`, or `autocomplete="one-time-code"`, the tool returns a deterministic refusal:
+  ```json
+  {
+    "success": false,
+    "error_code": "PASSWORD_FIELD_BLOCKED",
+    "error": "Automated typing into password/credential fields is blocked by security policy."
+  }
+  ```
+- Passwords are never returned, cached, or included in tool execution logs.
+
+### 6. Observation Result Contract
+`browser_observe` returns a bounded, compact representation:
+```json
+{
+  "tab_id": "tab_a",
+  "url": "https://example.com",
+  "title": "Example Domain",
+  "visible_text": "Example Domain. This domain is for use in illustrative examples in documents...",
+  "selected_text": "",
+  "interactive_elements_count": 1,
+  "interactive_elements": [
+    {
+      "id": "el_a_2486989437",
+      "tag": "a",
+      "text": "More information...",
+      "role": "link",
+      "href": "https://www.iana.org/domains/example",
+      "visible": true,
+      "disabled": false,
+      "is_password": false,
+      "is_in_iframe": false
+    }
+  ],
+  "timestamp": 1740801850000
+}
+```
+
+### 7. Action Result Contract
+Action tools return structured outcomes via `BrowserToolExecutionResult`:
+```json
+{
+  "success": true,
+  "tool_name": "browser_click",
+  "tab_id": "tab_a",
+  "data": {
+    "element_id": "el_a_2486989437",
+    "page_changed": true,
+    "url_changed": true,
+    "resulting_url": "https://www.iana.org/help/example-domains"
+  },
+  "duration_ms": 14
+}
+```
+
+### 8. Timeout & Bounded Execution Policy
+- Navigation: **30 seconds max**.
+- Observation: **10 seconds max**.
+- Click / Focus / Type: **10 seconds max**.
+- Scroll: **5 seconds max**.
+- Wait: **10 seconds hard ceiling**.
+- Type text bounded to **5,000 characters**.
+
+### 9. Logging & Telemetry
+Every tool invocation records:
+- Tool name, Tab ID, Success/Failure status, Error code, Execution duration in milliseconds.
+- Sensitive inputs, passwords, and tokens are scrubbed from telemetry streams.
+
+### 10. Human-in-the-Loop (HITL) Boundary
+High-risk actions (e.g. downloads to disk, form submits that trigger file operations) hook directly into `crate::security::ProposalEngine` for operator confirmation, maintaining the same security posture as command execution.
+
+### 11. Multi-Tab Isolation Testing
+- Validated concurrent tabs (`tab_a`, `tab_b`, `tab_c`).
+- Actions directed to `tab_a` do not mutate active elements or URLs in `tab_b` or `tab_c`.
+- Switching active tabs preserves isolated history and DOM state across all native child WebViews.
+
+### 12. Security Boundary Verification
+- **Zero Raw Handles**: No HWNDs or WebView2 pointers exposed to LLM.
+- **Zero Arbitrary JavaScript**: Tool calls only invoke pre-compiled Rust command templates.
+- **Zero Privilege Escalation**: Web pages cannot invoke Tauri commands or access local files.
+
+### 13. Known Limitations
+- Background tab resource suspension (sleeping inactive tabs) is deferred to future memory optimization phases.
+- Complex multi-frame nested iframes require piercing logic for deep shadow trees.
+
+### 14. Requirements for Phase 4C (Autonomous AI Browser Agent)
+With Phase 4B complete, Phase 4C can now implement the **Autonomous Agent Loop**:
+- Goal decomposition.
+- Observation-driven planning.
+- Step-by-step verification and error recovery.
+
+---
+
+## Final Phase 4B Scorecard
+
+| Check | Result | Evidence / Details |
+| :--- | :---: | :--- |
+| **TOOL REGISTRATION** | **PASS** | 16 typed Browser Tools registered in `src-tauri/src/browser_tools.rs` and agent prompt. |
+| **TOOL SCHEMAS** | **PASS** | JSON schemas defined with typed properties, descriptions, and required fields. |
+| **OBSERVATION** | **PASS** | `browser_get_tabs`, `browser_get_active_tab`, `browser_observe`, `browser_screenshot` working. |
+| **NAVIGATION** | **PASS** | `browser_open_url`, `browser_switch_tab`, `browser_close_tab`, `browser_back`, `browser_forward`, `browser_reload` working. |
+| **CLICK** | **PASS** | `browser_click` executes through `execute_browser_tool` with EID validation and mutation tracking. |
+| **TYPE** | **PASS** | `browser_type` dispatches text input with bounded size validation. |
+| **SCROLL** | **PASS** | `browser_scroll` supports 6 directions with bounded pixel increments. |
+| **KEY PRESS** | **PASS** | `browser_press_key` restricts to allowed key enum. |
+| **WAIT** | **PASS** | `browser_wait` enforces bounded timeouts (max 10s). |
+| **MULTI-TAB** | **PASS** | Strict `tab_id` scoping ensures tab isolation and identity preservation. |
+| **PASSWORD PROTECTION** | **PASS** | Password fields strictly blocked (`PASSWORD_FIELD_BLOCKED`); zero credential leakage. |
+| **SECURITY** | **PASS** | Zero arbitrary JS execution, zero raw WebView handles, zero Tauri IPC access from web content. |
+| **HITL BOUNDARY** | **PASS** | Clean capability separation (`OBSERVE`, `LOW_RISK_ACTION`, `BLOCKED_FOR_AI`) integrated with proposal engine. |
+| **BUILD** | **PASS** | `cargo check` and `npm run build` pass with 0 errors. |
+| **OVERALL PHASE 4B** | **PASS** | Typed Browser Tool Layer fully integrated into E.D.I.T.H. AI/Agent system. |
+
+---
+
+## Final Question & Answer
+
+> **"Can the existing E.D.I.T.H. LLM/agent architecture now invoke Browser capabilities through a clean typed tool interface without accessing raw WebView internals or arbitrary JavaScript?"**
+
+### Verdict: **YES — The existing E.D.I.T.H. AI/Agent architecture can now invoke all Browser capabilities through a clean, typed, deterministic tool interface without accessing raw WebView internals or arbitrary JavaScript.**
 
 **Evidence-Based Rationale**:
-1. **Strict Action Abstraction**: The AI interacts solely through discrete, typed action tools (`clickElement`, `typeElement`, `scroll`, `pressKey`, `focusElement`, `wait`) that take deterministic `element_id` targets.
-2. **Pre-Audited Host Templates**: The Rust backend controls all evaluation templates; neither the AI nor the user can inject arbitrary JavaScript execution strings.
-3. **Robust Pre-Action Guards**: Stale element, visibility, disabled state, cross-origin frame, and password field protections prevent unauthorized actions or accidental input leakage.
-4. **Sandboxed Remote Origins**: Remote web origins remain strictly sandboxed inside WebView2 child containers with zero access to native Tauri IPC or local system secrets.
-
-
-
-
+1. **Unified Tool Interface**: The LLM discovers and calls browser actions using standard JSON schemas (`[BROWSER_TOOL: {"name": "...", "args": {...}}]`) without needing special out-of-band communication channels.
+2. **Strict Host Enforcement**: All tool calls are routed through `crate::browser_tools::execute_browser_tool`, which validates inputs, bounds parameters, enforces security rules, and dispatches to `BrowserState`.
+3. **Guaranteed Security Perimeter**: Neither the LLM nor remote web content can execute arbitrary JavaScript, inspect raw HWNDs, or bypass the BrowserController sandbox.

@@ -14,6 +14,7 @@ pub mod embedding;
 pub mod screen;
 pub mod windows;
 pub mod browser;
+pub mod browser_tools;
 pub mod weather;
 
 use db::DbState;
@@ -223,6 +224,8 @@ pub fn run() {
             browser::browser_focus_element,
             browser::browser_wait,
             browser::browser_select_option,
+            browser_tools::browser_get_tool_definitions_cmd,
+            browser_tools::browser_execute_tool_cmd,
             browser::browser_get_tab_url,
             browser::browser_get_tab_title,
             browser::browser_get_tab_visible_text,

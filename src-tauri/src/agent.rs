@@ -46,7 +46,8 @@ pub async fn agent_chat(
     message: String, 
     session_id: Option<String>,
     state: State<'_, AgentState>,
-    db_state: State<'_, DbState>
+    db_state: State<'_, DbState>,
+    browser_state: State<'_, crate::browser::BrowserState>,
 ) -> Result<String, String> {
     let project_path = state.path.lock().unwrap().clone();
     
@@ -75,7 +76,7 @@ pub async fn agent_chat(
     
     let mut sys_content = custom_instr;
     if sys_content.is_empty() {
-        sys_content = "You are an expert developer agent.".to_string();
+        sys_content = "You are an expert developer and desktop automation agent.".to_string();
     }
     
     sys_content.push_str(&format!("
@@ -98,7 +99,22 @@ User Information:
 You have the following tools available. To use them, output the EXACT text format:
 1. Run a terminal command: [RUN_CMD: <command>]
 2. Read a file: [READ_FILE: <absolute_path>]
-You can only use one tool at a time. Do not write anything after the tool block. Wait for the user to provide the result.");
+3. Use Browser: [BROWSER_TOOL: {\"name\": \"<tool_name>\", \"args\": { ... }}]
+Available browser tools:
+- browser_get_tabs: {}
+- browser_get_active_tab: {}
+- browser_observe: {\"tab_id\": \"tab_a\"}
+- browser_screenshot: {\"tab_id\": \"tab_a\"}
+- browser_open_url: {\"tab_id\": \"tab_a\", \"url\": \"https://example.com\"}
+- browser_switch_tab: {\"tab_id\": \"tab_a\"}
+- browser_close_tab: {\"tab_id\": \"tab_a\"}
+- browser_click: {\"tab_id\": \"tab_a\", \"element_id\": \"id_submit\"}
+- browser_type: {\"tab_id\": \"tab_a\", \"element_id\": \"id_search\", \"text\": \"hello\"}
+- browser_scroll: {\"tab_id\": \"tab_a\", \"direction\": \"down\"}
+- browser_press_key: {\"tab_id\": \"tab_a\", \"key\": \"Enter\"}
+- browser_focus: {\"tab_id\": \"tab_a\", \"element_id\": \"id_search\"}
+- browser_wait: {\"tab_id\": \"tab_a\", \"condition\": \"timeout\", \"timeout_ms\": 2000}
+You can only use one tool at a time. Do not write anything after the tool block. Wait for the user or system to provide the result.");
     
     let system_prompt = sys_content;
     
@@ -257,6 +273,44 @@ You can only use one tool at a time. Do not write anything after the tool block.
 
                     messages.push(ChatMessage { role: "user".to_string(), content: format!("File Content:\n{}", res_str) });
                     continue;
+                }
+            }
+        }
+        
+        if ai_reply.contains("[BROWSER_TOOL:") {
+            if let Some(start) = ai_reply.find("[BROWSER_TOOL:") {
+                if let Some(end) = ai_reply[start..].find("]") {
+                    let raw_json = ai_reply[start + 14 .. start + end].trim();
+                    let parsed_res: Result<serde_json::Value, _> = serde_json::from_str(raw_json);
+                    
+                    match parsed_res {
+                        Ok(parsed) => {
+                            let tool_name = parsed.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+                            let empty_args = serde_json::json!({});
+                            let args = parsed.get("args").unwrap_or(&empty_args);
+
+                            let _ = app.emit("chat-chunk", format!("\n\n> 🌐 **Executing Browser Tool**: `{}`\n\n", tool_name));
+
+                            match crate::browser_tools::execute_browser_tool(app.clone(), tool_name, args, browser_state.clone()).await {
+                                Ok(res) => {
+                                    let res_str = serde_json::to_string_pretty(&res).unwrap_or_default();
+                                    let _ = app.emit("chat-chunk", format!("> 📋 Result ({}ms):\n```json\n{}\n```\n\n", res.duration_ms, res_str.chars().take(800).collect::<String>()));
+                                    messages.push(ChatMessage { role: "user".to_string(), content: format!("Browser Tool Result:\n{}", res_str) });
+                                    continue;
+                                }
+                                Err(e) => {
+                                    let _ = app.emit("chat-chunk", format!("> ❌ Tool Error: {}\n\n", e));
+                                    messages.push(ChatMessage { role: "user".to_string(), content: format!("Browser Tool Error: {}", e) });
+                                    continue;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = app.emit("chat-chunk", format!("> ❌ Malformed Tool Request: {}\n\n", e));
+                            messages.push(ChatMessage { role: "user".to_string(), content: format!("Malformed Tool Request: {}", e) });
+                            continue;
+                        }
+                    }
                 }
             }
         }
