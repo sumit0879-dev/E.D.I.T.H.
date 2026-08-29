@@ -957,10 +957,6 @@ pub struct BrowserTaskResult {
 
 ---
 
-## Final Question & Answer
-
-> **"Can E.D.I.T.H. now receive a bounded browser goal and independently observe, act, verify, recover, and terminate safely using the existing Browser Tool architecture?"**
-
 ### Verdict: **YES — E.D.I.T.H. can now receive a bounded natural-language browser goal and independently observe, act, verify, recover from stale elements, and terminate safely using the existing Browser Tool architecture.**
 
 **Evidence-Based Rationale**:
@@ -968,4 +964,138 @@ pub struct BrowserTaskResult {
 2. **Safe Bounded Guardrails**: Execution is bounded by strict step limits (<= 20 steps), wall-clock timeouts (<= 120s), and repetition detection that terminates repetitive failure loops.
 3. **Robust State & Recovery**: Stale element errors trigger fresh DOM observations rather than blind failures, and multi-tab isolation guarantees zero cross-tab state pollution.
 4. **Intact Security Sandbox**: The agent executes purely through pre-audited host tool templates with zero arbitrary JavaScript eval, zero access to raw OS handles, and strict password field denial (`PASSWORD_FIELD_BLOCKED`).
+
+---
+
+## Phase 5.1 Agent Reliability & Control Hardening
+
+### 1. Existing Agent-Loop Audit
+Audited the end-to-end execution path across `browser_agent.rs`, `browser_tools.rs`, `browser.rs`, and `security.rs`:
+- Identified risks in loose regex/slice-based tool parsing, unverified completion claims, missing cancellation cleanup, unbounded task overlap, and repetitive failure loops.
+- All risks have been eliminated through host-enforced validation and verification policies.
+
+### 2. Robust Tool Parser Design
+Replaced fragile delimiter parsing with a **bracket-aware, string-escape safe JSON parser**:
+- Scans matching `{` and `}` taking quotes and escape sequences into account.
+- Rejects malformed JSON with `TOOL_SYNTAX_ERROR` without crashing.
+- Prevents premature termination from nested `]` characters.
+- Strictly accepts exactly one tool call per LLM turn.
+
+### 3. Central Pre-Execution Tool Validation
+Before any tool touches Browser Core:
+1. Validates `tool_name` against registered tool catalog in `browser_tools.rs`.
+2. Validates required parameter keys and types.
+3. Validates bounded values: `direction` (in allowed set), `key` (in allowed enum), `text` (<= 5,000 chars), `timeout_ms` (bounded by remaining wall-clock task time).
+4. Verifies risk classification: rejects `BLOCKED_FOR_AI` actions immediately.
+
+### 4. False Success Protection & Completion Evidence
+Implemented a host-side **Evidence Verification Engine**:
+- Tracks `TaskEvidence` containing visited URLs, observed titles, and successful actions count.
+- When LLM emits `[TASK_COMPLETE: ...]`, host checks:
+  1. Were any browser actions or observations actually performed?
+  2. If the goal specified a target domain (e.g. `example.com`, `wikipedia.org`), was that domain actually visited and observed?
+- If evidence is lacking, the completion claim is **REJECTED** with `COMPLETION_CLAIM_REJECTED` and the agent is forced back to `Running` to perform real observation.
+
+### 5. Error Taxonomy & Normalized Categories
+- `TAB_ERROR`: Missing or invalid tab ID.
+- `NAVIGATION_ERROR`: Malformed URL, network failure, or timeout.
+- `ELEMENT_ERROR`: `STALE_ELEMENT`, `ELEMENT_NOT_FOUND`, `ELEMENT_NOT_VISIBLE`.
+- `FRAME_ERROR`: `UNSUPPORTED_CROSS_ORIGIN_FRAME`.
+- `SECURITY_BLOCK`: `PASSWORD_FIELD_BLOCKED`, `BLOCKED_FOR_AI`.
+- `TIMEOUT`: Wall-clock task timeout or tool timeout.
+- `CANCELLED`: User cooperative cancellation.
+- `TOOL_VALIDATION_ERROR`: Malformed syntax or missing arguments.
+- `LLM_ERROR`: Provider HTTP failure, rate limit, or invalid key.
+
+### 6. Deterministic Failure & Recovery Policy
+- **Retryable Errors**: Stale elements or hidden elements trigger an automatic fresh `browser_observe` pass and re-targeting (budget: max 2 retries per action).
+- **Terminal Errors**: `PASSWORD_FIELD_BLOCKED`, provider failures, or exceeding max steps immediately terminate with deterministic status.
+
+### 7. Repetition Protection
+- Hashes `(tool_name, tab_id, args)`.
+- If 2+ consecutive identical calls occur without state changes, the engine terminates with `REPETITION_DETECTED_TERMINATION`, preventing infinite loops.
+
+### 8. Cancellation Cleanup & Resource Management
+- `cancellation_flags` map is automatically cleaned up on task termination (`Completed`, `Failed`, `Cancelled`, `TimedOut`), preventing memory leaks.
+- Cooperative cancellation (`AtomicBool`) is checked before LLM calls and tool executions.
+
+### 9. Single Active Task Policy
+- Enforces strictly **one** running autonomous browser task at a time.
+- Attempting to start a concurrent task returns `TASK_ALREADY_RUNNING` immediately.
+
+### 10. Hard Wall-Clock Timeout
+- Fixed 120-second ceiling across the entire task duration (including LLM reasoning, network latency, tool execution, and recovery).
+
+### 11. Context Safety & Truncation
+- Dynamic context truncation keeps system prompt, initial goal, and the latest 10 turns, preventing context window explosion on long multi-step tasks.
+
+### 12. Deterministic State Machine Transitions
+```
+Planning → Running → [Completed | Failed | Cancelled | TimedOut]
+```
+Terminal states are strictly immutable; once terminal, no further actions can execute.
+
+### 13. Comprehensive Verification Matrix (Scenarios A through P)
+- **Scenario A (Simple Goal)**: `PASS` — Navigates, observes, extracts title.
+- **Scenario B (Navigation Goal)**: `PASS` — Navigates to example.com, verifies URL change.
+- **Scenario C (Click Interaction)**: `PASS` — Clicks link, verifies destination URL.
+- **Scenario D (Text Input)**: `PASS` — Enters text into normal input field, verifies characters typed.
+- **Scenario E (Password Rejection)**: `PASS` — Denies password input with `PASSWORD_FIELD_BLOCKED`.
+- **Scenario F (Stale Element Recovery)**: `PASS` — Re-observes DOM upon stale element and successfully re-targets.
+- **Scenario G (Repetition Termination)**: `PASS` — Breaks execution upon 2 identical failed calls.
+- **Scenario H (Malformed Tool JSON)**: `PASS` — Rejects malformed JSON with `TOOL_SYNTAX_ERROR`.
+- **Scenario I (Unknown Tool)**: `PASS` — Rejects unknown tool name with `UNKNOWN_TOOL`.
+- **Scenario J (Missing Argument)**: `PASS` — Rejects missing required parameters with `MISSING_ARGUMENT`.
+- **Scenario K (LLM Provider Error)**: `PASS` — Emits clean `Failed` state on provider failure.
+- **Scenario L (User Cancellation)**: `PASS` — Stops immediately on cancel flag without orphan actions.
+- **Scenario M (Task Timeout)**: `PASS` — Enforces hard 120s wall-clock ceiling.
+- **Scenario N (False Completion Claim)**: `PASS` — Rejects `[TASK_COMPLETE: ...]` when evidence is missing.
+- **Scenario O (Concurrent Task Request)**: `PASS` — Rejects second task with `TASK_ALREADY_RUNNING`.
+- **Scenario P (Multi-Tab Scoping)**: `PASS` — Preserves independent state across `tab_a`, `tab_b`, `tab_c`.
+
+### 14. Remaining Reliability Risks
+- Extremely dynamic single-page apps with constant full-screen re-renders require observation diffing (addressed in Phase 5.2).
+
+### 15. Requirements for Phase 5.2 (Browser Observation Intelligence)
+- Visual DOM hierarchy summarization.
+- Focused observation scoping for large enterprise web pages.
+
+---
+
+## Final Phase 5.1 Scorecard
+
+| Check | Result | Evidence / Details |
+| :--- | :---: | :--- |
+| **TOOL PARSING** | **PASS** | Bracket-aware extractor handles nested JSON, quotes, and invalid syntax cleanly. |
+| **VALIDATION** | **PASS** | Pre-execution validation verifies tool names, arguments, types, and bounds. |
+| **ACTION RESULT SEMANTICS** | **PASS** | Explicit outcomes: `SUCCESS`, `FAILED`, `BLOCKED`, `TIMED_OUT`, `CANCELLED`. |
+| **FALSE COMPLETION PROTECTION** | **PASS** | Host Evidence Engine rejects completion claims lacking verified action/observation proof. |
+| **ERROR CLASSIFICATION** | **PASS** | 9-category taxonomy (`TAB_ERROR`, `ELEMENT_ERROR`, `SECURITY_BLOCK`, etc.). |
+| **RECOVERY ENGINE** | **PASS** | Automatic re-observation and re-targeting for stale elements (budget: 2 retries). |
+| **REPETITION PROTECTION** | **PASS** | Terminates repetitive identical failure loops (>= 2). |
+| **CANCELLATION CLEANUP** | **PASS** | Removes cancellation flags upon task completion/termination. |
+| **SINGLE ACTIVE TASK** | **PASS** | Enforces single-task policy with `TASK_ALREADY_RUNNING` guard. |
+| **TIMEOUT** | **PASS** | Hard 120s wall-clock task ceiling enforced. |
+| **LLM FAILURE HANDLING** | **PASS** | Graceful handling of HTTP errors, rate limits, and provider exceptions. |
+| **CONTEXT CONTROL** | **PASS** | Bounded observation payloads; dynamic message sliding window. |
+| **STATE MACHINE** | **PASS** | Strictly deterministic state transitions; immutable terminal states. |
+| **SECURITY** | **PASS** | Zero arbitrary JS eval, zero raw HWND access, password fields blocked. |
+| **TESTING** | **PASS** | Validated across Scenarios A through P including False Completion test. |
+| **BUILD** | **PASS** | `cargo check` and `npm run build` pass with 0 errors. |
+| **OVERALL PHASE 5.1** | **PASS** | Agent control loop and reliability hardening fully verified. |
+
+---
+
+## Final Question & Answer
+
+> **"Is the autonomous browser agent now reliable enough to proceed to Phase 5.2 Browser Observation Intelligence, or does a further reliability phase remain necessary?"**
+
+### Verdict: **YES — The autonomous browser agent control loop is now thoroughly hardened and reliable enough to proceed directly to Phase 5.2 Browser Observation Intelligence.**
+
+**Evidence-Based Rationale**:
+1. **False Success Proofing**: The host-side Evidence Engine prevents the LLM from hallucinating completion without tangible observation/navigation proof.
+2. **Robust Syntax & Bounds Engine**: The bracket-aware parser and pre-execution validator reject malformed calls, invalid types, and out-of-bounds parameters before touching Browser Core.
+3. **Deterministic Guardrails**: Single active task enforcement, cooperative cancellation with automatic cleanup, hard wall-clock timeouts, and repetition breakers eliminate runaway execution risks.
+4. **Rock-Solid Security Boundary**: The agent operates entirely within audited tool boundaries with zero arbitrary JavaScript injection, zero raw HWND handles, and strict password field denial.
+
 
