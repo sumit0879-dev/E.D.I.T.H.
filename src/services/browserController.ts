@@ -44,7 +44,12 @@ export function normalizeBrowserUrl(input: string): string {
     return 'about:blank';
   }
 
-  if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('about:')) {
+  if (
+    trimmed.toLowerCase() === 'edith://newtab' ||
+    trimmed.startsWith('http://') ||
+    trimmed.startsWith('https://') ||
+    trimmed.startsWith('about:')
+  ) {
     return trimmed;
   }
 

@@ -29,6 +29,7 @@ import {
   Check,
 } from 'lucide-react';
 import { browserController } from '../services/browserController';
+import { useApp } from '../context/AppContext';
 import { isTauri } from '../services/tauri';
 import { listen } from '@tauri-apps/api/event';
 import type {
@@ -59,6 +60,7 @@ import type {
 import { Shield, ShieldOff, AlertOctagon, FileCheck, CheckCircle, Network, GitBranch, UserCheck, User, Star, Bookmark, History, Trash2, Download, Folder, ExternalLink, FileText, XCircle, Users, Edit2, Pin, PinOff, Copy, Compass, LayoutGrid, Terminal, Cpu, Printer, ZoomIn, ZoomOut, ChevronUp, ChevronDown, Type, BookOpen, FileDown, FolderPlus, Tag, ChevronRight } from 'lucide-react';
 
 export const BrowserView: React.FC = () => {
+  const { isTelemetryOpen } = useApp();
   const [browserState, setBrowserState] = useState<BrowserMultiStateInfo>({
     tabs: [],
     active_tab_id: null,
@@ -774,6 +776,15 @@ export const BrowserView: React.FC = () => {
       }).catch((e) => console.warn('Failed to sync browser bounds:', e));
     }
   }, []);
+
+  // Sync bounds when Telemetry Dock opens/closes or finishes 300ms transition
+  useEffect(() => {
+    syncBounds();
+    const timer = setTimeout(() => {
+      syncBounds();
+    }, 320);
+    return () => clearTimeout(timer);
+  }, [isTelemetryOpen, syncBounds]);
 
   // Listen for agent status events & download progress events from Rust backend
   useEffect(() => {
@@ -1503,12 +1514,10 @@ export const BrowserView: React.FC = () => {
                     {tab.url === 'edith://newtab' ? 'New Tab' : (tab.title || tab.url || 'New Tab')}
                   </span>
                   {tabControls[tab.id]?.control_state === 'AI_CONTROLLED' ? (
-                    <span className="px-1 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[9px] font-bold shrink-0" title="AI Controlled">🤖 AI</span>
+                    <span className="px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[9px] font-bold shrink-0 flex items-center gap-1" title="AI Controlled">🤖 AI</span>
                   ) : tabControls[tab.id]?.control_state === 'AI_PAUSED' ? (
-                    <span className="px-1 py-0.5 rounded bg-amber-500/30 text-amber-300 text-[9px] font-bold shrink-0" title="AI Paused">⏸️</span>
-                  ) : (
-                    <span className="px-1 py-0.5 rounded bg-blue-500/20 text-blue-300 text-[9px] font-bold shrink-0" title="Human Controlled">👤</span>
-                  )}
+                    <span className="px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-300 text-[9px] font-bold shrink-0" title="AI Paused">⏸️</span>
+                  ) : null}
                   {tab.profile_id && tab.profile_id !== 'profile_default' && (
                     <span className="px-1 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30 text-cyan-300 text-[8px] font-mono shrink-0" title={`Profile: ${tab.profile_id}`}>
                       {tab.profile_id.startsWith('agent_') ? 'AI' : tab.profile_id.replace('profile_', '')}
