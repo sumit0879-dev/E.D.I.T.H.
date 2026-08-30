@@ -35,6 +35,7 @@ import { listen } from '@tauri-apps/api/event';
 import type {
   BrowserTabInfo,
   BrowserMultiStateInfo,
+  BrowserViewportBounds,
   PageObservationSnapshot,
   ScreenshotResult,
   BrowserActionResult,
@@ -760,30 +761,109 @@ export const BrowserView: React.FC = () => {
     }
   }, []);
 
+  // Phase 5.6D/BUG #4: Disambiguate duplicate new tab titles cleanly without modifying underlying URL or identity
+  const getTabDisplayTitle = (tab: BrowserTabInfo, allTabs: BrowserTabInfo[]): string => {
+    const isNewTabUrl = !tab.url || tab.url === 'edith://newtab' || tab.url === 'about:blank' || tab.title === 'New Tab';
+    if (isNewTabUrl) {
+      const newTabs = allTabs.filter(
+        (t) => !t.url || t.url === 'edith://newtab' || t.url === 'about:blank' || t.title === 'New Tab'
+      );
+      if (newTabs.length > 1) {
+        const idx = newTabs.findIndex((t) => t.id === tab.id);
+        return idx >= 0 ? `New Tab (${idx + 1})` : 'New Tab';
+      }
+      return 'New Tab';
+    }
+    return tab.title || tab.url || 'New Tab';
+  };
+
+  // Phase 5.5/BUG #4: Render clear, unambiguous control ownership badge matching Stark HUD design language
+  const renderControlBadge = (tabId: string) => {
+    const ctrl = tabControls[tabId];
+    if (!ctrl) return null;
+    if (ctrl.control_state === 'AI_CONTROLLED') {
+      return (
+        <span
+          className="px-1.5 py-0.5 rounded bg-purple-950/80 border border-purple-500/40 text-purple-300 text-[9px] font-mono font-bold shrink-0 flex items-center gap-1"
+          title="AI Controlled Tab: Autonomous agent has active control"
+        >
+          <Bot className="w-3 h-3 text-purple-400" />
+          <span>AI</span>
+        </span>
+      );
+    }
+    if (ctrl.control_state === 'AI_PAUSED') {
+      return (
+        <span
+          className="px-1.5 py-0.5 rounded bg-amber-950/80 border border-amber-500/40 text-amber-300 text-[9px] font-mono font-bold shrink-0 flex items-center gap-1"
+          title="AI Control Paused: Awaiting operator resume"
+        >
+          <span className="w-1.5 h-1.5 rounded-full bg-amber-400 animate-ping" />
+          <span>PAUSED</span>
+        </span>
+      );
+    }
+    return null;
+  };
+
   const viewportRef = useRef<HTMLDivElement>(null);
   const omniboxInputRef = useRef<HTMLInputElement>(null);
+  const isSyncingRef = useRef(false);
+  const pendingBoundsRef = useRef<BrowserViewportBounds | null>(null);
+  const rafIdRef = useRef<number | null>(null);
 
-  // Sync bounds from DOM element to native active child WebView
-  const syncBounds = useCallback(() => {
-    if (!viewportRef.current) return;
-    const rect = viewportRef.current.getBoundingClientRect();
-    if (rect.width > 0 && rect.height > 0) {
-      browserController.setBoundsAll({
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-      }).catch((e) => console.warn('Failed to sync browser bounds:', e));
+  // BUG #11: Synchronize bounds with native active child WebView using requestAnimationFrame coalescing
+  const performSync = useCallback(async (bounds: BrowserViewportBounds) => {
+    if (isSyncingRef.current) {
+      pendingBoundsRef.current = bounds;
+      return;
+    }
+    isSyncingRef.current = true;
+    try {
+      await browserController.setBoundsAll(bounds);
+    } catch (e) {
+      console.warn('Failed to sync browser bounds:', e);
+    } finally {
+      isSyncingRef.current = false;
+      if (pendingBoundsRef.current) {
+        const next = pendingBoundsRef.current;
+        pendingBoundsRef.current = null;
+        performSync(next);
+      }
     }
   }, []);
 
-  // Sync bounds when Telemetry Dock opens/closes or finishes 300ms transition
+  const syncBounds = useCallback(() => {
+    if (rafIdRef.current !== null) {
+      cancelAnimationFrame(rafIdRef.current);
+    }
+    rafIdRef.current = requestAnimationFrame(() => {
+      rafIdRef.current = null;
+      if (!viewportRef.current) return;
+      const rect = viewportRef.current.getBoundingClientRect();
+      if (rect.width > 0 && rect.height > 0) {
+        const bounds: BrowserViewportBounds = {
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        };
+        performSync(bounds);
+      }
+    });
+  }, [performSync]);
+
+  // BUG #11: Multi-stage synchronization when Telemetry Dock opens/closes or transitions
   useEffect(() => {
     syncBounds();
-    const timer = setTimeout(() => {
-      syncBounds();
-    }, 320);
-    return () => clearTimeout(timer);
+    const t1 = setTimeout(() => syncBounds(), 150);
+    const t2 = setTimeout(() => syncBounds(), 320);
+    const t3 = setTimeout(() => syncBounds(), 360);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
   }, [isTelemetryOpen, syncBounds]);
 
   // Listen for agent status events & download progress events from Rust backend
@@ -1150,8 +1230,10 @@ export const BrowserView: React.FC = () => {
     if (!rawTarget || !browserState.active_tab_id) return;
 
     let finalUrl = rawTarget;
-    if (finalUrl === 'edith://newtab' || finalUrl === 'about:blank') {
-      // Stay on new tab
+    const lower = finalUrl.toLowerCase();
+    const cleaned = lower.endsWith('/') ? lower.slice(0, -1) : lower;
+    if (cleaned === 'edith://newtab' || cleaned === 'about:blank') {
+      finalUrl = cleaned;
     } else if (!finalUrl.includes('://') && !finalUrl.includes('.') && !finalUrl.startsWith('localhost')) {
       // Search query via DuckDuckGo
       finalUrl = `https://duckduckgo.com/?q=${encodeURIComponent(finalUrl)}`;
@@ -1162,13 +1244,15 @@ export const BrowserView: React.FC = () => {
     setIsLoading(true);
     try {
       const navigatedUrl = await browserController.navigateTab(browserState.active_tab_id, finalUrl);
-      setInputUrl(navigatedUrl);
+      setInputUrl(navigatedUrl === 'edith://newtab' ? '' : navigatedUrl);
       browserController.saveSession();
-      setTimeout(async () => {
-        if (browserState.active_tab_id) {
-          await browserController.observeTab(browserState.active_tab_id);
-        }
-      }, 1000);
+      if (navigatedUrl !== 'edith://newtab' && navigatedUrl !== 'about:blank') {
+        setTimeout(async () => {
+          if (browserState.active_tab_id) {
+            await browserController.observeTab(browserState.active_tab_id);
+          }
+        }, 1000);
+      }
     } catch (err: any) {
       console.error('Navigation error:', err);
     } finally {
@@ -1454,13 +1538,9 @@ export const BrowserView: React.FC = () => {
                             <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
                           )}
                           <span className="truncate flex-1 text-[11px]">
-                            {tab.url === 'edith://newtab' ? 'New Tab' : (tab.title || tab.url || 'New Tab')}
+                            {getTabDisplayTitle(tab, browserState.tabs)}
                           </span>
-                          {tabControls[tab.id]?.control_state === 'AI_CONTROLLED' ? (
-                            <span className="px-1 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[9px] font-bold shrink-0" title="AI Controlled">🤖</span>
-                          ) : tabControls[tab.id]?.control_state === 'AI_PAUSED' ? (
-                            <span className="px-1 py-0.5 rounded bg-amber-500/30 text-amber-300 text-[9px] font-bold shrink-0" title="AI Paused">⏸️</span>
-                          ) : null}
+                          {renderControlBadge(tab.id)}
                           {tab.is_pdf && (
                             <span className="px-1 py-0.2 rounded bg-orange-950/80 text-orange-400 border border-orange-500/40 text-[8px] font-bold shrink-0">PDF</span>
                           )}
@@ -1511,13 +1591,9 @@ export const BrowserView: React.FC = () => {
                     <Globe className={`w-3.5 h-3.5 shrink-0 ${isActive ? 'text-cyan-400' : 'text-slate-500'}`} />
                   )}
                   <span className="truncate flex-1 text-[11px]">
-                    {tab.url === 'edith://newtab' ? 'New Tab' : (tab.title || tab.url || 'New Tab')}
+                    {getTabDisplayTitle(tab, browserState.tabs)}
                   </span>
-                  {tabControls[tab.id]?.control_state === 'AI_CONTROLLED' ? (
-                    <span className="px-1.5 py-0.5 rounded bg-purple-500/30 text-purple-300 text-[9px] font-bold shrink-0 flex items-center gap-1" title="AI Controlled">🤖 AI</span>
-                  ) : tabControls[tab.id]?.control_state === 'AI_PAUSED' ? (
-                    <span className="px-1.5 py-0.5 rounded bg-amber-500/30 text-amber-300 text-[9px] font-bold shrink-0" title="AI Paused">⏸️</span>
-                  ) : null}
+                  {renderControlBadge(tab.id)}
                   {tab.profile_id && tab.profile_id !== 'profile_default' && (
                     <span className="px-1 py-0.5 rounded bg-cyan-950/80 border border-cyan-500/30 text-cyan-300 text-[8px] font-mono shrink-0" title={`Profile: ${tab.profile_id}`}>
                       {tab.profile_id.startsWith('agent_') ? 'AI' : tab.profile_id.replace('profile_', '')}
@@ -4211,7 +4287,7 @@ export const BrowserView: React.FC = () => {
                           <div className="min-w-0 flex-1">
                             <div className="flex items-center gap-1.5">
                               <span className="text-xs font-bold truncate">
-                                {tab.title || tab.url || 'New Tab'}
+                                {getTabDisplayTitle(tab, browserState.tabs)}
                               </span>
                               {isActive && (
                                 <span className="px-1.5 py-0.2 text-[9px] font-bold rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 shrink-0">

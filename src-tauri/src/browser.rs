@@ -333,8 +333,20 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
         return Err("Security Policy: Local 'file:' system URLs are restricted from remote browser tabs.".to_string());
     }
 
-    // Supported direct protocols / explicit internal routes
-    if trimmed == "edith://newtab" || trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("about:") {
+    let lower = trimmed.to_lowercase();
+    let cleaned = if lower.ends_with('/') {
+        &lower[..lower.len() - 1]
+    } else {
+        &lower
+    };
+
+    // Explicitly supported internal E.D.I.T.H. routes
+    if cleaned == "edith://newtab" {
+        return Ok("edith://newtab".to_string());
+    }
+
+    // Supported direct protocols
+    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("about:") {
         return Ok(trimmed.to_string());
     }
 
@@ -1242,6 +1254,7 @@ pub async fn browser_set_bounds_all(
 ) -> Result<(), String> {
     *state.bounds.lock().unwrap() = Some(bounds.clone());
 
+    let is_visible = *state.is_visible.lock().unwrap();
     if let Some(ref active_id) = *state.active_tab_id.lock().unwrap() {
         let is_new_tab = {
             let tabs = state.tabs.lock().unwrap();
@@ -1251,7 +1264,7 @@ pub async fn browser_set_bounds_all(
         if let Some(webview) = app.get_webview(&label) {
             let _ = webview.set_position(Position::Logical(LogicalPosition::new(bounds.x, bounds.y)));
             let _ = webview.set_size(Size::Logical(LogicalSize::new(bounds.width, bounds.height)));
-            if is_new_tab {
+            if is_new_tab || !is_visible {
                 let _ = webview.hide();
             }
         }

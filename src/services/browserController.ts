@@ -44,8 +44,15 @@ export function normalizeBrowserUrl(input: string): string {
     return 'about:blank';
   }
 
+  const lower = trimmed.toLowerCase();
+  const cleaned = lower.endsWith('/') ? lower.slice(0, -1) : lower;
+
+  // Explicitly supported internal E.D.I.T.H. routes
+  if (cleaned === 'edith://newtab') {
+    return 'edith://newtab';
+  }
+
   if (
-    trimmed.toLowerCase() === 'edith://newtab' ||
     trimmed.startsWith('http://') ||
     trimmed.startsWith('https://') ||
     trimmed.startsWith('about:')
