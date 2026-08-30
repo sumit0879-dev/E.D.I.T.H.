@@ -22,6 +22,12 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      - name: Prepare workspace directory
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path $env:GITHUB_WORKSPACE | Out-Null
+          New-Item -ItemType Directory -Force -Path "\\?\$env:GITHUB_WORKSPACE" | Out-Null
+
       - name: Checkout repository
         uses: actions/checkout@v4
 
