@@ -22,14 +22,14 @@ jobs:
     runs-on: windows-latest
 
     steps:
-      - name: Prepare workspace directory
+      - name: Checkout repository
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path $env:GITHUB_WORKSPACE | Out-Null
-          New-Item -ItemType Directory -Force -Path "\\?\$env:GITHUB_WORKSPACE" | Out-Null
-
-      - name: Checkout repository
-        uses: actions/checkout@v4
+          git config --global core.longpaths true
+          git init .
+          git remote add origin https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git
+          git fetch --depth 1 origin ${{ github.sha }}
+          git checkout FETCH_HEAD
 
       - name: Setup Node.js 20
         uses: actions/setup-node@v4
