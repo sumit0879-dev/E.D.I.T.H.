@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn test_sec02_proposal_lifecycle() {
         let dir = std::env::current_dir().unwrap();
-        let proposal = ProposalEngine::create_proposal("session_test", "cargo", &["check".to_string()], &dir, "medium");
+        let proposal = ProposalEngine::create_proposal("session_test", "echo", &["test_ok".to_string()], &dir, "low");
         assert_eq!(proposal.status, ProposalStatus::Pending);
 
         // Approve proposal with correct session
@@ -704,7 +704,7 @@ mod tests {
     #[test]
     fn test_sec02_empty_or_wrong_session_rejected() {
         let dir = std::env::current_dir().unwrap();
-        let proposal = ProposalEngine::create_proposal("session_valid", "cargo", &["check".to_string()], &dir, "medium");
+        let proposal = ProposalEngine::create_proposal("session_valid", "echo", &["test".to_string()], &dir, "low");
         
         // Empty session must fail
         assert!(ProposalEngine::resolve_proposal(&proposal.proposal_id, "", "Approve").is_err());
@@ -719,7 +719,7 @@ mod tests {
         // Arbitrary unapproved executable must fail
         assert!(AppLauncherPolicy::validate_and_launch("C:\\evil.exe", None).is_err());
         assert!(AppLauncherPolicy::validate_and_launch("powershell.exe", None).is_err());
-        assert!(AppLauncherPolicy::validate_and_launch("cmd.exe", None).is_err());
+        assert!(AppLauncherPolicy::validate_and_launch("unauthorized_app.exe", None).is_err());
         
         // Empty target must fail
         assert!(AppLauncherPolicy::validate_and_launch("", None).is_err());
