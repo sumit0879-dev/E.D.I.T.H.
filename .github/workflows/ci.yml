@@ -2,9 +2,6 @@ name: CI
 
 on:
   push:
-    branches:
-      - main
-      - fix/browser-newtab-navigation
   pull_request:
     branches:
       - main
