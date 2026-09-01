@@ -8,6 +8,7 @@ import { FloatingCommandBar } from '../components/FloatingCommandBar';
 import {
   Send,
   Volume2,
+  AlertOctagon,
   Plus,
   Trash2,
   Edit2,
@@ -72,9 +73,13 @@ export const ChatView: React.FC = () => {
   };
 
   useEffect(() => {
-    if (!activeSessionId) return;
+    if (!activeSessionId) {
+      setMessages([]);
+      return;
+    }
 
     let isMounted = true;
+    setMessages([]);
     tauriService.getSessionMessages(activeSessionId)
       .then((loaded) => {
         if (isMounted) {
@@ -86,6 +91,9 @@ export const ChatView: React.FC = () => {
       })
       .catch((e) => {
         console.error('Error loading session messages:', e);
+        if (isMounted) {
+          setMessages([]);
+        }
       });
 
     return () => {
@@ -444,6 +452,7 @@ export const ChatView: React.FC = () => {
             <div className="space-y-5 w-full px-3 sm:px-6 md:px-8 transition-all duration-300">
               {messages.map((msg, index) => {
                 const isUser = msg.role === 'user';
+                const isError = msg.type === 'error';
 
                 return (
                   <div
@@ -463,10 +472,18 @@ export const ChatView: React.FC = () => {
                           'w-7 h-7 rounded-xl shrink-0 flex items-center justify-center shadow-lg mt-0.5 ' +
                           (isUser
                             ? 'bg-gradient-to-tr from-cyan-600 to-blue-600 text-white shadow-cyan-glow-sm'
+                            : isError
+                            ? 'bg-gradient-to-tr from-rose-950 to-slate-900 border border-rose-500/40 text-rose-400 shadow-rose-500/10'
                             : 'bg-gradient-to-tr from-cyan-950 to-slate-900 border border-cyan-500/40 text-cyan-400 shadow-cyan-glow-sm')
                         }
                       >
-                        {isUser ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
+                        {isUser ? (
+                          <User className="w-3.5 h-3.5" />
+                        ) : isError ? (
+                          <AlertOctagon className="w-3.5 h-3.5" />
+                        ) : (
+                          <Bot className="w-3.5 h-3.5" />
+                        )}
                       </div>
 
                       {/* Message Bubble Card (Hugs Content, w-fit) */}
@@ -475,16 +492,24 @@ export const ChatView: React.FC = () => {
                           'rounded-2xl px-4 py-3 text-sm leading-relaxed border backdrop-blur-xl relative shadow-2xl w-fit max-w-full ' +
                           (isUser
                             ? 'bg-gradient-to-br from-cyan-950/80 via-[#0a1526] to-blue-950/70 border-cyan-500/40 text-white rounded-tr-none shadow-cyan-500/10'
+                            : isError
+                            ? 'bg-gradient-to-br from-rose-950/30 via-[#180b12] to-slate-900/90 border-rose-500/40 text-rose-200 rounded-tl-none shadow-rose-500/10'
                             : 'bg-[#090d16]/90 border-white/[0.08] text-slate-100 rounded-tl-none')
                         }
                       >
                         {/* Bubble Header */}
                         <div className="flex items-center justify-between gap-3 mb-1.5 text-xs text-slate-400 border-b border-white/5 pb-1">
                           <span className="font-bold text-[10px] uppercase tracking-wider text-slate-300 font-mono flex items-center gap-1.5">
-                            <span>{isUser ? 'Commander' : 'E.D.I.T.H.'}</span>
+                            <span>{isUser ? 'Commander' : isError ? 'SYSTEM ALERT' : 'E.D.I.T.H.'}</span>
                             {!isUser && (
-                              <span className="text-[9px] px-1.5 py-0.2 rounded bg-cyan-950/70 text-cyan-400 border border-cyan-500/30">
-                                AI
+                              <span
+                                className={`text-[9px] px-1.5 py-0.2 rounded border font-bold ${
+                                  isError
+                                    ? 'bg-rose-950/80 text-rose-400 border-rose-500/40'
+                                    : 'bg-cyan-950/70 text-cyan-400 border border-cyan-500/30'
+                                }`}
+                              >
+                                {isError ? 'ERROR' : 'AI'}
                               </span>
                             )}
                           </span>
@@ -504,7 +529,7 @@ export const ChatView: React.FC = () => {
                                 <Copy className="w-3.5 h-3.5" />
                               )}
                             </button>
-                            {!isUser && msg.text && (
+                            {!isUser && msg.text && !isError && (
                               <button
                                 onClick={() => speakText(msg.text)}
                                 className="text-slate-400 hover:text-cyan-400 transition p-0.5"
@@ -517,7 +542,7 @@ export const ChatView: React.FC = () => {
                         </div>
 
                         {/* Markdown Rendered Content */}
-                        <div className="prose-dark text-sm break-words whitespace-pre-wrap">
+                        <div className={`prose-dark text-sm break-words whitespace-pre-wrap ${isError ? 'text-rose-200' : ''}`}>
                           <ReactMarkdown
                             remarkPlugins={[remarkGfm]}
                             components={{

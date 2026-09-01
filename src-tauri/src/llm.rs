@@ -57,8 +57,33 @@ pub async fn api_chat_cloud(
     let mut res = request_builder.send().await.map_err(|e| e.to_string())?;
 
     if !res.status().is_success() {
+        let status = res.status();
         let error_text = res.text().await.unwrap_or_default();
-        return Err(format!("API Error: {}", error_text));
+        
+        let clean_msg = if let Ok(val) = serde_json::from_str::<Value>(&error_text) {
+            if let Some(msg) = val.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+                msg.to_string()
+            } else if let Some(msg) = val.get("message").and_then(|m| m.as_str()) {
+                msg.to_string()
+            } else if let Some(err_str) = val.get("error").and_then(|e| e.as_str()) {
+                err_str.to_string()
+            } else {
+                format!("Provider request failed (HTTP {})", status)
+            }
+        } else if !error_text.trim().is_empty() && !error_text.contains('{') {
+            error_text.trim().to_string()
+        } else {
+            format!("Provider request failed (HTTP {})", status)
+        };
+
+        // Redact any possible raw API keys or tokens in error message
+        let sanitized = if clean_msg.to_lowercase().contains("bearer") || clean_msg.contains("sk-") || clean_msg.contains("gsk_") {
+            "Authentication failed: Invalid or expired API Key. Please verify your provider API key in Settings.".to_string()
+        } else {
+            clean_msg
+        };
+
+        return Err(sanitized);
     }
 
     

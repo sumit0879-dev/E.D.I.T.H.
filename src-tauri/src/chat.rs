@@ -297,6 +297,6 @@ pub async fn chat_command(
             });
             Ok(ChatResponse { response: reply, r#type: "ai".to_string() })
         },
-        Err(e) => Ok(ChatResponse { response: format!("LLM Error: {}", e), r#type: "error".to_string() }),
+        Err(e) => Ok(ChatResponse { response: e, r#type: "error".to_string() }),
     }
 }

@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import type {
   ViewTab,
   Session,
@@ -85,6 +85,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(true);
   const [isStandbyMode, setIsStandbyMode] = useState(false);
   const [recognition, setRecognition] = useState<any>(null);
+  const ttsAbortControllerRef = useRef<AbortController | null>(null);
 
   const toggleTelemetry = useCallback(() => {
     setIsTelemetryOpen((prev) => !prev);
@@ -301,7 +302,22 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
+  const stopSpeaking = useCallback(async () => {
+    if (ttsAbortControllerRef.current) {
+      ttsAbortControllerRef.current.abort();
+      ttsAbortControllerRef.current = null;
+    }
+    try {
+      await tauriService.ttsStop();
+    } catch (e) {
+      console.error('Stop TTS error:', e);
+    } finally {
+      setIsSpeaking(false);
+    }
+  }, []);
+
   const createSession = async (title?: string) => {
+    await stopSpeaking();
     const newId = 'session_' + Date.now();
     const sessionTitle = title || ('Chat ' + (sessions.length + 1));
     try {
@@ -316,6 +332,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const deleteSession = async (id: string) => {
+    await stopSpeaking();
     try {
       await tauriService.deleteSession(id);
       const remaining = sessions.filter((s) => s.id !== id);
@@ -353,30 +370,51 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   };
 
-  const speakText = async (text: string) => {
+  const speakText = useCallback(async (text: string) => {
+    const trimmed = text.trim();
+    // BUG #6: Strict guard against error messages, JSON objects, and empty strings
+    if (
+      !trimmed ||
+      trimmed.startsWith('LLM Error:') ||
+      trimmed.startsWith('Error:') ||
+      trimmed.startsWith('API Error:') ||
+      trimmed.startsWith('{"error"') ||
+      trimmed.startsWith('{\n  "error"')
+    ) {
+      setIsSpeaking(false);
+      return;
+    }
+
+    if (ttsAbortControllerRef.current) {
+      ttsAbortControllerRef.current.abort();
+    }
+    const currentController = new AbortController();
+    ttsAbortControllerRef.current = currentController;
+
     try {
       setIsSpeaking(true);
       if (settings.ttsEngine === 'local') {
-        await tauriService.localTtsSpeak(text, settings.ttsVoice || 'af_sky', settings.kokoroModel || 'kokoro-v1.0.int8.onnx');
+        await tauriService.localTtsSpeak(trimmed, settings.ttsVoice || 'af_sky', settings.kokoroModel || 'kokoro-v1.0.int8.onnx');
       } else {
-        await tauriService.ttsSpeak(text, settings.ttsVoice || 'hi-IN-SwaraNeural');
+        await tauriService.ttsSpeak(trimmed, settings.ttsVoice || 'hi-IN-SwaraNeural');
       }
     } catch (e: any) {
-      console.error('TTS error:', e);
-      showToast('TTS error: ' + (e.message || e), 'error');
+      if (ttsAbortControllerRef.current === currentController) {
+        console.error('TTS error:', e);
+        showToast('TTS error: ' + (e.message || e), 'error');
+      }
     } finally {
-      setIsSpeaking(false);
+      if (ttsAbortControllerRef.current === currentController) {
+        ttsAbortControllerRef.current = null;
+        setIsSpeaking(false);
+      }
     }
-  };
+  }, [settings.ttsEngine, settings.ttsVoice, settings.kokoroModel, showToast]);
 
-  const stopSpeaking = async () => {
-    try {
-      await tauriService.ttsStop();
-      setIsSpeaking(false);
-    } catch (e) {
-      console.error('Stop TTS error:', e);
-    }
-  };
+  // BUG #8: Stop active TTS when switching sessions or application views
+  useEffect(() => {
+    stopSpeaking();
+  }, [activeSessionId, activeTab, stopSpeaking]);
 
   const toggleRecording = (onTranscript: (text: string) => void) => {
     if (isRecording) {
