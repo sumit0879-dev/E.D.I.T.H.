@@ -16,11 +16,9 @@ import { browserController } from './services/browserController';
 const MainLayout: React.FC = () => {
   const { activeTab, setActiveTab, isTelemetryOpen, toggleTelemetry } = useApp();
 
-  // Browser WebView Visibility Lifecycle
+  // Browser WebView Visibility Lifecycle: Ensure native child webviews are hidden when navigating away
   React.useEffect(() => {
-    if (activeTab === 'browser') {
-      browserController.show().catch(() => {});
-    } else {
+    if (activeTab !== 'browser') {
       browserController.hide().catch(() => {});
     }
   }, [activeTab]);

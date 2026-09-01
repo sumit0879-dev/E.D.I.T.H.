@@ -128,7 +128,20 @@ pub fn validate_url_for_recovery(raw_url: &str) -> Result<String, String> {
                 Err(format!("UNSAFE_ABOUT_URL: '{}'", trimmed))
             }
         }
-        "edge" | "edith" => Ok(trimmed.to_string()),
+        "edge" => Ok(trimmed.to_string()),
+        "edith" => {
+            let lower = trimmed.to_lowercase();
+            let cleaned = if lower.ends_with('/') {
+                &lower[..lower.len() - 1]
+            } else {
+                &lower
+            };
+            if cleaned == "edith://newtab" {
+                Ok("edith://newtab".to_string())
+            } else {
+                Err(format!("UNSUPPORTED_EDITH_ROUTE: '{}'", trimmed))
+            }
+        }
         "data" => {
             // Only allow safe data URI image or plain text
             let spec = parsed.as_str();

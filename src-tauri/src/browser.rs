@@ -333,6 +333,18 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
         return Err("Security Policy: Local 'file:' system URLs are restricted from remote browser tabs.".to_string());
     }
 
+    let lower = trimmed.to_lowercase();
+    let cleaned = if lower.ends_with('/') {
+        &lower[..lower.len() - 1]
+    } else {
+        &lower
+    };
+
+    // Explicitly supported internal E.D.I.T.H. routes
+    if cleaned == "edith://newtab" {
+        return Ok("edith://newtab".to_string());
+    }
+
     // Supported direct protocols
     if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("about:") {
         return Ok(trimmed.to_string());
@@ -638,11 +650,17 @@ pub async fn browser_create_tab(
         }
     }
 
+    let is_new_tab = target_url_str == "edith://newtab";
+
     if let Some(existing_webview) = app.get_webview(&label) {
         let _ = existing_webview.set_position(Position::Logical(pos));
         let _ = existing_webview.set_size(Size::Logical(size));
-        let _ = existing_webview.show();
-        let _ = existing_webview.set_focus();
+        if is_new_tab {
+            let _ = existing_webview.hide();
+        } else {
+            let _ = existing_webview.show();
+            let _ = existing_webview.set_focus();
+        }
         let _ = existing_webview.navigate(target_url);
     } else {
         let window = app.get_window("main")
@@ -727,7 +745,11 @@ pub async fn browser_create_tab(
             .map_err(|e| format!("Failed to attach child Webview {}: {}", label, e))?;
 
         if let Some(wv) = app.get_webview(&label) {
-            let _ = wv.set_focus();
+            if is_new_tab {
+                let _ = wv.hide();
+            } else {
+                let _ = wv.set_focus();
+            }
         }
     }
 
@@ -823,12 +845,18 @@ pub async fn browser_switch_tab(
             let _ = target_wv.set_position(Position::Logical(LogicalPosition::new(b.x, b.y)));
             let _ = target_wv.set_size(Size::Logical(LogicalSize::new(b.width, b.height)));
         }
-        let _ = target_wv.show();
-        let _ = target_wv.set_focus();
+        if tab_info.url == "edith://newtab" {
+            let _ = target_wv.hide();
+        } else {
+            let _ = target_wv.show();
+            let _ = target_wv.set_focus();
+        }
 
         if let Ok(u) = target_wv.url() {
-            tab_info.url = u.to_string();
-            tab_info.favicon = get_favicon_url(&tab_info.url);
+            if tab_info.url != "edith://newtab" {
+                tab_info.url = u.to_string();
+                tab_info.favicon = get_favicon_url(&tab_info.url);
+            }
         }
     }
 
@@ -1106,14 +1134,31 @@ pub async fn browser_navigate_tab(
     state: tauri::State<'_, BrowserState>,
 ) -> Result<String, String> {
     let normalized = normalize_url(&url)?;
+    let label = get_tab_label(&tab_id);
+
+    if normalized == "edith://newtab" {
+        if let Some(webview) = app.get_webview(&label) {
+            let _ = webview.hide();
+        }
+        let mut tabs = state.tabs.lock().unwrap();
+        if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
+            tab.url = "edith://newtab".to_string();
+            tab.title = "New Tab".to_string();
+            tab.favicon = None;
+            tab.is_loading = false;
+            tab.error = None;
+        }
+        return Ok("edith://newtab".to_string());
+    }
+
     let target_url = Url::parse(&normalized)
         .map_err(|e| format!("Invalid target URL: {}", e))?;
-
-    let label = get_tab_label(&tab_id);
 
     if let Some(webview) = app.get_webview(&label) {
         webview.navigate(target_url)
             .map_err(|e| format!("Navigation failed for tab {}: {}", tab_id, e))?;
+        let _ = webview.show();
+        let _ = webview.set_focus();
 
         let mut tabs = state.tabs.lock().unwrap();
         if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
@@ -1209,11 +1254,19 @@ pub async fn browser_set_bounds_all(
 ) -> Result<(), String> {
     *state.bounds.lock().unwrap() = Some(bounds.clone());
 
+    let is_visible = *state.is_visible.lock().unwrap();
     if let Some(ref active_id) = *state.active_tab_id.lock().unwrap() {
+        let is_new_tab = {
+            let tabs = state.tabs.lock().unwrap();
+            tabs.iter().find(|t| &t.id == active_id).map(|t| t.url == "edith://newtab").unwrap_or(false)
+        };
         let label = get_tab_label(active_id);
         if let Some(webview) = app.get_webview(&label) {
             let _ = webview.set_position(Position::Logical(LogicalPosition::new(bounds.x, bounds.y)));
             let _ = webview.set_size(Size::Logical(LogicalSize::new(bounds.width, bounds.height)));
+            if is_new_tab || !is_visible {
+                let _ = webview.hide();
+            }
         }
     }
     Ok(())
@@ -1247,14 +1300,22 @@ pub async fn browser_show_active(
     let current_bounds = state.bounds.lock().unwrap().clone();
 
     if let Some(ref active_id) = *state.active_tab_id.lock().unwrap() {
+        let is_new_tab = {
+            let tabs = state.tabs.lock().unwrap();
+            tabs.iter().find(|t| &t.id == active_id).map(|t| t.url == "edith://newtab").unwrap_or(false)
+        };
         let label = get_tab_label(active_id);
         if let Some(wv) = app.get_webview(&label) {
-            if let Some(ref b) = current_bounds {
-                let _ = wv.set_position(Position::Logical(LogicalPosition::new(b.x, b.y)));
-                let _ = wv.set_size(Size::Logical(LogicalSize::new(b.width, b.height)));
+            if is_new_tab {
+                let _ = wv.hide();
+            } else {
+                if let Some(ref b) = current_bounds {
+                    let _ = wv.set_position(Position::Logical(LogicalPosition::new(b.x, b.y)));
+                    let _ = wv.set_size(Size::Logical(LogicalSize::new(b.width, b.height)));
+                }
+                let _ = wv.show();
+                let _ = wv.set_focus();
             }
-            let _ = wv.show();
-            let _ = wv.set_focus();
         }
         *state.is_visible.lock().unwrap() = true;
     }
