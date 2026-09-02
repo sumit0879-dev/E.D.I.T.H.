@@ -27,6 +27,7 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
   onToggleTelemetry,
 }) => {
   const {
+    activeTab,
     settings,
     updateSetting,
     providers,
@@ -41,18 +42,41 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
 
-  // Close dropdown when clicking outside
+  // BUG #10: Close dropdown immediately when switching application views
   useEffect(() => {
-    const handleClickOutside = (event: MouseEvent) => {
+    setIsModelMenuOpen(false);
+  }, [activeTab]);
+
+  // BUG #10: Close dropdown when pressing Escape key
+  useEffect(() => {
+    if (!isModelMenuOpen) return;
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setIsModelMenuOpen(false);
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isModelMenuOpen]);
+
+  // Close dropdown when clicking outside (mouse or touch)
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent | TouchEvent) => {
       if (modelMenuRef.current && !modelMenuRef.current.contains(event.target as Node)) {
         setIsModelMenuOpen(false);
       }
     };
     if (isModelMenuOpen) {
       document.addEventListener('mousedown', handleClickOutside);
+      document.addEventListener('touchstart', handleClickOutside);
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
+      document.removeEventListener('touchstart', handleClickOutside);
     };
   }, [isModelMenuOpen]);
 
@@ -117,7 +141,7 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
   };
 
   return (
-    <header className="h-12 bg-[#030712]/90 backdrop-blur-xl border-b border-white/[0.08] px-4 flex items-center justify-between z-30 select-none relative">
+    <header className="h-12 bg-[#030712]/90 backdrop-blur-xl border-b border-white/[0.08] px-4 flex items-center justify-between z-40 select-none relative">
       {/* Left: Mark Logo + Pulse Status */}
       <div className="flex items-center gap-3">
         <div className="flex items-center gap-2">
@@ -196,7 +220,7 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
 
           {/* Model Selection Dropdown */}
           {isModelMenuOpen && (
-            <div className="absolute right-0 mt-2 w-80 sm:w-96 bg-[#090e1a]/98 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl shadow-2xl z-50 p-2.5 space-y-2 animate-fade-in text-xs">
+            <div className="absolute right-0 mt-2 w-80 sm:w-96 max-w-[calc(100vw-2rem)] bg-[#090e1a]/98 backdrop-blur-2xl border border-cyan-500/40 rounded-2xl shadow-2xl z-50 p-2.5 space-y-2 animate-fade-in text-xs">
               <div className="px-2 py-1.5 border-b border-white/10 flex items-center justify-between text-slate-300">
                 <span className="font-bold text-white flex items-center gap-1.5 font-mono text-[11px]">
                   <Sparkles className="w-3.5 h-3.5 text-cyan-400" />
