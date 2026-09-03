@@ -359,7 +359,11 @@ export const BrowserView: React.FC = () => {
   const handleTabContextMenu = (e: React.MouseEvent, tabId: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setContextMenu({ x: e.clientX, y: e.clientY, tabId });
+    const menuWidth = 190;
+    const menuHeight = 280;
+    const x = Math.min(e.clientX, Math.max(10, window.innerWidth - menuWidth - 10));
+    const y = Math.min(e.clientY, Math.max(10, window.innerHeight - menuHeight - 10));
+    setContextMenu({ x, y, tabId });
   };
 
   useEffect(() => {
@@ -404,7 +408,7 @@ export const BrowserView: React.FC = () => {
   const handleToggleSiteAllowlist = async (domain: string) => {
     if (!domain) return;
     try {
-      const isAllowlisted = privacyStatus?.allowlisted_domains.includes(domain);
+      const isAllowlisted = privacyStatus?.allowlisted_domains?.includes(domain);
       if (isAllowlisted) {
         await browserController.removeAllowlistDomain(domain);
       } else {
@@ -1114,6 +1118,16 @@ export const BrowserView: React.FC = () => {
   const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
   const isNewTab = !activeTab || !activeTab.url || activeTab.url === 'edith://newtab' || activeTab.url === 'about:blank';
 
+  // Fix Bug 1 & Bug 3: Ensure child webview is hidden on New Tab page or when floating menus/modals are active to prevent black screen or clipping
+  useEffect(() => {
+    const isFloatingOverlayOpen = !!contextMenu || showTabSearchModal || showCreateGroupModal;
+    if (isNewTab || isFloatingOverlayOpen) {
+      browserController.hideAll().catch(() => {});
+    } else {
+      browserController.showActive().catch(() => {});
+    }
+  }, [isNewTab, contextMenu, showTabSearchModal, showCreateGroupModal]);
+
   // Phase 5.6F-C Step 9: Auto-expand collapsed group if active tab belongs to it
   useEffect(() => {
     if (activeTab?.group_id) {
@@ -1605,6 +1619,11 @@ export const BrowserView: React.FC = () => {
                   {browserState.tabs.length > 1 && (
                     <button
                       onClick={(e) => handleCloseTab(e, tab.id)}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        handleTabContextMenu(e, tab.id);
+                      }}
                       className="opacity-0 group-hover:opacity-100 hover:text-red-400 p-0.5 rounded transition"
                       title="Close Tab (Ctrl+W)"
                     >
@@ -2824,7 +2843,7 @@ export const BrowserView: React.FC = () => {
                   if (activeTab?.url) {
                     try { domain = new URL(activeTab.url).hostname; } catch {}
                   }
-                  const isAllowlisted = domain && privacyStatus?.allowlisted_domains.includes(domain);
+                  const isAllowlisted = domain && privacyStatus?.allowlisted_domains?.includes(domain);
                   return domain ? (
                     <button
                       onClick={() => handleToggleSiteAllowlist(domain)}
@@ -3628,7 +3647,7 @@ export const BrowserView: React.FC = () => {
                     </div>
                   ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
-                      {bookmarksList.slice(0, 6).map((bm) => (
+                      {(Array.isArray(bookmarksList) ? bookmarksList : []).slice(0, 6).map((bm) => (
                         <div
                           key={bm.id}
                           onClick={() => handleNavigate(undefined, bm.url)}
@@ -3665,7 +3684,7 @@ export const BrowserView: React.FC = () => {
                     </div>
                   ) : (
                     <div className="flex flex-col gap-1">
-                      {historyList.slice(0, 5).map((entry) => (
+                      {(Array.isArray(historyList) ? historyList : []).slice(0, 5).map((entry) => (
                         <div
                           key={entry.id}
                           onClick={() => handleNavigate(undefined, entry.url)}

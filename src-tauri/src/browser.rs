@@ -917,13 +917,18 @@ pub async fn browser_close_tab(
 
     if let Some(ref next) = next_active {
         let next_label = get_tab_label(&next.id);
+        let is_new_tab = next.url == "edith://newtab" || next.url.is_empty() || next.url == "about:blank";
         if let Some(wv) = app.get_webview(&next_label) {
-            if let Some(ref b) = *state.bounds.lock().unwrap() {
-                let _ = wv.set_position(Position::Logical(LogicalPosition::new(b.x, b.y)));
-                let _ = wv.set_size(Size::Logical(LogicalSize::new(b.width, b.height)));
+            if is_new_tab {
+                let _ = wv.hide();
+            } else {
+                if let Some(ref b) = *state.bounds.lock().unwrap() {
+                    let _ = wv.set_position(Position::Logical(LogicalPosition::new(b.x, b.y)));
+                    let _ = wv.set_size(Size::Logical(LogicalSize::new(b.width, b.height)));
+                }
+                let _ = wv.show();
+                let _ = wv.set_focus();
             }
-            let _ = wv.show();
-            let _ = wv.set_focus();
         }
     }
 

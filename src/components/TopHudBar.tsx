@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import { browserController } from '../services/browserController';
 import {
   Activity,
   Cpu,
@@ -41,6 +42,17 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
   const [waveformBars, setWaveformBars] = useState<number[]>([30, 60, 45, 80, 50, 90, 40, 70, 35]);
   const [isModelMenuOpen, setIsModelMenuOpen] = useState(false);
   const modelMenuRef = useRef<HTMLDivElement>(null);
+
+  // Fix Bug 2: Temporarily hide native child webview while Model Switcher dropdown is open to prevent occlusion/cutting
+  useEffect(() => {
+    if (activeTab === 'browser') {
+      if (isModelMenuOpen) {
+        browserController.hideAll().catch(() => {});
+      } else {
+        browserController.showActive().catch(() => {});
+      }
+    }
+  }, [isModelMenuOpen, activeTab]);
 
   // BUG #10: Close dropdown immediately when switching application views
   useEffect(() => {
