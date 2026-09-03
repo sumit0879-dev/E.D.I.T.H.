@@ -32,6 +32,7 @@ import { browserController } from '../services/browserController';
 import { useApp } from '../context/AppContext';
 import { isTauri } from '../services/tauri';
 import { listen } from '@tauri-apps/api/event';
+import { Menu, MenuItem, PredefinedMenuItem } from '@tauri-apps/api/menu';
 import type {
   BrowserTabInfo,
   BrowserMultiStateInfo,
@@ -356,9 +357,84 @@ export const BrowserView: React.FC = () => {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; tabId: string } | null>(null);
   const [newTabSearchQuery, setNewTabSearchQuery] = useState('');
 
-  const handleTabContextMenu = (e: React.MouseEvent, tabId: string) => {
+  const handleTabContextMenu = async (e: React.MouseEvent, tabId: string) => {
     e.preventDefault();
     e.stopPropagation();
+
+    if (isTauri()) {
+      try {
+        const targetTab = browserState.tabs.find((t) => t.id === tabId);
+        const items: any[] = [
+          await MenuItem.new({
+            text: 'New Tab (Ctrl+T)',
+            action: () => handleCreateNewTab('edith://newtab'),
+          }),
+          await MenuItem.new({
+            text: 'Reload (Ctrl+R)',
+            action: () => browserController.reload(),
+          }),
+          await MenuItem.new({
+            text: 'Duplicate Tab',
+            action: () => handleDuplicateTab(tabId),
+          }),
+          await MenuItem.new({
+            text: targetTab?.is_pinned ? 'Unpin Tab' : 'Pin Tab',
+            action: () => handleTogglePinTab(tabId),
+          }),
+          await PredefinedMenuItem.new({ item: 'Separator' }),
+          await MenuItem.new({
+            text: 'Copy Tab URL',
+            action: () => {
+              if (targetTab?.url) handleCopyLink(targetTab.url);
+            },
+          }),
+          await MenuItem.new({
+            text: 'Find in Page... (Ctrl+F)',
+            action: () => setShowFindHud(true),
+          }),
+          await MenuItem.new({
+            text: 'Print Tab... (Ctrl+P)',
+            action: () => handlePrint(),
+          }),
+          await MenuItem.new({
+            text: 'Toggle Reader Mode (Ctrl+Shift+R)',
+            action: () => handleToggleReaderMode(tabId),
+          }),
+          await MenuItem.new({
+            text: 'Save Page HTML...',
+            action: () => handleSavePageHtml(tabId),
+          }),
+          await MenuItem.new({
+            text: 'Save Page as PDF...',
+            action: () => handlePrint(),
+          }),
+          await PredefinedMenuItem.new({ item: 'Separator' }),
+          await MenuItem.new({
+            text: 'Close Tab (Ctrl+W)',
+            action: () => handleCloseTab(undefined, tabId),
+          }),
+          await MenuItem.new({
+            text: 'Close Other Tabs',
+            action: () => handleCloseOtherTabs(tabId),
+          }),
+          await MenuItem.new({
+            text: 'Close Tabs to Right',
+            action: () => handleCloseTabsToRight(tabId),
+          }),
+          await MenuItem.new({
+            text: 'Reopen Closed Tab (Ctrl+Shift+T)',
+            action: () => handleReopenTab(),
+          }),
+        ];
+
+        const menu = await Menu.new({ items });
+        await menu.popup();
+        return;
+      } catch (err) {
+        console.warn('Native context menu failed, falling back to HTML menu:', err);
+      }
+    }
+
     const menuWidth = 190;
     const menuHeight = 280;
     const x = Math.min(e.clientX, Math.max(10, window.innerWidth - menuWidth - 10));
@@ -1118,15 +1194,15 @@ export const BrowserView: React.FC = () => {
   const activeTab = browserState.tabs.find((t) => t.id === browserState.active_tab_id);
   const isNewTab = !activeTab || !activeTab.url || activeTab.url === 'edith://newtab' || activeTab.url === 'about:blank';
 
-  // Fix Bug 1 & Bug 3: Ensure child webview is hidden on New Tab page or when floating menus/modals are active to prevent black screen or clipping
+  // Fix Bug 1 & 2: Ensure child webview is hidden on New Tab page or modals, but NEVER on context menu
   useEffect(() => {
-    const isFloatingOverlayOpen = !!contextMenu || showTabSearchModal || showCreateGroupModal;
-    if (isNewTab || isFloatingOverlayOpen) {
+    const isFloatingModalOpen = showTabSearchModal || showCreateGroupModal;
+    if (isNewTab || isFloatingModalOpen) {
       browserController.hideAll().catch(() => {});
     } else {
       browserController.showActive().catch(() => {});
     }
-  }, [isNewTab, contextMenu, showTabSearchModal, showCreateGroupModal]);
+  }, [isNewTab, showTabSearchModal, showCreateGroupModal]);
 
   // Phase 5.6F-C Step 9: Auto-expand collapsed group if active tab belongs to it
   useEffect(() => {

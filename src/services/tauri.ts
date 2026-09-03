@@ -615,7 +615,17 @@ export async function launchApp(path: string): Promise<void> {
 }
 
 // --- TTS (Text to Speech) ---
+let activeTtsAudio: HTMLAudioElement | null = null;
+
 export async function ttsSpeak(text: string, voice?: string): Promise<void> {
+  if (activeTtsAudio) {
+    try {
+      activeTtsAudio.pause();
+      activeTtsAudio.currentTime = 0;
+    } catch {}
+    activeTtsAudio = null;
+  }
+
   if (!isTauri()) {
     if ('speechSynthesis' in window) {
       window.speechSynthesis.cancel();
@@ -624,7 +634,22 @@ export async function ttsSpeak(text: string, voice?: string): Promise<void> {
     }
     return;
   }
-  return await invoke('tts_speak', { text, voice });
+
+  try {
+    const b64 = await invoke<string>('tts_speak', { text, voice });
+    if (b64 && typeof b64 === 'string' && b64.length > 50) {
+      const audio = new Audio('data:audio/mp3;base64,' + b64);
+      activeTtsAudio = audio;
+      await audio.play();
+    }
+  } catch (err) {
+    console.warn('Tauri native TTS synthesis error, falling back to Web Speech API:', err);
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(text.replace(/[*`_~#]/g, ''));
+      window.speechSynthesis.speak(utterance);
+    }
+  }
 }
 
 export async function localTtsSpeak(text: string, voice: string, modelName: string): Promise<void> {
@@ -643,13 +668,23 @@ export async function getKokoroModels(): Promise<string[]> {
 }
 
 export async function ttsStop(): Promise<void> {
-  if (!isTauri()) {
-    if ('speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-    }
-    return;
+  if (activeTtsAudio) {
+    try {
+      activeTtsAudio.pause();
+      activeTtsAudio.currentTime = 0;
+    } catch {}
+    activeTtsAudio = null;
   }
-  return await invoke('tts_stop');
+  if ('speechSynthesis' in window) {
+    try {
+      window.speechSynthesis.cancel();
+    } catch {}
+  }
+  if (isTauri()) {
+    try {
+      await invoke('tts_stop');
+    } catch {}
+  }
 }
 
 // --- Vector Memory (LanceDB) ---
