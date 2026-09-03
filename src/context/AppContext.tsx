@@ -85,6 +85,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [isTelemetryOpen, setIsTelemetryOpen] = useState(true);
   const [isStandbyMode, setIsStandbyMode] = useState(false);
   const [recognition, setRecognition] = useState<any>(null);
+  const recognitionRef = useRef<any>(null);
   const ttsAbortControllerRef = useRef<AbortController | null>(null);
 
   const toggleTelemetry = useCallback(() => {
@@ -411,15 +412,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     }
   }, [settings.ttsEngine, settings.ttsVoice, settings.kokoroModel, showToast]);
 
-  // BUG #8: Stop active TTS when switching sessions or application views
+  // BUG #8 & BUG #2: Stop active TTS and Speech Recognition when switching sessions or application views
   useEffect(() => {
     stopSpeaking();
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.abort();
+      } catch {}
+      recognitionRef.current = null;
+      setIsRecording(false);
+    }
   }, [activeSessionId, activeTab, stopSpeaking]);
 
-  const toggleRecording = (onTranscript: (text: string) => void) => {
+  const toggleRecording = useCallback((onTranscript: (text: string) => void) => {
     if (isRecording) {
-      if (recognition) {
-        recognition.stop();
+      if (recognitionRef.current) {
+        try {
+          recognitionRef.current.stop();
+        } catch {}
+        recognitionRef.current = null;
       }
       setIsRecording(false);
       return;
@@ -429,7 +440,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
 
     if (!SpeechRecognition) {
-      showToast('Speech recognition is not supported in this browser.', 'warning');
+      showToast('Speech recognition is not supported in this browser environment.', 'warning');
       return;
     }
 
@@ -445,29 +456,47 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       };
 
       recog.onresult = (event: any) => {
-        const transcript = event.results[0][0].transcript;
+        const transcript = event.results?.[0]?.[0]?.transcript;
         if (transcript) {
           onTranscript(transcript);
         }
       };
 
       recog.onerror = (event: any) => {
-        console.error('Speech error:', event.error);
+        const err = event.error;
         setIsRecording(false);
-        showToast('Speech error: ' + event.error, 'error');
+        recognitionRef.current = null;
+
+        // BUG #2: Silence (no-speech) and user cancellation (aborted) are normal expected completions, not critical system failures
+        if (err === 'no-speech' || err === 'aborted') {
+          return;
+        }
+
+        if (err === 'not-allowed' || err === 'service-not-allowed') {
+          showToast('Microphone access denied. Please check microphone permissions.', 'error');
+        } else if (err === 'audio-capture') {
+          showToast('No microphone found. Please connect a microphone.', 'error');
+        } else if (err === 'network') {
+          showToast('Speech recognition network error. Please check your connection.', 'error');
+        } else {
+          showToast('Speech recognition error: ' + err, 'error');
+        }
       };
 
       recog.onend = () => {
         setIsRecording(false);
+        recognitionRef.current = null;
       };
 
+      recognitionRef.current = recog;
       setRecognition(recog);
       recog.start();
     } catch (e: any) {
       setIsRecording(false);
+      recognitionRef.current = null;
       showToast('Failed to start speech recognition: ' + (e.message || e), 'error');
     }
-  };
+  }, [isRecording, showToast]);
 
   return (
     <AppContext.Provider
