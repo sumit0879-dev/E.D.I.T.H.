@@ -631,5 +631,18 @@ export interface RecoveryReport {
   recovery_time_ms: number;
   notice?: string | null;
 }
+// --- Browser Search Engine & Settings Types ---
+export type SearchEngineId = 'google' | 'duckduckgo' | 'bing';
 
+export interface SearchEngineConfig {
+  id: SearchEngineId;
+  name: string;
+  searchUrlTemplate: string;
+  homepageUrl: string;
+}
 
+export interface BrowserPreferences {
+  search_engine: SearchEngineId;
+  restore_session: boolean;
+  block_trackers: boolean;
+}
