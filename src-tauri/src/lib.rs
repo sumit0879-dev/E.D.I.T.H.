@@ -2,6 +2,7 @@
 use std::os::windows::process::CommandExt;
 use tauri::Manager;
 pub mod security;
+pub mod ai;
 mod agent;
 mod chat;
 pub mod db;
@@ -179,6 +180,51 @@ fn sync_apps_registry() -> Result<(), String> {
 fn launch_app(path: String, state: State<'_, DbState>) -> Result<String, String> {
     let conn = state.conn.lock().unwrap();
     security::AppLauncherPolicy::validate_and_launch(&path, Some(&conn))
+}
+
+#[tauri::command]
+fn ai_list_providers(db_state: State<'_, DbState>) -> Result<Vec<ai::ProviderSummary>, String> {
+    let mut registry = ai::ProviderRegistry::standard_builtins();
+    if let Ok(conn) = db_state.conn.lock() {
+        if let Ok(settings) = db::get_all_settings(&conn) {
+            if let Some(custom_raw) = settings.get("customProviders") {
+                registry.load_custom_providers(custom_raw);
+            }
+        }
+    }
+    Ok(registry.list_providers())
+}
+
+#[tauri::command]
+fn ai_list_models(provider_id: String, db_state: State<'_, DbState>) -> Result<Vec<ai::ModelMetadata>, String> {
+    let mut registry = ai::ProviderRegistry::standard_builtins();
+    if let Ok(conn) = db_state.conn.lock() {
+        if let Ok(settings) = db::get_all_settings(&conn) {
+            if let Some(custom_raw) = settings.get("customProviders") {
+                registry.load_custom_providers(custom_raw);
+            }
+        }
+    }
+    registry.list_models(&provider_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn ai_query_capabilities(
+    provider_id: String,
+    model_id: Option<String>,
+    db_state: State<'_, DbState>,
+) -> Result<ai::CapabilitySet, String> {
+    let mut registry = ai::ProviderRegistry::standard_builtins();
+    if let Ok(conn) = db_state.conn.lock() {
+        if let Ok(settings) = db::get_all_settings(&conn) {
+            if let Some(custom_raw) = settings.get("customProviders") {
+                registry.load_custom_providers(custom_raw);
+            }
+        }
+    }
+    registry
+        .query_effective_capabilities(&provider_id, model_id.as_deref())
+        .map_err(|e| e.to_string())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -386,7 +432,10 @@ pub fn run() {
             tts::local_tts_speak,
             tts::get_kokoro_models,
             tts::tts_stop,
-            tts::tts_set_voice
+            tts::tts_set_voice,
+            ai_list_providers,
+            ai_list_models,
+            ai_query_capabilities
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

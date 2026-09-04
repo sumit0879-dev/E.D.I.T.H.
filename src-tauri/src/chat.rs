@@ -1,9 +1,10 @@
+use crate::ai::CredentialStore;
 use crate::db::{self, DbState};
-use crate::llm::{api_chat_cloud, ChatMessage, ChatRequest};
+use crate::llm::ChatMessage;
 use crate::plugins;
 use serde::{Deserialize, Serialize};
 use tauri::command;
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Serialize, Deserialize)]
 pub struct ChatHistoryItem {
@@ -33,68 +34,7 @@ fn plugin_disabled_response(plugin_id: &str) -> ChatResponse {
     }
 }
 
-fn resolve_provider_config(
-    provider_id: &str,
-    app_settings: &serde_json::Value,
-) -> (String, String) {
-    // Returns (api_url, api_key)
-    if provider_id == "gemini" {
-        let key = app_settings
-            .get("apiKey_gemini")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        return (
-            "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
-            key,
-        );
-    }
 
-    if provider_id == "groq" {
-        let key = app_settings
-            .get("apiKey_groq")
-            .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_string();
-        return (
-            "https://api.groq.com/openai/v1/chat/completions".to_string(),
-            key,
-        );
-    }
-
-    // Check custom providers from settings JSON
-    if let Some(custom_providers_raw) = app_settings.get("customProviders").and_then(|v| v.as_str()) {
-        if let Ok(providers_list) = serde_json::from_str::<Vec<serde_json::Value>>(custom_providers_raw) {
-            for cp in providers_list {
-                if cp.get("id").and_then(|i| i.as_str()) == Some(provider_id) {
-                    let base_url = cp.get("baseUrl").and_then(|u| u.as_str()).unwrap_or("").trim().trim_end_matches('/').to_string();
-                    let url = if base_url.ends_with("/chat/completions") {
-                        base_url
-                    } else {
-                        format!("{}/chat/completions", base_url)
-                    };
-                    let key = cp.get("apiKey").and_then(|k| k.as_str())
-                        .map(|s| s.to_string())
-                        .or_else(|| {
-                            app_settings.get(&format!("apiKey_{}", provider_id))
-                                .and_then(|v| v.as_str())
-                                .map(|s| s.to_string())
-                        })
-                        .unwrap_or_default();
-                    return (url, key);
-                }
-            }
-        }
-    }
-
-    // Fallback: Groq
-    let key = app_settings
-        .get(&format!("apiKey_{}", provider_id))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_string();
-    ("https://api.groq.com/openai/v1/chat/completions".to_string(), key)
-}
 
 #[command]
 pub async fn chat_command(
@@ -262,41 +202,81 @@ pub async fn chat_command(
     messages.push(ChatMessage { role: "user".to_string(), content: message.clone() });
 
     let ai_mode = app_settings.get("aiMode").and_then(|v| v.as_str()).unwrap_or("api");
-    if ai_mode == "local" && !is_search {
-        let req = ChatRequest { model: "local-model".to_string(), messages, temperature: temp, provider: "local".to_string() };
-        return match api_chat_cloud(app, "".to_string(), "http://127.0.0.1:11434/v1/chat/completions".to_string(), req, Some("chat-chunk".to_string())).await {
-            Ok(reply) => Ok(ChatResponse { response: reply, r#type: "ai".to_string() }),
-            Err(e)    => Ok(ChatResponse { response: format!("Local Model Error: {}", e), r#type: "error".to_string() }),
-        };
+    let provider_id = if ai_mode == "local" && !is_search {
+        "local".to_string()
+    } else {
+        app_settings
+            .get("selectedProvider")
+            .and_then(|v| v.as_str())
+            .unwrap_or("groq")
+            .to_string()
+    };
+
+    let model = if ai_mode == "local" && !is_search {
+        "local-model".to_string()
+    } else {
+        app_settings
+            .get("selectedModel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("llama-3.3-70b-versatile")
+            .to_string()
+    };
+
+    let mut registry = crate::ai::ProviderRegistry::standard_builtins();
+    if let Some(custom_providers_raw) = app_settings.get("customProviders").and_then(|v| v.as_str()) {
+        registry.load_custom_providers(custom_providers_raw);
     }
 
-    let provider = app_settings
-        .get("selectedProvider")
-        .and_then(|v| v.as_str())
-        .unwrap_or("groq")
-        .to_string();
+    let cred_store = crate::ai::SettingsCredentialStore::from_json_value(&app_settings);
+    let creds = cred_store.get_credential(&provider_id).ok().flatten();
 
-    let model = app_settings
-        .get("selectedModel")
-        .and_then(|v| v.as_str())
-        .unwrap_or("llama-3.3-70b-versatile")
-        .to_string();
+    let adapter = match registry.resolve_provider(&provider_id) {
+        Ok(a) => a,
+        Err(e) => return Ok(ChatResponse { response: e.to_string(), r#type: "error".to_string() }),
+    };
 
-    let (url, api_key) = resolve_provider_config(&provider, &app_settings);
-    let req = ChatRequest { model, messages, temperature: temp, provider: provider.clone() };
+    let ai_messages: Vec<crate::ai::ChatMessage> = messages
+        .into_iter()
+        .map(|m| crate::ai::ChatMessage { role: m.role, content: m.content })
+        .collect();
 
-    match api_chat_cloud(app.clone(), api_key, url, req, Some("chat-chunk".to_string())).await {
+    let req = crate::ai::GenerateRequest {
+        model,
+        messages: ai_messages,
+        temperature: temp,
+        max_tokens: None,
+        stream: true,
+    };
+
+    let stream_cap = adapter.as_streaming_text();
+    let reply_result = if let Some(streamer) = stream_cap {
+        let app_clone = app.clone();
+        streamer.stream(&req, &creds, Box::new(move |chunk| {
+            if !chunk.text.is_empty() {
+                let _ = app_clone.emit("chat-chunk", chunk.text);
+            }
+        })).await
+    } else if let Some(gen) = adapter.as_text_generation() {
+        gen.generate(&req, &creds).await
+    } else {
+        return Ok(ChatResponse {
+            response: format!("Provider '{}' does not support text generation", provider_id),
+            r#type: "error".to_string(),
+        });
+    };
+
+    match reply_result {
         Ok(reply) => {
             let app3 = app.clone();
-            let r = reply.clone();
+            let r = reply.text.clone();
             let sid = session_id.clone();
             let msg = message.clone();
             tokio::spawn(async move {
                 let combined = format!("User: {}\nAssistant: {}", msg, r);
                 let _ = crate::memory::save_to_memory_cmd(app3, combined, format!("chat:{}", sid)).await;
             });
-            Ok(ChatResponse { response: reply, r#type: "ai".to_string() })
-        },
-        Err(e) => Ok(ChatResponse { response: e, r#type: "error".to_string() }),
+            Ok(ChatResponse { response: reply.text, r#type: "ai".to_string() })
+        }
+        Err(e) => Ok(ChatResponse { response: e.to_string(), r#type: "error".to_string() }),
     }
 }

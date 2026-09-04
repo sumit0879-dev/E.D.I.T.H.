@@ -9,7 +9,7 @@ use tauri::{AppHandle, Emitter, State};
 use crate::browser::{BrowserState, browser_get_multi_state};
 use crate::browser_tools::execute_browser_tool;
 use crate::db::DbState;
-use crate::llm::{api_chat_cloud, ChatMessage, ChatRequest};
+use crate::llm::ChatMessage;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BrowserTaskStatus {
@@ -70,21 +70,7 @@ fn current_timestamp_ms() -> u64 {
         .as_millis() as u64
 }
 
-fn get_provider_url(provider: &str) -> String {
-    match provider {
-        "groq" => "https://api.groq.com/openai/v1/chat/completions".to_string(),
-        "openai" => "https://api.openai.com/v1/chat/completions".to_string(),
-        "together" => "https://api.together.xyz/v1/chat/completions".to_string(),
-        "openrouter" => "https://openrouter.ai/api/v1/chat/completions".to_string(),
-        "deepseek" => "https://api.deepseek.com/chat/completions".to_string(),
-        "cerebras" => "https://api.cerebras.ai/v1/chat/completions".to_string(),
-        "sambanova" => "https://api.sambanova.ai/v1/chat/completions".to_string(),
-        "mistral" => "https://api.mistral.ai/v1/chat/completions".to_string(),
-        "huggingface" => "https://api-inference.huggingface.co/v1/chat/completions".to_string(),
-        "gemini" => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
-        _ => "https://api.groq.com/openai/v1/chat/completions".to_string(),
-    }
-}
+use crate::ai::CredentialStore;
 
 // -----------------------------------------------------------------------------
 // Step 2: Robust, Bracket-Aware Tool Parser
@@ -320,14 +306,21 @@ pub async fn run_autonomous_browser_loop(
     };
 
     let ai_mode = settings.get("aiMode").cloned().unwrap_or_else(|| "api".to_string());
-    let provider = settings.get("selectedProvider").cloned().unwrap_or_else(|| "groq".to_string());
+    let provider_id = if ai_mode == "local" {
+        "local".to_string()
+    } else {
+        settings.get("selectedProvider").cloned().unwrap_or_else(|| "groq".to_string())
+    };
     let model = settings.get("selectedModel").cloned().unwrap_or_else(|| "llama-3.3-70b-versatile".to_string());
-    let api_key_key = format!("api_key_{}", provider);
-    let api_key = settings.get(&api_key_key)
-        .or_else(|| settings.get(&format!("apiKey_{}", provider)))
-        .or_else(|| settings.get("apiKey")).cloned().unwrap_or_default();
 
-    if ai_mode != "local" && api_key.is_empty() {
+    let mut registry = crate::ai::ProviderRegistry::standard_builtins();
+    if let Some(custom_providers_raw) = settings.get("customProviders") {
+        registry.load_custom_providers(custom_providers_raw);
+    }
+    let cred_store = crate::ai::SettingsCredentialStore::new(settings.clone());
+    let creds = cred_store.get_credential(&provider_id).ok().flatten();
+
+    if ai_mode != "local" && creds.is_none() && provider_id != "local" {
         let err_msg = "API Key is missing for selected provider.".to_string();
         current_task.status = BrowserTaskStatus::Failed;
         current_task.last_error = Some(err_msg.clone());
@@ -353,6 +346,33 @@ pub async fn run_autonomous_browser_loop(
             error: Some(err_msg),
         });
     }
+
+    let adapter = match registry.resolve_provider(&provider_id) {
+        Ok(a) => a,
+        Err(e) => {
+            let err_msg = e.to_string();
+            current_task.status = BrowserTaskStatus::Failed;
+            current_task.last_error = Some(err_msg.clone());
+            let _ = app.emit("browser-agent-status", json!({
+                "task_id": task_id,
+                "status": "Failed",
+                "error": err_msg
+            }));
+            if let Ok(mut flags) = agent_mgr.cancellation_flags.lock() {
+                flags.remove(&task_id);
+            }
+            return Ok(BrowserTaskResult {
+                task_id,
+                status: BrowserTaskStatus::Failed,
+                goal,
+                summary: "Failed before start: unknown provider.".to_string(),
+                steps_taken: 0,
+                duration_ms: start_instant.elapsed().as_millis() as u64,
+                final_tab_id: initial_tab_id,
+                error: Some(err_msg),
+            });
+        }
+    };
 
     let system_prompt = format!(
         "You are E.D.I.T.H.'s Autonomous Browser Agent.
@@ -474,30 +494,42 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
             messages.extend(tail);
         }
 
-        // 3. Query LLM
-        let req = ChatRequest {
-            model: if ai_mode == "local" { "local-model".to_string() } else { model.clone() },
-            messages: messages.clone(),
+        let ai_messages: Vec<crate::ai::ChatMessage> = messages
+            .iter()
+            .map(|m| crate::ai::ChatMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect();
+
+        let gen_req = crate::ai::GenerateRequest {
+            model: if ai_mode == "local" {
+                "local-model".to_string()
+            } else {
+                model.clone()
+            },
+            messages: ai_messages,
             temperature: 0.2,
-            provider: if ai_mode == "local" { "local".to_string() } else { provider.clone() },
+            max_tokens: None,
+            stream: false,
         };
 
-        let ai_reply = if ai_mode == "local" {
-            api_chat_cloud(
-                app.clone(),
-                "".to_string(),
-                "http://127.0.0.1:11434/v1/chat/completions".to_string(),
-                req,
-                None
-            ).await
+        let ai_reply: Result<String, String> = if let Some(gen) = adapter.as_text_generation() {
+            gen.generate(&gen_req, &creds)
+                .await
+                .map(|r| r.text)
+                .map_err(|e| e.to_string())
+        } else if let Some(streamer) = adapter.as_streaming_text() {
+            streamer
+                .stream(&gen_req, &creds, Box::new(|_| {}))
+                .await
+                .map(|r| r.text)
+                .map_err(|e| e.to_string())
         } else {
-            api_chat_cloud(
-                app.clone(), 
-                api_key.clone(), 
-                get_provider_url(&provider), 
-                req, 
-                None
-            ).await
+            Err(format!(
+                "Provider '{}' does not support text generation",
+                provider_id
+            ))
         };
 
         let ai_text = match ai_reply {
