@@ -144,26 +144,46 @@ You can only use one tool at a time. Do not write anything after the tool block.
             stream: true,
         };
 
+        let emitter = crate::events::EventEmitter::from_app(&app);
+        let stream_id = crate::events::StreamId::new().to_string();
+        let mut loop_correlation = crate::events::EventCorrelation::for_task("dev_agent", session_id.clone());
+        loop_correlation.stream_id = Some(stream_id);
+
         let ai_reply = if let Some(streamer) = adapter.as_streaming_text() {
-            let app_clone = app.clone();
-            streamer
+            let _ = emitter.emit_stream_started(&loop_correlation, &gen_req.model);
+            let emitter_clone = emitter.clone();
+            let correlation_clone = loop_correlation.clone();
+            let seq = std::sync::atomic::AtomicU64::new(0);
+
+            let res = streamer
                 .stream(
                     &gen_req,
                     &creds,
                     Box::new(move |chunk| {
                         if !chunk.text.is_empty() {
-                            let _ = app_clone.emit("chat-chunk", chunk.text);
+                            let n = seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                            let _ = emitter_clone.emit_stream_chunk(&correlation_clone, chunk.text, n, false);
                         }
                     }),
                 )
                 .await
-                .map_err(|e| e.to_string())?
-                .text
+                .map_err(|e| {
+                    let _ = emitter.emit_stream_failed(&loop_correlation, &e.to_string(), None);
+                    e.to_string()
+                })?;
+            let _ = emitter.emit_stream_finished(&loop_correlation, None, Some("stop".to_string()));
+            res.text
         } else if let Some(gen) = adapter.as_text_generation() {
-            gen.generate(&gen_req, &creds)
+            let _ = emitter.emit_stream_started(&loop_correlation, &gen_req.model);
+            let res = gen.generate(&gen_req, &creds)
                 .await
-                .map_err(|e| e.to_string())?
-                .text
+                .map_err(|e| {
+                    let _ = emitter.emit_stream_failed(&loop_correlation, &e.to_string(), None);
+                    e.to_string()
+                })?;
+            let _ = emitter.emit_stream_chunk(&loop_correlation, res.text.clone(), 1, true);
+            let _ = emitter.emit_stream_finished(&loop_correlation, None, Some("stop".to_string()));
+            res.text
         } else {
             return Err(format!(
                 "Provider '{}' does not support text generation",

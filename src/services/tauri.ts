@@ -47,6 +47,8 @@ import type {
   BrowserTabGroup,
   RecoveryReport,
 } from '../types';
+import type { EdithEventEnvelope } from '../events/types';
+export * from '../events';
 
 export const isTauri = () => {
   return typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -308,38 +310,49 @@ export async function saveSessionMessage(
 }
 
 // --- Chat Command ---
+export interface ChatCommandResult {
+  response: string;
+  type: string;
+  stream_id?: string;
+  turn_id?: string;
+}
+
 export async function chatCommand(
   message: string,
   sessionId: string,
   history: Array<{ role: string; text: string }>,
-  appSettings: Record<string, any>
-): Promise<{ response: string; type: string }> {
+  appSettings: Record<string, any>,
+  turnId?: string
+): Promise<ChatCommandResult> {
   if (!isTauri()) {
     // Helpful simulation when running in pure browser
     const lower = message.toLowerCase();
     if (lower.startsWith('open ')) {
-      return { response: 'Launched ' + message.slice(5) + ' (Simulated)', type: 'plugin' };
+      return { response: 'Launched ' + message.slice(5) + ' (Simulated)', type: 'plugin', turn_id: turnId };
     }
     if (lower.startsWith('play ')) {
       window.open('https://www.youtube.com/results?search_query=' + encodeURIComponent(message.slice(5)), '_blank');
-      return { response: 'Opening YouTube for: ' + message.slice(5), type: 'plugin' };
+      return { response: 'Opening YouTube for: ' + message.slice(5), type: 'plugin', turn_id: turnId };
     }
     if (lower.startsWith('search ')) {
       return {
         response: '### 🌐 Search Results for "' + message.slice(7) + '"\n- **Source 1**: AI advancements demonstrate rapid reasoning speed.\n- **Source 2**: Multi-modal workflows are now integrated into modern desktops.',
         type: 'ai',
+        turn_id: turnId,
       };
     }
     return {
       response: 'Hello! I am **E.D.I.T.H. Mark-85**. Tactical AI core active.\n\n```json\n{\n  "status": "connected",\n  "provider": "' + (appSettings.selectedProvider || 'groq') + '",\n  "model": "' + (appSettings.selectedModel || 'llama-3.3-70b-versatile') + '"\n}\n```\nHow may I assist your mission, Commander?',
       type: 'ai',
+      turn_id: turnId,
     };
   }
-  return await invoke('chat_command', {
+  return await invoke<ChatCommandResult>('chat_command', {
     message,
     sessionId,
     history,
     appSettings,
+    turnId,
   });
 }
 
@@ -809,6 +822,17 @@ export async function getBaseDir(): Promise<string> {
 }
 
 // --- Event Subscriptions ---
+export async function onEdithEvent(callback: (envelope: EdithEventEnvelope) => void): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  try {
+    return await listen<EdithEventEnvelope>('edith-event', (event) => {
+      callback(event.payload);
+    });
+  } catch {
+    return () => {};
+  }
+}
+
 export async function onChatChunk(callback: (chunk: string) => void): Promise<UnlistenFn> {
   if (!isTauri()) return () => {};
   try {

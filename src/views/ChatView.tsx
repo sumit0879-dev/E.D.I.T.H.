@@ -107,10 +107,13 @@ export const ChatView: React.FC = () => {
     };
   }, [activeSessionId]);
 
+  // Backward compatibility fallback for legacy un-keyed stream chunks (yields to streamRouter)
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     tauriService.onChatChunk((chunk) => {
+      if (tauriService.streamRouter.getActiveStreamCount() > 0) return;
+
       setMessages((prev) => {
         if (prev.length === 0) return prev;
         const lastIdx = prev.length - 1;
@@ -180,6 +183,30 @@ export const ChatView: React.FC = () => {
     setHasNewMessagesBelow(false);
     setTimeout(() => scrollToBottom('smooth'), 50);
 
+    // Correlated stream subscription: strictly isolated to this assistantMsgId (turnId)
+    const unsubscribeStream = tauriService.streamRouter.subscribeTurn(
+      assistantMsgId,
+      ({ text: chunkText }) => {
+        setMessages((prev) =>
+          prev.map((m) =>
+            m.id === assistantMsgId
+              ? {
+                  ...m,
+                  text: (m.text || '') + chunkText,
+                  content: (m.content || '') + chunkText,
+                }
+              : m
+          )
+        );
+
+        if (isAutoScroll) {
+          setTimeout(scrollToBottom, 50);
+        } else {
+          setHasNewMessagesBelow(true);
+        }
+      }
+    );
+
     try {
       await tauriService.saveSessionMessage(targetSessionId, 'user', text.trim(), timestamp);
 
@@ -192,7 +219,8 @@ export const ChatView: React.FC = () => {
         text.trim(),
         targetSessionId,
         historyItems,
-        settings
+        settings,
+        assistantMsgId
       );
 
       setMessages((prev) =>
@@ -238,9 +266,9 @@ export const ChatView: React.FC = () => {
       );
       showToast(errMsg, 'error');
     } finally {
+      unsubscribeStream();
       setIsLoading(false);
       pendingSessionIdRef.current = null;
-      setTimeout(scrollToBottom, 50);
     }
   };
 

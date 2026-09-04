@@ -3,6 +3,7 @@ use std::os::windows::process::CommandExt;
 use tauri::Manager;
 pub mod security;
 pub mod ai;
+pub mod events;
 mod agent;
 mod chat;
 pub mod db;
