@@ -38,36 +38,28 @@ fn ensure_audio_thread() {
                         match cmd {
                             AudioCommand::PlayRawPcm { samples, channels, sample_rate } => {
                                 println!("[AUDIO THREAD] PlayRawPcm command received ({} samples, {}Hz)", samples.len(), sample_rate);
-                                if current_player.is_none() {
-                                    current_player = Some(rodio::Player::connect_new(&handle.mixer()));
-                                    println!("[AUDIO THREAD] Player created");
-                                }
-                                if let Some(player) = &current_player {
-                                    let ch = NonZeroU16::new(channels).unwrap_or(NonZeroU16::new(1).unwrap());
-                                    let sr = NonZeroU32::new(sample_rate).unwrap_or(NonZeroU32::new(24000).unwrap());
-                                    let source = rodio::buffer::SamplesBuffer::new(ch, sr, samples);
-                                    player.append(source);
-                                    println!("[AUDIO THREAD] Audio appended to player, starting playback...");
-                                } else {
-                                    println!("[AUDIO THREAD] No player available!");
-                                }
+                                let player = rodio::Player::connect_new(&handle.mixer());
+                                player.set_volume(1.0);
+                                let ch = NonZeroU16::new(channels).unwrap_or(NonZeroU16::new(1).unwrap());
+                                let sr = NonZeroU32::new(sample_rate).unwrap_or(NonZeroU32::new(24000).unwrap());
+                                let source = rodio::buffer::SamplesBuffer::new(ch, sr, samples);
+                                player.append(source);
+                                player.play();
+                                current_player = Some(player);
+                                println!("[AUDIO THREAD] Audio appended to player, starting playback...");
                             }
                             AudioCommand::PlayEncodedBytes(bytes) => {
                                 println!("[AUDIO THREAD] PlayEncodedBytes command received ({} bytes)", bytes.len());
-                                if current_player.is_none() {
-                                    current_player = Some(rodio::Player::connect_new(&handle.mixer()));
-                                    println!("[AUDIO THREAD] Player created");
-                                }
                                 let cursor = std::io::Cursor::new(bytes);
                                 match Decoder::new(cursor) {
                                     Ok(source) => {
                                         println!("[AUDIO THREAD] Decoder ready");
-                                        if let Some(player) = &current_player {
-                                            player.append(source);
-                                            println!("[AUDIO THREAD] Audio appended to player, starting playback...");
-                                        } else {
-                                            println!("[AUDIO THREAD] No player available!");
-                                        }
+                                        let player = rodio::Player::connect_new(&handle.mixer());
+                                        player.set_volume(1.0);
+                                        player.append(source);
+                                        player.play();
+                                        current_player = Some(player);
+                                        println!("[AUDIO THREAD] Audio appended to player, starting playback...");
                                     }
                                     Err(e) => {
                                         println!("[AUDIO THREAD] Decoder error: {}", e);
@@ -98,7 +90,7 @@ fn ensure_audio_thread() {
 }
 
 #[tauri::command]
-pub async fn tts_speak(text: String, voice: Option<String>) -> Result<(), String> {
+pub async fn tts_speak(text: String, voice: Option<String>) -> Result<String, String> {
     println!("[CLOUD TTS] Starting Azure EdgeTTS synthesis...");
     println!("  Text: \"{}\"", text);
     println!("  Voice: {:?}", voice);
@@ -132,18 +124,13 @@ pub async fn tts_speak(text: String, voice: Option<String>) -> Result<(), String
     
     println!("[CLOUD TTS] Synthesis OK ({} bytes)", res.audio.len());
     
-    match AUDIO_SENDER.lock().unwrap().as_ref() {
-        Some(sender) => {
-            match sender.send(AudioCommand::PlayEncodedBytes(res.audio)) {
-                Ok(_) => println!("[CLOUD TTS] Sent to audio player"),
-                Err(e) => println!("[CLOUD TTS] Failed to send to audio player: {}", e),
-            }
-        }
-        None => println!("[CLOUD TTS] No audio sender available!"),
+    if let Some(sender) = AUDIO_SENDER.lock().unwrap().as_ref() {
+        let _ = sender.send(AudioCommand::PlayEncodedBytes(res.audio.clone()));
     }
     
+    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &res.audio);
     println!("[CLOUD TTS] Done!");
-    Ok(())
+    Ok(b64)
 }
 
 #[tauri::command]

@@ -57,6 +57,7 @@ export const ChatView: React.FC = () => {
   const [hasNewMessagesBelow, setHasNewMessagesBelow] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pendingSessionIdRef = useRef<string | null>(null);
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
@@ -75,6 +76,11 @@ export const ChatView: React.FC = () => {
   useEffect(() => {
     if (!activeSessionId) {
       setMessages([]);
+      return;
+    }
+
+    // Protect in-flight messages from being cleared during first message session creation
+    if (pendingSessionIdRef.current === activeSessionId) {
       return;
     }
 
@@ -123,7 +129,7 @@ export const ChatView: React.FC = () => {
       });
 
       if (isAutoScroll) {
-        scrollToBottom();
+        setTimeout(scrollToBottom, 50);
       } else {
         setHasNewMessagesBelow(true);
       }
@@ -142,6 +148,7 @@ export const ChatView: React.FC = () => {
     let targetSessionId = activeSessionId;
     if (!targetSessionId) {
       targetSessionId = await createSession(text.slice(0, 26));
+      pendingSessionIdRef.current = targetSessionId;
     }
 
     const timestamp = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
@@ -232,6 +239,7 @@ export const ChatView: React.FC = () => {
       showToast(errMsg, 'error');
     } finally {
       setIsLoading(false);
+      pendingSessionIdRef.current = null;
       setTimeout(scrollToBottom, 50);
     }
   };

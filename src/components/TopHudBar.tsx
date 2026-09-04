@@ -1,5 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
+import { Menu, Submenu, MenuItem } from '@tauri-apps/api/menu';
+import { isTauri } from '../services/tauri';
+import { browserController } from '../services/browserController';
 import {
   Activity,
   Cpu,
@@ -131,6 +134,77 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
     setIsModelMenuOpen(false);
   };
 
+  const handleModelMenuClick = async () => {
+    if (isTauri() && activeTab === 'browser') {
+      try {
+        const items: any[] = [];
+
+        for (const prov of providers) {
+          const provSubItems: any[] = [];
+          for (const m of prov.models) {
+            const isCurrent = settings.aiMode === 'api' && settings.selectedProvider === prov.id && settings.selectedModel === m.id;
+            const item = await MenuItem.new({
+              text: `${isCurrent ? '✓ ' : '   '}${m.label || m.id}`,
+              action: () => {
+                updateSetting('aiMode', 'api');
+                updateSetting('selectedProvider', prov.id);
+                updateSetting('selectedModel', m.id);
+                showToast(`Switched model to ${m.label || m.id}`, 'info');
+              },
+            });
+            provSubItems.push(item);
+          }
+          const sub = await Submenu.new({
+            text: prov.name,
+            items: provSubItems,
+          });
+          items.push(sub);
+        }
+
+        if (customProviders.length > 0) {
+          for (const cProv of customProviders) {
+            const cItems: any[] = [];
+            for (const m of cProv.models) {
+              const isCurrent = settings.aiMode === 'api' && settings.selectedProvider === cProv.id && settings.selectedModel === m.id;
+              const item = await MenuItem.new({
+                text: `${isCurrent ? '✓ ' : '   '}${m.label || m.id}`,
+                action: () => {
+                  updateSetting('aiMode', 'api');
+                  updateSetting('selectedProvider', cProv.id);
+                  updateSetting('selectedModel', m.id);
+                  showToast(`Switched model to ${m.label || m.id}`, 'info');
+                },
+              });
+              cItems.push(item);
+            }
+            const sub = await Submenu.new({
+              text: `${cProv.name} (Custom)`,
+              items: cItems,
+            });
+            items.push(sub);
+          }
+        }
+
+        const localItem = await MenuItem.new({
+          text: `${settings.aiMode === 'local' ? '✓ ' : '   '}Local GGUF (Llama Server)`,
+          action: () => {
+            updateSetting('aiMode', 'local');
+            showToast('Switched to Local GGUF Mode', 'info');
+          },
+        });
+        items.push(localItem);
+
+        const menu = await Menu.new({ items });
+        await menu.popup();
+        return;
+      } catch (e) {
+        console.error('Failed to open native model menu:', e);
+      }
+    }
+
+    setIsModelMenuOpen((prev) => !prev);
+  };
+
   const getActiveModelDisplay = () => {
     if (settings.aiMode === 'local') return 'Local GGUF';
     const activeProv =
@@ -208,7 +282,7 @@ export const TopHudBar: React.FC<TopHudBarProps> = ({
         <div className="relative hidden sm:block" ref={modelMenuRef}>
           <button
             type="button"
-            onClick={() => setIsModelMenuOpen((prev) => !prev)}
+            onClick={handleModelMenuClick}
             aria-label="Change AI Model"
             className="flex items-center gap-1.5 text-[11px] font-mono text-cyan-300 bg-cyan-950/50 hover:bg-cyan-900/60 px-2.5 py-1 rounded-lg border border-cyan-500/30 hover:border-cyan-400/60 max-w-[200px] xl:max-w-[300px] truncate shadow-sm transition cursor-pointer"
             title="Click to quickly switch AI Model"

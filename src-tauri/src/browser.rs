@@ -341,8 +341,8 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
     };
 
     // Explicitly supported internal E.D.I.T.H. routes
-    if cleaned == "edith://newtab" {
-        return Ok("edith://newtab".to_string());
+    if cleaned.starts_with("edith://") {
+        return Ok(cleaned.to_string());
     }
 
     // Supported direct protocols
@@ -363,8 +363,8 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
     if is_domain {
         Ok(format!("https://{}", trimmed))
     } else {
-        // Deterministic DuckDuckGo search fallback
-        Ok(format!("https://duckduckgo.com/?q={}", urlencoding::encode(trimmed)))
+        // Deterministic Google search fallback
+        Ok(format!("https://www.google.com/search?q={}", urlencoding::encode(trimmed)))
     }
 }
 
@@ -650,7 +650,7 @@ pub async fn browser_create_tab(
         }
     }
 
-    let is_new_tab = target_url_str == "edith://newtab";
+    let is_new_tab = target_url_str.starts_with("edith://");
 
     if let Some(existing_webview) = app.get_webview(&label) {
         let _ = existing_webview.set_position(Position::Logical(pos));
@@ -845,7 +845,7 @@ pub async fn browser_switch_tab(
             let _ = target_wv.set_position(Position::Logical(LogicalPosition::new(b.x, b.y)));
             let _ = target_wv.set_size(Size::Logical(LogicalSize::new(b.width, b.height)));
         }
-        if tab_info.url == "edith://newtab" {
+        if tab_info.url.starts_with("edith://") {
             let _ = target_wv.hide();
         } else {
             let _ = target_wv.show();
@@ -853,7 +853,7 @@ pub async fn browser_switch_tab(
         }
 
         if let Ok(u) = target_wv.url() {
-            if tab_info.url != "edith://newtab" {
+            if !tab_info.url.starts_with("edith://") {
                 tab_info.url = u.to_string();
                 tab_info.favicon = get_favicon_url(&tab_info.url);
             }
@@ -917,13 +917,18 @@ pub async fn browser_close_tab(
 
     if let Some(ref next) = next_active {
         let next_label = get_tab_label(&next.id);
+        let is_new_tab = next.url.starts_with("edith://") || next.url.is_empty() || next.url == "about:blank";
         if let Some(wv) = app.get_webview(&next_label) {
-            if let Some(ref b) = *state.bounds.lock().unwrap() {
-                let _ = wv.set_position(Position::Logical(LogicalPosition::new(b.x, b.y)));
-                let _ = wv.set_size(Size::Logical(LogicalSize::new(b.width, b.height)));
+            if is_new_tab {
+                let _ = wv.hide();
+            } else {
+                if let Some(ref b) = *state.bounds.lock().unwrap() {
+                    let _ = wv.set_position(Position::Logical(LogicalPosition::new(b.x, b.y)));
+                    let _ = wv.set_size(Size::Logical(LogicalSize::new(b.width, b.height)));
+                }
+                let _ = wv.show();
+                let _ = wv.set_focus();
             }
-            let _ = wv.show();
-            let _ = wv.set_focus();
         }
     }
 
@@ -1136,19 +1141,26 @@ pub async fn browser_navigate_tab(
     let normalized = normalize_url(&url)?;
     let label = get_tab_label(&tab_id);
 
-    if normalized == "edith://newtab" {
+    if normalized.starts_with("edith://") {
         if let Some(webview) = app.get_webview(&label) {
             let _ = webview.hide();
         }
+        let title = match normalized.as_str() {
+            "edith://history" => "History",
+            "edith://bookmarks" => "Bookmarks",
+            "edith://downloads" => "Downloads",
+            "edith://settings" => "Settings",
+            _ => "New Tab",
+        };
         let mut tabs = state.tabs.lock().unwrap();
         if let Some(tab) = tabs.iter_mut().find(|t| t.id == tab_id) {
-            tab.url = "edith://newtab".to_string();
-            tab.title = "New Tab".to_string();
+            tab.url = normalized.clone();
+            tab.title = title.to_string();
             tab.favicon = None;
             tab.is_loading = false;
             tab.error = None;
         }
-        return Ok("edith://newtab".to_string());
+        return Ok(normalized);
     }
 
     let target_url = Url::parse(&normalized)
@@ -1258,7 +1270,7 @@ pub async fn browser_set_bounds_all(
     if let Some(ref active_id) = *state.active_tab_id.lock().unwrap() {
         let is_new_tab = {
             let tabs = state.tabs.lock().unwrap();
-            tabs.iter().find(|t| &t.id == active_id).map(|t| t.url == "edith://newtab").unwrap_or(false)
+            tabs.iter().find(|t| &t.id == active_id).map(|t| t.url.starts_with("edith://")).unwrap_or(false)
         };
         let label = get_tab_label(active_id);
         if let Some(webview) = app.get_webview(&label) {
@@ -1302,7 +1314,7 @@ pub async fn browser_show_active(
     if let Some(ref active_id) = *state.active_tab_id.lock().unwrap() {
         let is_new_tab = {
             let tabs = state.tabs.lock().unwrap();
-            tabs.iter().find(|t| &t.id == active_id).map(|t| t.url == "edith://newtab").unwrap_or(false)
+            tabs.iter().find(|t| &t.id == active_id).map(|t| t.url.starts_with("edith://")).unwrap_or(false)
         };
         let label = get_tab_label(active_id);
         if let Some(wv) = app.get_webview(&label) {

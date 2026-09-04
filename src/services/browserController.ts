@@ -27,12 +27,63 @@ import type {
   BrowserDownload,
   BrowserProfile,
   RecoveryReport,
+  SearchEngineId,
+  SearchEngineConfig,
+  BrowserPreferences,
 } from '../types';
+
+export type { SearchEngineId, SearchEngineConfig, BrowserPreferences };
+
+export const SEARCH_ENGINES: Record<SearchEngineId, SearchEngineConfig> = {
+  google: {
+    id: 'google',
+    name: 'Google',
+    searchUrlTemplate: 'https://www.google.com/search?q=%s',
+    homepageUrl: 'https://www.google.com',
+  },
+  duckduckgo: {
+    id: 'duckduckgo',
+    name: 'DuckDuckGo',
+    searchUrlTemplate: 'https://duckduckgo.com/?q=%s',
+    homepageUrl: 'https://duckduckgo.com',
+  },
+  bing: {
+    id: 'bing',
+    name: 'Bing',
+    searchUrlTemplate: 'https://www.bing.com/search?q=%s',
+    homepageUrl: 'https://www.bing.com',
+  },
+};
+
+export const DEFAULT_SEARCH_ENGINE: SearchEngineId = 'google';
+export const SEARCH_ENGINE_STORAGE_KEY = 'edith_browser_search_engine';
+
+export function getStoredSearchEngineId(): SearchEngineId {
+  if (typeof window === 'undefined' || !window.localStorage) {
+    return DEFAULT_SEARCH_ENGINE;
+  }
+  const stored = window.localStorage.getItem(SEARCH_ENGINE_STORAGE_KEY) as SearchEngineId;
+  if (stored && SEARCH_ENGINES[stored]) {
+    return stored;
+  }
+  return DEFAULT_SEARCH_ENGINE;
+}
+
+export function setStoredSearchEngineId(id: SearchEngineId): void {
+  if (typeof window !== 'undefined' && window.localStorage && SEARCH_ENGINES[id]) {
+    window.localStorage.setItem(SEARCH_ENGINE_STORAGE_KEY, id);
+  }
+}
+
+export function formatSearchUrl(query: string, engineId?: SearchEngineId): string {
+  const engine = SEARCH_ENGINES[engineId || getStoredSearchEngineId()] || SEARCH_ENGINES.google;
+  return engine.searchUrlTemplate.replace('%s', encodeURIComponent(query.trim()));
+}
 
 /**
  * Normalizes user input into a direct HTTPS URL or a deterministic search engine query URL.
  */
-export function normalizeBrowserUrl(input: string): string {
+export function normalizeBrowserUrl(input: string, engineId?: SearchEngineId): string {
   const trimmed = input.trim();
   if (!trimmed) {
     return 'https://example.com';
@@ -48,8 +99,8 @@ export function normalizeBrowserUrl(input: string): string {
   const cleaned = lower.endsWith('/') ? lower.slice(0, -1) : lower;
 
   // Explicitly supported internal E.D.I.T.H. routes
-  if (cleaned === 'edith://newtab') {
-    return 'edith://newtab';
+  if (cleaned.startsWith('edith://')) {
+    return cleaned;
   }
 
   if (
@@ -69,8 +120,8 @@ export function normalizeBrowserUrl(input: string): string {
     return `https://${trimmed}`;
   }
 
-  // Fallback to DuckDuckGo search query
-  return `https://duckduckgo.com/?q=${encodeURIComponent(trimmed)}`;
+  // Fallback to configured search query
+  return formatSearchUrl(trimmed, engineId);
 }
 
 export type BrowserStateListener = (state: BrowserMultiStateInfo) => void;
@@ -104,6 +155,23 @@ class BrowserController {
 
   public getActiveTab(): BrowserTabInfo | undefined {
     return this.tabs.find((t) => t.id === this.activeTabId);
+  }
+
+  public getSearchEngineId(): SearchEngineId {
+    return getStoredSearchEngineId();
+  }
+
+  public setSearchEngineId(id: SearchEngineId): void {
+    setStoredSearchEngineId(id);
+    this.notify();
+  }
+
+  public getSearchEngine(): SearchEngineConfig {
+    return SEARCH_ENGINES[this.getSearchEngineId()] || SEARCH_ENGINES.google;
+  }
+
+  public formatSearchUrl(query: string): string {
+    return formatSearchUrl(query, this.getSearchEngineId());
   }
 
   public async refreshMultiState(): Promise<BrowserMultiStateInfo> {
@@ -512,6 +580,10 @@ class BrowserController {
     return await tauriService.browserHistoryClear();
   }
 
+  public async getHistory(limit?: number): Promise<BrowserHistoryEntry[]> {
+    return await this.getRecentHistory(limit);
+  }
+
   public async addBookmark(
     title: string,
     url: string,
@@ -589,6 +661,14 @@ class BrowserController {
 
   public async openDownloadFile(downloadId: string): Promise<boolean> {
     return await tauriService.browserDownloadOpenFile(downloadId);
+  }
+
+  public async openDownloadedFile(downloadId: string): Promise<boolean> {
+    return await this.openDownloadFile(downloadId);
+  }
+
+  public async clearDownloads(): Promise<number> {
+    return await this.clearDownloadRecords();
   }
 
   // --- Phase 5.6C Browser Profiles & Session Storage Isolation Methods ---
