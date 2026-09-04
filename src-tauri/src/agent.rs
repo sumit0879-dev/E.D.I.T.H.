@@ -2,7 +2,7 @@ use serde::Serialize;
 use tauri::{AppHandle, State, Emitter};
 use std::sync::Mutex;
 use crate::db::DbState;
-use crate::llm::{api_chat_cloud, ChatMessage, ChatRequest};
+use crate::llm::ChatMessage;
 
 #[derive(Serialize)]
 pub struct AgentStatus {
@@ -24,21 +24,7 @@ pub async fn agent_status(state: State<'_, AgentState>) -> Result<AgentStatus, S
     })
 }
 
-fn get_provider_url(provider: &str) -> String {
-    match provider {
-        "groq" => "https://api.groq.com/openai/v1/chat/completions".to_string(),
-        "openai" => "https://api.openai.com/v1/chat/completions".to_string(),
-        "together" => "https://api.together.xyz/v1/chat/completions".to_string(),
-        "openrouter" => "https://openrouter.ai/api/v1/chat/completions".to_string(),
-        "deepseek" => "https://api.deepseek.com/chat/completions".to_string(),
-        "cerebras" => "https://api.cerebras.ai/v1/chat/completions".to_string(),
-        "sambanova" => "https://api.sambanova.ai/v1/chat/completions".to_string(),
-        "mistral" => "https://api.mistral.ai/v1/chat/completions".to_string(),
-        "huggingface" => "https://api-inference.huggingface.co/v1/chat/completions".to_string(),
-        "gemini" => "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions".to_string(),
-        _ => "https://api.groq.com/openai/v1/chat/completions".to_string(),
-    }
-}
+use crate::ai::CredentialStore;
 
 #[tauri::command]
 pub async fn agent_chat(
@@ -57,17 +43,25 @@ pub async fn agent_chat(
     };
     
     let ai_mode = settings.get("aiMode").cloned().unwrap_or_else(|| "api".to_string());
-    let provider = settings.get("selectedProvider").cloned().unwrap_or_else(|| "groq".to_string());
+    let provider_id = if ai_mode == "local" {
+        "local".to_string()
+    } else {
+        settings.get("selectedProvider").cloned().unwrap_or_else(|| "groq".to_string())
+    };
     let model = settings.get("selectedModel").cloned().unwrap_or_else(|| "llama-3.3-70b-versatile".to_string());
-    // Try multiple key format options for backward compatibility
-    let api_key_key = format!("api_key_{}", provider);
-    let api_key = settings.get(&api_key_key)
-        .or_else(|| settings.get(&format!("apiKey_{}", provider)))
-        .or_else(|| settings.get("apiKey")).cloned().unwrap_or_default();
-    
-    if ai_mode != "local" && api_key.is_empty() {
+
+    let mut registry = crate::ai::ProviderRegistry::standard_builtins();
+    if let Some(custom_providers_raw) = settings.get("customProviders") {
+        registry.load_custom_providers(custom_providers_raw);
+    }
+    let cred_store = crate::ai::SettingsCredentialStore::new(settings.clone());
+    let creds = cred_store.get_credential(&provider_id).ok().flatten();
+
+    if ai_mode != "local" && creds.is_none() && provider_id != "local" {
         return Err("API Key is missing for selected provider.".to_string());
     }
+
+    let adapter = registry.resolve_provider(&provider_id).map_err(|e| e.to_string())?;
     
     let custom_instr = settings.get("customInstructions").cloned().unwrap_or_default();
     let nickname = settings.get("nickname").cloned().unwrap_or_default();
@@ -130,29 +124,51 @@ You can only use one tool at a time. Do not write anything after the tool block.
     let mut final_response = String::new();
     
     for _ in 0..max_iterations {
-        let req = ChatRequest {
-            model: if ai_mode == "local" { "local-model".to_string() } else { model.clone() },
-            messages: messages.clone(),
+        let ai_messages: Vec<crate::ai::ChatMessage> = messages
+            .iter()
+            .map(|m| crate::ai::ChatMessage {
+                role: m.role.clone(),
+                content: m.content.clone(),
+            })
+            .collect();
+
+        let gen_req = crate::ai::GenerateRequest {
+            model: if ai_mode == "local" {
+                "local-model".to_string()
+            } else {
+                model.clone()
+            },
+            messages: ai_messages,
             temperature,
-            provider: if ai_mode == "local" { "local".to_string() } else { provider.clone() },
+            max_tokens: None,
+            stream: true,
         };
-        
-        let ai_reply = if ai_mode == "local" {
-            api_chat_cloud(
-                app.clone(),
-                "".to_string(),
-                "http://127.0.0.1:11434/v1/chat/completions".to_string(),
-                req,
-                Some("chat-chunk".to_string())
-            ).await?
+
+        let ai_reply = if let Some(streamer) = adapter.as_streaming_text() {
+            let app_clone = app.clone();
+            streamer
+                .stream(
+                    &gen_req,
+                    &creds,
+                    Box::new(move |chunk| {
+                        if !chunk.text.is_empty() {
+                            let _ = app_clone.emit("chat-chunk", chunk.text);
+                        }
+                    }),
+                )
+                .await
+                .map_err(|e| e.to_string())?
+                .text
+        } else if let Some(gen) = adapter.as_text_generation() {
+            gen.generate(&gen_req, &creds)
+                .await
+                .map_err(|e| e.to_string())?
+                .text
         } else {
-            api_chat_cloud(
-                app.clone(), 
-                api_key.clone(), 
-                get_provider_url(&provider), 
-                req, 
-                Some("chat-chunk".to_string())
-            ).await?
+            return Err(format!(
+                "Provider '{}' does not support text generation",
+                provider_id
+            ));
         };
         
         final_response.push_str(&ai_reply);
