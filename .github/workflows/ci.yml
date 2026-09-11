@@ -58,10 +58,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             src-tauri/target/
-          key: ${{ runner.os }}-cargo-ci-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ hashFiles('src-tauri/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-ci-v2-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/build.rs') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-ci-${{ hashFiles('src-tauri/Cargo.lock') }}-
-            ${{ runner.os }}-cargo-ci-
+            ${{ runner.os }}-cargo-ci-v2-${{ hashFiles('src-tauri/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-ci-v2-
 
       - name: Run Rust cargo check
         run: cargo check --manifest-path src-tauri/Cargo.toml
