@@ -4,7 +4,7 @@ use crate::llm::ChatMessage;
 use crate::plugins;
 use serde::{Deserialize, Serialize};
 use tauri::command;
-use tauri::{Emitter, State};
+use tauri::State;
 
 #[derive(Serialize, Deserialize)]
 pub struct ChatHistoryItem {
@@ -12,10 +12,36 @@ pub struct ChatHistoryItem {
     pub text: String,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct ChatResponse {
     pub response: String,
     pub r#type: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stream_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub turn_id: Option<String>,
+}
+
+impl ChatResponse {
+    pub fn new(response: String, r#type: String) -> Self {
+        Self {
+            response,
+            r#type,
+            stream_id: None,
+            turn_id: None,
+        }
+    }
+
+    pub fn with_stream(mut self, stream_id: impl Into<String>, turn_id: impl Into<String>) -> Self {
+        self.stream_id = Some(stream_id.into());
+        self.turn_id = Some(turn_id.into());
+        self
+    }
+
+    pub fn with_turn(mut self, turn_id: impl Into<String>) -> Self {
+        self.turn_id = Some(turn_id.into());
+        self
+    }
 }
 
 fn plugin_enabled(state: &DbState, plugin_id: &str) -> Result<bool, String> {
@@ -25,13 +51,13 @@ fn plugin_enabled(state: &DbState, plugin_id: &str) -> Result<bool, String> {
 }
 
 fn plugin_disabled_response(plugin_id: &str) -> ChatResponse {
-    ChatResponse {
-        response: format!(
+    ChatResponse::new(
+        format!(
             "Plugin '{}' is disabled in Settings. Enable it under PlugIn to use this command.",
             plugin_id
         ),
-        r#type: "error".to_string(),
-    }
+        "error".to_string(),
+    )
 }
 
 
@@ -44,96 +70,82 @@ pub async fn chat_command(
     history: Vec<ChatHistoryItem>,
     app_settings: serde_json::Value,
     db_state: State<'_, DbState>,
+    turn_id: Option<String>,
 ) -> Result<ChatResponse, String> {
     println!("RUST: chat_command invoked! message: {}, session_id: {}", message, session_id);
+    let effective_turn_id = turn_id.unwrap_or_else(|| crate::events::TurnId::new().to_string());
+    let stream_id = crate::events::StreamId::new().to_string();
+    let emitter = crate::events::EventEmitter::from_app(&app);
+    let correlation = crate::events::EventCorrelation::for_stream(
+        Some(session_id.clone()),
+        Some(effective_turn_id.clone()),
+        Some(stream_id.clone()),
+    );
+
     let msg_lower = message.to_lowercase();
 
     if msg_lower.starts_with("open ") || msg_lower.starts_with("launch ") {
         if !plugin_enabled(&db_state, "app_launcher")? {
-            return Ok(plugin_disabled_response("app_launcher"));
+            return Ok(plugin_disabled_response("app_launcher").with_turn(&effective_turn_id));
         }
         let offset = if msg_lower.starts_with("open ") { 5 } else { 7 };
         let app_name = message[offset..].trim();
         let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
         let launch_path = plugins::resolve_launch_path(&conn, app_name);
         drop(conn);
-        return Ok(ChatResponse {
-            response: plugins::plugin_app_launcher(&launch_path),
-            r#type: "plugin".to_string(),
-        });
+        return Ok(ChatResponse::new(plugins::plugin_app_launcher(&launch_path), "plugin".to_string()).with_turn(&effective_turn_id));
     }
 
     if msg_lower.starts_with("play ") {
         if !plugin_enabled(&db_state, "media_player")? {
-            return Ok(plugin_disabled_response("media_player"));
+            return Ok(plugin_disabled_response("media_player").with_turn(&effective_turn_id));
         }
-        return Ok(ChatResponse {
-            response: plugins::plugin_media_player(message[5..].trim().to_string()).await,
-            r#type: "plugin".to_string(),
-        });
+        return Ok(ChatResponse::new(plugins::plugin_media_player(message[5..].trim().to_string()).await, "plugin".to_string()).with_turn(&effective_turn_id));
     }
 
     if msg_lower.starts_with("whatsapp ") {
         if !plugin_enabled(&db_state, "whatsapp")? {
-            return Ok(plugin_disabled_response("whatsapp"));
+            return Ok(plugin_disabled_response("whatsapp").with_turn(&effective_turn_id));
         }
         let payload = message[9..].trim();
         // naive split: first word is number, rest is message
         let parts: Vec<&str> = payload.splitn(2, ' ').collect();
         if parts.len() == 2 {
-            return Ok(ChatResponse {
-                response: plugins::plugin_whatsapp(parts[0], parts[1]),
-                r#type: "plugin".to_string(),
-            });
+            return Ok(ChatResponse::new(plugins::plugin_whatsapp(parts[0], parts[1]), "plugin".to_string()).with_turn(&effective_turn_id));
         } else {
-             return Ok(ChatResponse {
-                response: "Please provide both number and message. Example: whatsapp 1234567890 hello".to_string(),
-                r#type: "error".to_string(),
-            });
+             return Ok(ChatResponse::new("Please provide both number and message. Example: whatsapp 1234567890 hello".to_string(), "error".to_string()).with_turn(&effective_turn_id));
         }
     }
     if msg_lower.starts_with("email ") {
         if !plugin_enabled(&db_state, "gmail")? {
-            return Ok(plugin_disabled_response("gmail"));
+            return Ok(plugin_disabled_response("gmail").with_turn(&effective_turn_id));
         }
         let payload = message[6..].trim();
         let parts: Vec<&str> = payload.splitn(2, ' ').collect();
         if parts.len() == 2 {
-            return Ok(ChatResponse {
-                response: plugins::plugin_gmail(parts[0], parts[1]),
-                r#type: "plugin".to_string(),
-            });
+            return Ok(ChatResponse::new(plugins::plugin_gmail(parts[0], parts[1]), "plugin".to_string()).with_turn(&effective_turn_id));
         } else {
-             return Ok(ChatResponse {
-                response: "Please provide both email and message. Example: email test@test.com hello".to_string(),
-                r#type: "error".to_string(),
-            });
+             return Ok(ChatResponse::new("Please provide both email and message. Example: email test@test.com hello".to_string(), "error".to_string()).with_turn(&effective_turn_id));
         }
     }
 
     if msg_lower.starts_with("cmd ") || msg_lower.starts_with("terminal ") {
         if !plugin_enabled(&db_state, "terminal")? {
-            return Ok(plugin_disabled_response("terminal"));
+            return Ok(plugin_disabled_response("terminal").with_turn(&effective_turn_id));
         }
         let q = if msg_lower.starts_with("cmd ") { message[4..].trim() } else { message[9..].trim() };
-        return Ok(ChatResponse {
-            response: plugins::plugin_system_terminal(q),
-            r#type: "plugin".to_string(),
-        });
+        return Ok(ChatResponse::new(plugins::plugin_system_terminal(q), "plugin".to_string()).with_turn(&effective_turn_id));
     }
 
 
     if msg_lower.contains("volume up") || msg_lower.contains("volume down") || msg_lower.contains("mute") {
         if !plugin_enabled(&db_state, "system_control")? {
-            return Ok(plugin_disabled_response("system_control"));
+            return Ok(plugin_disabled_response("system_control").with_turn(&effective_turn_id));
         }
         let action = if msg_lower.contains("volume up") { "volume_up" }
                      else if msg_lower.contains("volume down") { "volume_down" }
                      else { "mute" };
-        return Ok(ChatResponse {
-            response: plugins::plugin_system_control(action),
-            r#type: "plugin".to_string(),
-        });
+        return Ok(ChatResponse::new(plugins::plugin_system_control(action), "plugin".to_string()).with_turn(&effective_turn_id));
     }
 
     let custom_instr   = app_settings.get("customInstructions").and_then(|v| v.as_str()).unwrap_or("");
@@ -232,7 +244,7 @@ pub async fn chat_command(
 
     let adapter = match registry.resolve_provider(&provider_id) {
         Ok(a) => a,
-        Err(e) => return Ok(ChatResponse { response: e.to_string(), r#type: "error".to_string() }),
+        Err(e) => return Ok(ChatResponse::new(e.to_string(), "error".to_string()).with_turn(&effective_turn_id)),
     };
 
     let ai_messages: Vec<crate::ai::ChatMessage> = messages
@@ -241,7 +253,7 @@ pub async fn chat_command(
         .collect();
 
     let req = crate::ai::GenerateRequest {
-        model,
+        model: model.clone(),
         messages: ai_messages,
         temperature: temp,
         max_tokens: None,
@@ -250,19 +262,45 @@ pub async fn chat_command(
 
     let stream_cap = adapter.as_streaming_text();
     let reply_result = if let Some(streamer) = stream_cap {
-        let app_clone = app.clone();
-        streamer.stream(&req, &creds, Box::new(move |chunk| {
+        let _ = emitter.emit_stream_started(&correlation, &model);
+        let emitter_clone = emitter.clone();
+        let correlation_clone = correlation.clone();
+        let seq = std::sync::atomic::AtomicU64::new(0);
+
+        let res = streamer.stream(&req, &creds, Box::new(move |chunk| {
             if !chunk.text.is_empty() {
-                let _ = app_clone.emit("chat-chunk", chunk.text);
+                let n = seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                let _ = emitter_clone.emit_stream_chunk(&correlation_clone, chunk.text, n, false);
             }
-        })).await
+        })).await;
+
+        match &res {
+            Ok(_) => {
+                let _ = emitter.emit_stream_finished(&correlation, None, Some("stop".to_string()));
+            }
+            Err(e) => {
+                let _ = emitter.emit_stream_failed(&correlation, &e.to_string(), None);
+            }
+        }
+        res
     } else if let Some(gen) = adapter.as_text_generation() {
-        gen.generate(&req, &creds).await
+        let _ = emitter.emit_stream_started(&correlation, &model);
+        let res = gen.generate(&req, &creds).await;
+        match &res {
+            Ok(reply) => {
+                let _ = emitter.emit_stream_chunk(&correlation, reply.text.clone(), 1, true);
+                let _ = emitter.emit_stream_finished(&correlation, None, Some("stop".to_string()));
+            }
+            Err(e) => {
+                let _ = emitter.emit_stream_failed(&correlation, &e.to_string(), None);
+            }
+        }
+        res
     } else {
-        return Ok(ChatResponse {
-            response: format!("Provider '{}' does not support text generation", provider_id),
-            r#type: "error".to_string(),
-        });
+        return Ok(ChatResponse::new(
+            format!("Provider '{}' does not support text generation", provider_id),
+            "error".to_string(),
+        ).with_turn(&effective_turn_id));
     };
 
     match reply_result {
@@ -275,8 +313,8 @@ pub async fn chat_command(
                 let combined = format!("User: {}\nAssistant: {}", msg, r);
                 let _ = crate::memory::save_to_memory_cmd(app3, combined, format!("chat:{}", sid)).await;
             });
-            Ok(ChatResponse { response: reply.text, r#type: "ai".to_string() })
+            Ok(ChatResponse::new(reply.text, "ai".to_string()).with_stream(&stream_id, &effective_turn_id))
         }
-        Err(e) => Ok(ChatResponse { response: e.to_string(), r#type: "error".to_string() }),
+        Err(e) => Ok(ChatResponse::new(e.to_string(), "error".to_string()).with_stream(&stream_id, &effective_turn_id)),
     }
 }
