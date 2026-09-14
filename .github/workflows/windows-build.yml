@@ -59,10 +59,10 @@ jobs:
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
             src-tauri/target/
-          key: ${{ runner.os }}-cargo-release-${{ hashFiles('src-tauri/Cargo.lock') }}-${{ hashFiles('src-tauri/Cargo.toml') }}
+          key: ${{ runner.os }}-cargo-release-v2-${{ hashFiles('src-tauri/Cargo.lock', 'src-tauri/Cargo.toml', 'src-tauri/build.rs') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-release-${{ hashFiles('src-tauri/Cargo.lock') }}-
-            ${{ runner.os }}-cargo-release-
+            ${{ runner.os }}-cargo-release-v2-${{ hashFiles('src-tauri/Cargo.lock') }}-
+            ${{ runner.os }}-cargo-release-v2-
 
       - name: Build frontend
         run: npm run build
