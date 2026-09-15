@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../context/AppContext';
 import * as tauriService from '../services/tauri';
+import * as conversationService from '../services/conversationService';
 import type { Message } from '../types';
 import { CodeBlock } from '../components/CodeBlock';
 import { ArcReactor } from '../components/ArcReactor';
@@ -58,6 +59,18 @@ export const ChatView: React.FC = () => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pendingSessionIdRef = useRef<string | null>(null);
+  const currentTurnIdRef = useRef<string | null>(null);
+
+  const handleCancelTurn = async () => {
+    if (currentTurnIdRef.current) {
+      try {
+        await conversationService.cancelConversationTurn(currentTurnIdRef.current, 'User cancelled');
+        showToast('Generation cancelled', 'info');
+      } catch (err: any) {
+        console.warn('Error cancelling turn:', err);
+      }
+    }
+  };
 
   const scrollToBottom = (behavior: ScrollBehavior = 'smooth') => {
     messagesEndRef.current?.scrollIntoView({ behavior });
@@ -207,6 +220,8 @@ export const ChatView: React.FC = () => {
       }
     );
 
+    currentTurnIdRef.current = assistantMsgId;
+
     try {
       await tauriService.saveSessionMessage(targetSessionId, 'user', text.trim(), timestamp);
 
@@ -268,6 +283,7 @@ export const ChatView: React.FC = () => {
     } finally {
       unsubscribeStream();
       setIsLoading(false);
+      currentTurnIdRef.current = null;
       pendingSessionIdRef.current = null;
     }
   };
@@ -613,6 +629,7 @@ export const ChatView: React.FC = () => {
         <FloatingCommandBar
           onSendMessage={handleSendMessage}
           isLoading={isLoading}
+          onCancelTurn={handleCancelTurn}
           showScrollToBottom={!isAutoScroll && messages.length > 0}
           hasNewMessagesBelow={hasNewMessagesBelow}
           onScrollToBottom={() => {
