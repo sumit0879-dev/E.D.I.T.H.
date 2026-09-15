@@ -65,6 +65,8 @@ graph TD
 1. **Session**: Represents the top-level user interaction scope, mission workspace, or session thread. Mapped to SQLite `sessions (id, title, timestamp)`.
 2. **Conversation**: Represents a persistent or logical dialogue thread under a session. In the current database schema, a session maps 1:1 with a primary conversation thread, but the models decouple conversation identity from session storage.
 3. **Turn**: Represents a single user prompt and its associated assistant processing, tool invocation, and streaming response lifecycle. Identified by a backend-authoritative `TurnId`.
+   - **Backend-Authoritative TurnId**: The backend is ALWAYS the sole authoritative creator and owner of `TurnId`. Any client-provided `client_turn_id` is treated strictly as a non-authoritative legacy correlation hint for backward compatibility; it is never stored as `TurnId`, never emitted as `TurnId`, and never used for turn lookup.
+   - **Authoritative StreamId Ownership**: Each `Turn` establishes and owns its authoritative `StreamId`. `execute_turn` and `cancel_turn` retrieve the stream identity directly from the `Turn` state, preventing execution and cancellation correlation divergence.
 4. **Message**: Represents individual persisted or displayable chat items (`user`, `assistant`, `system`, `tool`) with sequence and timestamps.
 
 ---
@@ -73,12 +75,13 @@ graph TD
 
 ### In Scope:
 - Conversation and session lifecycle coordination.
-- Backend-authoritative Turn creation and `TurnId` generation.
+- Backend-authoritative Turn creation and `TurnId` generation (strictly ignoring any client attempts to impose an authoritative turn identity).
+- Authoritative `StreamId` creation and binding to `Turn` state.
 - Turn lifecycle state machine transitions (`Created` $\to$ `InputAccepted` $\to$ `Processing` $\to$ `Streaming` $\to$ `Completed` / `Failed` / `Cancelled`).
 - Context assembly: aggregating system instructions, user profile metadata, retrieved knowledge, and chat history.
 - Dynamic provider and model resolution via Phase 1 `ProviderRegistry`.
 - Streaming integration via Phase 2 `EventEmitter`.
-- Scoped turn cancellation via per-turn atomic cancellation tokens.
+- Scoped turn cancellation via per-turn atomic cancellation tokens, guaranteeing exactly one terminal lifecycle event (`StreamCancelled`, `StreamFinished`, or `StreamFailed`).
 - Normalized conversation errors (`ConversationError`).
 - Message persistence in SQLite.
 
@@ -235,9 +238,11 @@ stateDiagram-v2
 ---
 
 ## 12. Cancellation Model
-
+ 
 Cancellation is scoped and isolated at both the Turn and Task levels:
-1. **Turn Cancellation**: `conversation_cancel_turn(turn_id, reason)` signals that specific turn's `CancellationToken`. The active stream listener breaks, emits `StreamPayload::Cancelled`, and persists any partial output. Concurrent turns for other sessions continue unimpeded.
+1. **Turn Cancellation**: `conversation_cancel_turn(turn_id, reason)` signals that specific turn's `CancellationToken`. The active stream listener breaks, emits `StreamPayload::Cancelled`, and marks the turn status as `TurnStatus::Cancelled`.
+   - **Single Terminal Event Guarantee**: A stream transitions to exactly one terminal state (`StreamCancelled`, `StreamFinished`, or `StreamFailed`). Once a turn is cancelled, `execute_turn()` verifies the state transition and suppresses duplicate `StreamCancelled` emissions. No `StreamFinished` or `StreamFailed` event is emitted after cancellation.
+   - **Isolation**: Cancelling Turn A trips only Turn A's token; Turn B and any concurrent tasks continue without interference.
 2. **Task Cancellation**: `task_cancel(task_id, reason)` signals that specific task's `CancellationToken`, sets status to `Cancelled`, and emits `TaskPayload::Cancelled`. Other concurrent tasks remain unaffected.
 
 ---
@@ -271,7 +276,7 @@ This boundary allows semantic memory lookups without embedding LanceDB queries o
 
 Exposed Tauri IPC commands:
 - `conversation_submit_turn(sessionId, message, providerId, modelId, temperature, clientTurnId)`
-- `conversation_execute_turn(turnId, streamId, appSettings)`
+- `conversation_execute_turn(turnId, streamId?, appSettings)`
 - `conversation_cancel_turn(turnId, reason)`
 - `conversation_get_turn_status(turnId)`
 - `task_create(taskType, goal, sessionId, turnId)`

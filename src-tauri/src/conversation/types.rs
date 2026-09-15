@@ -42,7 +42,9 @@ pub struct TurnSubmissionRequest {
     pub provider_id: Option<String>,
     pub model_id: Option<String>,
     pub temperature: Option<f64>,
-    /// Optional client-provided hint ID for legacy compatibility bridging.
+    /// Optional legacy correlation hint for backwards compatibility with older clients.
+    /// NON-AUTHORITATIVE: The backend ALWAYS generates the authoritative TurnId.
+    /// This hint is never stored as TurnId, never emitted as TurnId, and never used for turn lookup.
     pub client_turn_id: Option<String>,
 }
 
@@ -78,6 +80,7 @@ impl Default for ModelSelection {
 pub struct TurnSnapshot {
     pub turn_id: String,
     pub session_id: SessionId,
+    pub stream_id: String,
     pub status: super::turn::TurnStatus,
     pub model_selection: ModelSelection,
     pub created_at_ms: u64,

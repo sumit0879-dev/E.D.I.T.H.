@@ -20,6 +20,7 @@ export interface SubmitTurnResult {
 export interface TurnStatusSnapshot {
   turn_id: string;
   session_id: string;
+  stream_id: string;
   status: 'created' | 'input_accepted' | 'processing' | 'streaming' | 'completed' | 'failed' | 'cancelled';
   model_selection: {
     provider_id: string;
@@ -57,7 +58,7 @@ export interface TaskSnapshot {
  */
 export async function submitConversationTurn(req: SubmitTurnRequest): Promise<SubmitTurnResult> {
   if (!isTauri()) {
-    const turnId = req.clientTurnId || 'turn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
+    const turnId = 'turn-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
     const streamId = 'stream-' + Date.now() + '-' + Math.random().toString(36).slice(2, 6);
     return {
       turn_id: turnId,
@@ -79,10 +80,11 @@ export async function submitConversationTurn(req: SubmitTurnRequest): Promise<Su
 
 /**
  * Executes model generation and streaming for an accepted turn.
+ * StreamId is optional as the authoritative stream is owned by the turn.
  */
 export async function executeConversationTurn(
   turnId: string,
-  streamId: string,
+  streamId?: string,
   appSettings?: Record<string, any>
 ): Promise<string> {
   if (!isTauri()) {

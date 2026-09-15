@@ -260,7 +260,7 @@ pub async fn chat_command(
         stream: true,
     };
 
-    if let Some(core) = app.try_state::<crate::conversation::ConversationCore>() {
+    let (effective_turn_id, cancel_token) = if let Some(core) = app.try_state::<crate::conversation::ConversationCore>() {
         let sub_req = crate::conversation::TurnSubmissionRequest {
             session_id: session_id.clone(),
             message: message.clone(),
@@ -269,13 +269,14 @@ pub async fn chat_command(
             temperature: Some(temp),
             client_turn_id: Some(effective_turn_id.clone()),
         };
-        let _ = core.submit_turn(sub_req).await;
-    }
-
-    let cancel_token = if let Some(core) = app.try_state::<crate::conversation::ConversationCore>() {
-        core.get_cancellation_token(&crate::events::TurnId::from_string(&effective_turn_id)).await
+        if let Ok(sub_res) = core.submit_turn(sub_req).await {
+            let ct = core.get_cancellation_token(&crate::events::TurnId::from_string(&sub_res.turn_id)).await;
+            (sub_res.turn_id, ct)
+        } else {
+            (effective_turn_id, None)
+        }
     } else {
-        None
+        (effective_turn_id, None)
     };
     let cancel_token_clone = cancel_token.clone();
 

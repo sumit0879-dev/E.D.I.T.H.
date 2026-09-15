@@ -14,7 +14,7 @@ mod tests {
     };
     use crate::ai::ProviderRegistry;
     use crate::events::payload::{EdithPayload, StreamPayload};
-    use crate::events::{StreamId, TurnId};
+    use crate::events::TurnId;
     use std::future::Future;
     use std::pin::Pin;
     use std::sync::Arc;
@@ -128,6 +128,61 @@ mod tests {
         assert_eq!(status.turn_id, result.turn_id);
     }
 
+    #[tokio::test]
+    async fn test_client_id_cannot_become_authoritative_turn_id() {
+        let registry = ProviderRegistry::new();
+        let core = ConversationCore::mock(registry);
+
+        let fake_client_id = "client-crafted-id-9999".to_string();
+        let req = TurnSubmissionRequest {
+            session_id: "sess-auth-check".to_string(),
+            message: "Test backend authority".to_string(),
+            provider_id: Some("mock".to_string()),
+            model_id: Some("mock-model".to_string()),
+            temperature: Some(0.7),
+            client_turn_id: Some(fake_client_id.clone()),
+        };
+
+        let result = core.submit_turn(req).await.expect("Turn creation must succeed");
+
+        // Backend MUST NEVER use client_turn_id as the authoritative TurnId
+        assert_ne!(result.turn_id, fake_client_id);
+        assert!(!result.turn_id.is_empty());
+
+        // Client-provided ID cannot be used for turn lookup
+        let fake_tid = TurnId::from_string(fake_client_id);
+        assert!(core.get_turn_status(&fake_tid).await.is_none());
+
+        // Authoritative TurnId is found and owns the turn state
+        let auth_tid = TurnId::from_string(result.turn_id.clone());
+        let status = core.get_turn_status(&auth_tid).await.expect("Status must exist for backend ID");
+        assert_eq!(status.turn_id, result.turn_id);
+    }
+
+    #[tokio::test]
+    async fn test_authoritative_stream_id_belongs_to_turn() {
+        let registry = ProviderRegistry::new();
+        let core = ConversationCore::mock(registry);
+
+        let req = TurnSubmissionRequest {
+            session_id: "sess-stream-check".to_string(),
+            message: "Stream ownership check".to_string(),
+            provider_id: Some("mock".to_string()),
+            model_id: Some("mock-model".to_string()),
+            temperature: Some(0.7),
+            client_turn_id: None,
+        };
+
+        let result = core.submit_turn(req).await.expect("Turn creation must succeed");
+        assert!(!result.stream_id.is_empty());
+
+        let turn_id = TurnId::from_string(result.turn_id);
+        let status = core.get_turn_status(&turn_id).await.expect("Turn status must exist");
+
+        // The authoritative Turn owns and stores its StreamId
+        assert_eq!(status.stream_id, result.stream_id);
+    }
+
     #[test]
     fn test_turn_lifecycle_valid_transitions() {
         assert!(TurnStatus::Created.can_transition_to(&TurnStatus::InputAccepted));
@@ -208,9 +263,9 @@ mod tests {
 
         let sub_res = core.submit_turn(req).await.unwrap();
         let turn_id = TurnId::from_string(sub_res.turn_id.clone());
-        let stream_id = StreamId::from_string(sub_res.stream_id.clone());
 
-        let result = core.execute_turn(&turn_id, &stream_id, None).await.unwrap();
+        // execute_turn derives authoritative stream_id directly from the Turn
+        let result = core.execute_turn(&turn_id, None).await.unwrap();
         assert_eq!(result, "Hello there, Tony!");
 
         let turn_status = core.get_turn_status(&turn_id).await.unwrap();
@@ -221,7 +276,7 @@ mod tests {
         let events = core.emitter().get_mock_events();
         assert!(events.iter().any(|e| {
             e.correlation.turn_id.as_deref() == Some(turn_id.as_str())
-                && e.correlation.stream_id.as_deref() == Some(stream_id.as_str())
+                && e.correlation.stream_id.as_deref() == Some(sub_res.stream_id.as_str())
                 && matches!(&e.payload, EdithPayload::Stream(StreamPayload::Started { .. }))
         }));
         assert!(events.iter().any(|e| {
@@ -259,9 +314,75 @@ mod tests {
         assert_eq!(status.status, TurnStatus::Cancelled);
 
         // Attempting to execute a cancelled turn returns Cancellation error
-        let stream_id = StreamId::new();
-        let exec_res = core.execute_turn(&turn_id, &stream_id, None).await;
+        let exec_res = core.execute_turn(&turn_id, None).await;
         assert!(matches!(exec_res, Err(ConversationError::Cancellation(_))));
+    }
+
+    #[tokio::test]
+    async fn test_cancellation_uses_correct_stream_id_and_single_terminal_event() {
+        let mut registry = ProviderRegistry::new();
+        registry.register(Arc::new(MockStreamingProvider::new(
+            "mock_stream",
+            vec!["Token A", "Token B", "Token C"],
+        )));
+
+        let core = ConversationCore::mock(registry);
+
+        let req = TurnSubmissionRequest {
+            session_id: "sess-cancel-consistency".to_string(),
+            message: "Analyze telemetry".to_string(),
+            provider_id: Some("mock_stream".to_string()),
+            model_id: Some("mock-model".to_string()),
+            temperature: Some(0.7),
+            client_turn_id: None,
+        };
+
+        let sub_res = core.submit_turn(req).await.unwrap();
+        let turn_id = TurnId::from_string(sub_res.turn_id.clone());
+        let expected_stream_id = sub_res.stream_id.clone();
+
+        // Cancel the turn
+        let cancel_res = core.cancel_turn(&turn_id, Some("Operator stopped".to_string())).await;
+        assert!(cancel_res.is_ok());
+
+        // Attempt to cancel again: must fail as turn is already in terminal Cancelled state
+        let second_cancel = core.cancel_turn(&turn_id, Some("Duplicate cancel".to_string())).await;
+        assert!(second_cancel.is_err());
+
+        // Attempt execution: must return Cancellation error and NOT emit duplicate events
+        let exec_res = core.execute_turn(&turn_id, None).await;
+        assert!(matches!(exec_res, Err(ConversationError::Cancellation(_))));
+
+        // Audit emitted stream events
+        let events = core.emitter().get_mock_events();
+
+        let cancelled_events: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                matches!(&e.payload, EdithPayload::Stream(StreamPayload::Cancelled { .. }))
+                    && e.correlation.turn_id.as_deref() == Some(turn_id.as_str())
+            })
+            .collect();
+
+        // EXACTLY ONE StreamCancelled event
+        assert_eq!(cancelled_events.len(), 1, "Must emit exactly one StreamCancelled event");
+
+        // The StreamCancelled event MUST carry the turn's authoritative StreamId
+        assert_eq!(
+            cancelled_events[0].correlation.stream_id.as_deref(),
+            Some(expected_stream_id.as_str()),
+            "StreamCancelled must use the authoritative StreamId from the Turn"
+        );
+
+        // ZERO StreamFinished events
+        let finished_events: Vec<_> = events
+            .iter()
+            .filter(|e| {
+                matches!(&e.payload, EdithPayload::Stream(StreamPayload::Finished { .. }))
+                    && e.correlation.turn_id.as_deref() == Some(turn_id.as_str())
+            })
+            .collect();
+        assert_eq!(finished_events.len(), 0, "No StreamFinished event allowed after cancellation");
     }
 
     #[tokio::test]
@@ -292,8 +413,8 @@ mod tests {
             client_turn_id: None,
         }).await.unwrap();
 
-        let id1 = TurnId::from_string(sub_1.turn_id);
-        let id2 = TurnId::from_string(sub_2.turn_id);
+        let id1 = TurnId::from_string(sub_1.turn_id.clone());
+        let id2 = TurnId::from_string(sub_2.turn_id.clone());
 
         assert_ne!(id1, id2);
 
@@ -301,12 +422,37 @@ mod tests {
         assert!(core.cancel_turn(&id1, Some("Stop Turn 1".to_string())).await.is_ok());
 
         // Execute Turn 2 - must complete successfully without being affected by Turn 1
-        let stream_2 = StreamId::from_string(sub_2.stream_id);
-        let res2 = core.execute_turn(&id2, &stream_2, None).await;
+        let res2 = core.execute_turn(&id2, None).await;
         assert!(res2.is_ok());
 
         assert_eq!(core.get_turn_status(&id1).await.unwrap().status, TurnStatus::Cancelled);
         assert_eq!(core.get_turn_status(&id2).await.unwrap().status, TurnStatus::Completed);
+
+        // Verify event isolation: Turn 1 has exactly one StreamCancelled and no StreamFinished;
+        // Turn 2 has exactly one StreamFinished and no StreamCancelled.
+        let events = core.emitter().get_mock_events();
+
+        let t1_cancelled = events.iter().any(|e| {
+            matches!(&e.payload, EdithPayload::Stream(StreamPayload::Cancelled { .. }))
+                && e.correlation.turn_id.as_deref() == Some(id1.as_str())
+        });
+        let t1_finished = events.iter().any(|e| {
+            matches!(&e.payload, EdithPayload::Stream(StreamPayload::Finished { .. }))
+                && e.correlation.turn_id.as_deref() == Some(id1.as_str())
+        });
+        let t2_cancelled = events.iter().any(|e| {
+            matches!(&e.payload, EdithPayload::Stream(StreamPayload::Cancelled { .. }))
+                && e.correlation.turn_id.as_deref() == Some(id2.as_str())
+        });
+        let t2_finished = events.iter().any(|e| {
+            matches!(&e.payload, EdithPayload::Stream(StreamPayload::Finished { .. }))
+                && e.correlation.turn_id.as_deref() == Some(id2.as_str())
+        });
+
+        assert!(t1_cancelled, "Turn 1 must have StreamCancelled");
+        assert!(!t1_finished, "Turn 1 must NOT have StreamFinished");
+        assert!(!t2_cancelled, "Turn 2 must NOT have StreamCancelled");
+        assert!(t2_finished, "Turn 2 must have StreamFinished");
     }
 
     #[tokio::test]
@@ -326,9 +472,8 @@ mod tests {
         }).await.unwrap();
 
         let turn_id = TurnId::from_string(sub.turn_id);
-        let stream_id = StreamId::from_string(sub.stream_id);
 
-        let res = core.execute_turn(&turn_id, &stream_id, None).await;
+        let res = core.execute_turn(&turn_id, None).await;
         assert!(matches!(res, Err(ConversationError::RateLimit(_))));
 
         let status = core.get_turn_status(&turn_id).await.unwrap();

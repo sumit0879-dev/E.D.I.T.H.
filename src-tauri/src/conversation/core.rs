@@ -76,12 +76,10 @@ impl ConversationCore {
             return Err(ConversationError::Internal("Message cannot be empty".to_string()));
         }
 
-        // Backend-authoritative TurnId generation (respects optional migration hint)
-        let turn_id = req
-            .client_turn_id
-            .map(TurnId::from_string)
-            .unwrap_or_else(TurnId::new);
-
+        // Backend is ALWAYS the sole authoritative creator and owner of TurnId.
+        // Any client_turn_id in the request is treated strictly as a non-authoritative legacy hint:
+        // it is never stored as TurnId, never emitted as TurnId, and never used for turn lookup.
+        let turn_id = TurnId::new();
         let stream_id = StreamId::new();
 
         let model_selection = ModelSelection {
@@ -95,6 +93,7 @@ impl ConversationCore {
         let mut turn = Turn::new(
             turn_id.clone(),
             req.session_id.clone(),
+            stream_id.clone(),
             trimmed_msg.clone(),
             model_selection,
         );
@@ -135,10 +134,10 @@ impl ConversationCore {
     }
 
     /// Executes the LLM generation and streaming lifecycle for an accepted turn.
+    /// The authoritative StreamId and cancellation token are retrieved directly from the Turn.
     pub async fn execute_turn(
         &self,
         turn_id: &TurnId,
-        stream_id: &StreamId,
         credentials: Option<String>,
     ) -> Result<String, ConversationError> {
         let turn_arc = {
@@ -149,7 +148,7 @@ impl ConversationCore {
         };
 
         // Extract turn parameters and check for early cancellation
-        let (session_id, user_message, model_selection, cancellation_token) = {
+        let (session_id, stream_id, user_message, model_selection, cancellation_token) = {
             let mut turn = turn_arc.write().await;
             if turn.status == TurnStatus::Cancelled || turn.cancellation_token.is_cancelled() {
                 return Err(ConversationError::Cancellation("Turn was cancelled before execution".to_string()));
@@ -166,6 +165,7 @@ impl ConversationCore {
 
             (
                 turn.session_id.clone(),
+                turn.stream_id.clone(),
                 turn.user_message.clone(),
                 turn.model_selection.clone(),
                 turn.cancellation_token.clone(),
@@ -208,7 +208,7 @@ impl ConversationCore {
                 .map_err(ConversationError::from)?
         };
 
-        // Correlation context for Phase 2 event infrastructure
+        // Correlation context for Phase 2 event infrastructure (authoritative TurnId and StreamId)
         let correlation = EventCorrelation::for_stream(
             Some(session_id.clone()),
             Some(turn_id.to_string()),
@@ -264,12 +264,16 @@ impl ConversationCore {
                 .await;
 
             // Check if cancelled during streaming
+            // Guarantees exactly one terminal event: if cancel_turn already emitted StreamCancelled,
+            // do NOT emit a duplicate event here.
             if cancellation_token.is_cancelled() {
-                let _ = self.emitter.emit_stream_cancelled(&correlation, Some("Turn cancelled by operator".to_string()));
                 let mut turn = turn_arc.write().await;
-                turn.status = TurnStatus::Cancelled;
-                turn.completed_at_ms = Some(now_ms());
-                turn.error = Some("Turn cancelled".to_string());
+                if turn.status != TurnStatus::Cancelled {
+                    turn.status = TurnStatus::Cancelled;
+                    turn.completed_at_ms = Some(now_ms());
+                    turn.error = Some("Turn cancelled by operator".to_string());
+                    let _ = self.emitter.emit_stream_cancelled(&correlation, Some("Turn cancelled by operator".to_string()));
+                }
                 return Err(ConversationError::Cancellation("Turn cancelled by operator".to_string()));
             }
 
@@ -294,10 +298,13 @@ impl ConversationCore {
             let gen_res = gen.generate(&req, &credentials).await;
 
             if cancellation_token.is_cancelled() {
-                let _ = self.emitter.emit_stream_cancelled(&correlation, Some("Turn cancelled by operator".to_string()));
                 let mut turn = turn_arc.write().await;
-                turn.status = TurnStatus::Cancelled;
-                turn.completed_at_ms = Some(now_ms());
+                if turn.status != TurnStatus::Cancelled {
+                    turn.status = TurnStatus::Cancelled;
+                    turn.completed_at_ms = Some(now_ms());
+                    turn.error = Some("Turn cancelled by operator".to_string());
+                    let _ = self.emitter.emit_stream_cancelled(&correlation, Some("Turn cancelled by operator".to_string()));
+                }
                 return Err(ConversationError::Cancellation("Turn cancelled by operator".to_string()));
             }
 
@@ -356,6 +363,7 @@ impl ConversationCore {
     }
 
     /// Cancels a specific in-flight turn using its scoped cancellation token.
+    /// Emits StreamCancelled with the authoritative session_id, turn_id, and stream_id.
     pub async fn cancel_turn(
         &self,
         turn_id: &TurnId,
@@ -369,7 +377,7 @@ impl ConversationCore {
         };
 
         let mut turn = turn_arc.write().await;
-        if !turn.status.can_transition_to(&TurnStatus::Cancelled) {
+        if turn.status.is_terminal() || !turn.status.can_transition_to(&TurnStatus::Cancelled) {
             return Err(ConversationError::InvalidTurnState {
                 current: turn.status.to_string(),
                 target: TurnStatus::Cancelled.to_string(),
@@ -385,7 +393,7 @@ impl ConversationCore {
         let correlation = EventCorrelation::for_stream(
             Some(turn.session_id.clone()),
             Some(turn.turn_id.to_string()),
-            None,
+            Some(turn.stream_id.to_string()),
         );
         let _ = self.emitter.emit_stream_cancelled(&correlation, reason);
 

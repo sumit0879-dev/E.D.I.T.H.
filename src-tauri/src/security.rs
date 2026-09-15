@@ -689,7 +689,7 @@ mod tests {
     #[test]
     fn test_sec02_proposal_lifecycle() {
         let dir = std::env::current_dir().unwrap();
-        let proposal = ProposalEngine::create_proposal("session_test", "hostname", &[], &dir, "low");
+        let proposal = ProposalEngine::create_proposal("session_test", "echo", &["test_ok".to_string()], &dir, "low");
         assert_eq!(proposal.status, ProposalStatus::Pending);
 
         // Approve proposal with correct session

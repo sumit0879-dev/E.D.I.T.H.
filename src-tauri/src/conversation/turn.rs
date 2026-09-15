@@ -1,5 +1,5 @@
 use super::types::{ModelSelection, SessionId, TurnSnapshot};
-use crate::events::TurnId;
+use crate::events::{StreamId, TurnId};
 use crate::task::CancellationToken;
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -80,6 +80,7 @@ impl std::fmt::Display for TurnStatus {
 pub struct Turn {
     pub turn_id: TurnId,
     pub session_id: SessionId,
+    pub stream_id: StreamId,
     pub user_message: String,
     pub model_selection: ModelSelection,
     pub status: TurnStatus,
@@ -94,12 +95,14 @@ impl Turn {
     pub fn new(
         turn_id: TurnId,
         session_id: SessionId,
+        stream_id: StreamId,
         user_message: impl Into<String>,
         model_selection: ModelSelection,
     ) -> Self {
         Self {
             turn_id,
             session_id,
+            stream_id,
             user_message: user_message.into(),
             model_selection,
             status: TurnStatus::Created,
@@ -115,6 +118,7 @@ impl Turn {
         TurnSnapshot {
             turn_id: self.turn_id.to_string(),
             session_id: self.session_id.clone(),
+            stream_id: self.stream_id.to_string(),
             status: self.status,
             model_selection: self.model_selection.clone(),
             created_at_ms: self.created_at_ms,

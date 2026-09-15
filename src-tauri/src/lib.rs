@@ -255,12 +255,11 @@ async fn conversation_submit_turn(
 #[tauri::command]
 async fn conversation_execute_turn(
     turn_id: String,
-    stream_id: String,
+    _stream_id: Option<String>,
     app_settings: Option<serde_json::Value>,
     core: State<'_, conversation::ConversationCore>,
 ) -> Result<String, String> {
     let tid = events::TurnId::from_string(turn_id);
-    let sid = events::StreamId::from_string(stream_id);
 
     let creds = if let Some(ref settings) = app_settings {
         let cred_store = ai::SettingsCredentialStore::from_json_value(settings);
@@ -271,7 +270,7 @@ async fn conversation_execute_turn(
         None
     };
 
-    core.execute_turn(&tid, &sid, creds).await.map_err(|e| e.to_string())
+    core.execute_turn(&tid, creds).await.map_err(|e| e.to_string())
 }
 
 #[tauri::command]
