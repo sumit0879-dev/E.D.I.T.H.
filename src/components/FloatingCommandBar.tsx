@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../context/AppContext';
 import {
   Send,
+  Square,
   Mic,
   MicOff,
   Sparkles,
@@ -11,6 +12,7 @@ import {
 
 interface FloatingCommandBarProps {
   onSendMessage: (text: string) => void;
+  onCancelTurn?: () => void;
   isLoading?: boolean;
   showScrollToBottom?: boolean;
   hasNewMessagesBelow?: boolean;
@@ -20,6 +22,7 @@ interface FloatingCommandBarProps {
 
 export const FloatingCommandBar: React.FC<FloatingCommandBarProps> = ({
   onSendMessage,
+  onCancelTurn,
   isLoading = false,
   showScrollToBottom = false,
   hasNewMessagesBelow = false,
@@ -148,15 +151,27 @@ export const FloatingCommandBar: React.FC<FloatingCommandBarProps> = ({
               style={{ minHeight: '36px', maxHeight: '192px' }}
             />
 
-            {/* Send Button */}
-            <button
-              onClick={handleSend}
-              disabled={!inputText.trim() || isLoading}
-              aria-label="Send Message"
-              className="p-2.5 rounded-xl bg-gradient-to-tr from-cyan-500 via-teal-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold transition flex items-center justify-center shrink-0 shadow-md shadow-cyan-500/20 disabled:opacity-30 disabled:cursor-not-allowed mb-0.5"
-            >
-              <Send className="w-4 h-4" />
-            </button>
+            {/* Send / Stop Generation Button */}
+            {isLoading && onCancelTurn ? (
+              <button
+                type="button"
+                onClick={onCancelTurn}
+                aria-label="Cancel Turn"
+                className="p-2.5 rounded-xl bg-rose-600/90 hover:bg-rose-500 text-white font-bold transition flex items-center justify-center shrink-0 shadow-md shadow-rose-500/30 mb-0.5 animate-pulse"
+                title="Cancel turn generation"
+              >
+                <Square className="w-4 h-4 fill-current" />
+              </button>
+            ) : (
+              <button
+                onClick={handleSend}
+                disabled={!inputText.trim() || isLoading}
+                aria-label="Send Message"
+                className="p-2.5 rounded-xl bg-gradient-to-tr from-cyan-500 via-teal-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-slate-950 font-bold transition flex items-center justify-center shrink-0 shadow-md shadow-cyan-500/20 disabled:opacity-30 disabled:cursor-not-allowed mb-0.5"
+              >
+                <Send className="w-4 h-4" />
+              </button>
+            )}
           </div>
 
           {/* Bottom Status / Hint Bar */}

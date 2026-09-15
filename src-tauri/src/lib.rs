@@ -1,9 +1,12 @@
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use tauri::Manager;
+use crate::ai::CredentialStore;
 pub mod security;
 pub mod ai;
 pub mod events;
+pub mod conversation;
+pub mod task;
 mod agent;
 mod chat;
 pub mod db;
@@ -228,6 +231,115 @@ fn ai_query_capabilities(
         .map_err(|e| e.to_string())
 }
 
+#[tauri::command]
+async fn conversation_submit_turn(
+    session_id: String,
+    message: String,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    temperature: Option<f64>,
+    client_turn_id: Option<String>,
+    core: State<'_, conversation::ConversationCore>,
+) -> Result<conversation::TurnSubmissionResult, String> {
+    let req = conversation::TurnSubmissionRequest {
+        session_id,
+        message,
+        provider_id,
+        model_id,
+        temperature,
+        client_turn_id,
+    };
+    core.submit_turn(req).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn conversation_execute_turn(
+    turn_id: String,
+    _stream_id: Option<String>,
+    app_settings: Option<serde_json::Value>,
+    core: State<'_, conversation::ConversationCore>,
+) -> Result<String, String> {
+    let tid = events::TurnId::from_string(turn_id);
+
+    let creds = if let Some(ref settings) = app_settings {
+        let cred_store = ai::SettingsCredentialStore::from_json_value(settings);
+        let status = core.get_turn_status(&tid).await;
+        let prov_id = status.map(|s| s.model_selection.provider_id).unwrap_or_else(|| "groq".to_string());
+        cred_store.get_credential(&prov_id).ok().flatten()
+    } else {
+        None
+    };
+
+    core.execute_turn(&tid, creds).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn conversation_cancel_turn(
+    turn_id: String,
+    reason: Option<String>,
+    core: State<'_, conversation::ConversationCore>,
+) -> Result<(), String> {
+    let tid = events::TurnId::from_string(turn_id);
+    core.cancel_turn(&tid, reason).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn conversation_get_turn_status(
+    turn_id: String,
+    core: State<'_, conversation::ConversationCore>,
+) -> Result<Option<conversation::TurnSnapshot>, String> {
+    let tid = events::TurnId::from_string(turn_id);
+    Ok(core.get_turn_status(&tid).await)
+}
+
+#[tauri::command]
+async fn task_create(
+    task_type: String,
+    goal: String,
+    session_id: Option<String>,
+    turn_id: Option<String>,
+    task_runtime: State<'_, task::TaskRuntime>,
+) -> Result<String, String> {
+    let t_type = match task_type.to_lowercase().as_str() {
+        "background" => task::TaskType::Background,
+        "browser_agent" => task::TaskType::BrowserAgent,
+        "dev_agent" => task::TaskType::DevAgent,
+        "maintenance" => task::TaskType::Maintenance,
+        other => task::TaskType::Custom(other.to_string()),
+    };
+    let mut correlation = events::EventCorrelation::default();
+    correlation.conversation_id = session_id;
+    correlation.turn_id = turn_id;
+    let id = task_runtime.create_task(t_type, goal, correlation, task::TaskOwner::User).await;
+    Ok(id.to_string())
+}
+
+#[tauri::command]
+async fn task_cancel(
+    task_id: String,
+    reason: Option<String>,
+    task_runtime: State<'_, task::TaskRuntime>,
+) -> Result<(), String> {
+    let tid = events::TaskId::from_string(task_id);
+    task_runtime.cancel_task(&tid, reason).await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn task_get_status(
+    task_id: String,
+    task_runtime: State<'_, task::TaskRuntime>,
+) -> Result<Option<task::TaskSnapshot>, String> {
+    let tid = events::TaskId::from_string(task_id);
+    Ok(task_runtime.get_task(&tid).await)
+}
+
+#[tauri::command]
+async fn task_list_active(
+    task_runtime: State<'_, task::TaskRuntime>,
+) -> Result<Vec<task::TaskSnapshot>, String> {
+    Ok(task_runtime.list_active_tasks().await)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -239,6 +351,7 @@ pub fn run() {
             std::fs::create_dir_all(&app_data_dir).map_err(|e| e.to_string())?;
             let db_path = app_data_dir.join("edith_memory.db");
             let conn = db::init_db_at(&db_path).map_err(|e| e.to_string())?;
+            let conn2 = db::init_db_at(&db_path).map_err(|e| e.to_string())?;
             app.manage(DbState {
                 conn: std::sync::Mutex::new(conn),
             });
@@ -247,6 +360,19 @@ pub fn run() {
             });
             app.manage(browser::BrowserState::default());
             app.manage(browser_agent::BrowserAgentManager::default());
+
+            let emitter = events::EventEmitter::new(app.handle().clone());
+            let task_runtime = task::TaskRuntime::new(emitter.clone());
+            let registry = ai::ProviderRegistry::standard_builtins();
+            let conversation_core = conversation::ConversationCore::new(
+                registry,
+                emitter.clone(),
+                Some(std::sync::Arc::new(std::sync::Mutex::new(conn2))),
+                None,
+            );
+            app.manage(task_runtime);
+            app.manage(conversation_core);
+
             Ok(())
         })
         .on_window_event(|_window, event| match event {
@@ -436,7 +562,15 @@ pub fn run() {
             tts::tts_set_voice,
             ai_list_providers,
             ai_list_models,
-            ai_query_capabilities
+            ai_query_capabilities,
+            conversation_submit_turn,
+            conversation_execute_turn,
+            conversation_cancel_turn,
+            conversation_get_turn_status,
+            task_create,
+            task_cancel,
+            task_get_status,
+            task_list_active
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
