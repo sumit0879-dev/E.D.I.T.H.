@@ -4,12 +4,56 @@ use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::browser::{BrowserState, browser_get_multi_state};
 use crate::browser_tools::execute_browser_tool;
 use crate::db::DbState;
 use crate::llm::ChatMessage;
+use crate::tools::types::{ToolRequest, ToolStatus};
+use crate::tools::ToolRouter;
+use crate::task::runtime::TaskRuntime;
+use crate::task::types::{TaskOwner, TaskType};
+use crate::events::{EventCorrelation, TaskId};
+
+/// Translates legacy browser tool names to canonical Universal Tool Runtime names ("browser.*")
+pub fn to_universal_tool_name(name: &str) -> String {
+    match name {
+        "browser_open_url" => "browser.navigate".to_string(),
+        "browser_observe" => "browser.observe".to_string(),
+        "browser_screenshot" => "browser.screenshot".to_string(),
+        "browser_get_tabs" => "browser.get_tabs".to_string(),
+        "browser_get_active_tab" => "browser.get_active_tab".to_string(),
+        "browser_switch_tab" => "browser.switch_tab".to_string(),
+        "browser_close_tab" => "browser.close_tab".to_string(),
+        "browser_back" => "browser.back".to_string(),
+        "browser_forward" => "browser.forward".to_string(),
+        "browser_reload" => "browser.reload".to_string(),
+        "browser_click" => "browser.click".to_string(),
+        "browser_type" => "browser.type".to_string(),
+        "browser_scroll" => "browser.scroll".to_string(),
+        "browser_press_key" => "browser.press_key".to_string(),
+        "browser_focus" => "browser.focus".to_string(),
+        "browser_wait" => "browser.wait".to_string(),
+        "browser_select_option" => "browser.select_option".to_string(),
+        "browser_new_tab" => "browser.new_tab".to_string(),
+        "browser_history_recent" => "browser.history_recent".to_string(),
+        "browser_history_search" => "browser.history_search".to_string(),
+        "browser_bookmarks_list" => "browser.bookmarks_list".to_string(),
+        "browser_bookmarks_search" => "browser.bookmarks_search".to_string(),
+        "browser_downloads_recent" => "browser.downloads_recent".to_string(),
+        "browser_download_get" => "browser.download_get".to_string(),
+        other => {
+            if other.starts_with("browser.") {
+                other.to_string()
+            } else if let Some(stripped) = other.strip_prefix("browser_") {
+                format!("browser.{}", stripped)
+            } else {
+                format!("browser.{}", other)
+            }
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub enum BrowserTaskStatus {
@@ -267,6 +311,25 @@ pub async fn run_autonomous_browser_loop(
         flags.insert(task_id.clone(), cancel_flag.clone());
     }
 
+    let tool_router = app.try_state::<ToolRouter>();
+    let task_runtime = app.try_state::<TaskRuntime>();
+    let task_id_obj = TaskId::from_string(&task_id);
+    let correlation = EventCorrelation {
+        task_id: Some(task_id.clone()),
+        ..Default::default()
+    };
+
+    if let Some(ref rt) = task_runtime {
+        let _ = rt.create_task_with_id(
+            task_id_obj.clone(),
+            TaskType::BrowserAgent,
+            goal.clone(),
+            correlation.clone(),
+            TaskOwner::System,
+        ).await;
+        let _ = rt.start_task(&task_id_obj).await;
+    }
+
     // Determine initial active tab
     let initial_tab_id = match browser_get_multi_state(app.clone(), browser_state.clone()).await {
         Ok(multi) => multi.active_tab_id.unwrap_or_else(|| "tab_a".to_string()),
@@ -447,8 +510,15 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
     current_task.status = BrowserTaskStatus::Running;
 
     while step_count < max_steps {
-        // 1. Check cooperative cancellation
-        if cancel_flag.load(Ordering::Relaxed) {
+        // 1. Check cooperative cancellation (both atomic flag and TaskRuntime cancellation token)
+        let is_task_cancelled = cancel_flag.load(Ordering::Relaxed) || {
+            if let Some(ref rt) = task_runtime {
+                rt.get_cancellation_token(&task_id_obj).await.map(|t| t.is_cancelled()).unwrap_or(false)
+            } else {
+                false
+            }
+        };
+        if is_task_cancelled {
             final_status = BrowserTaskStatus::Cancelled;
             final_summary = "Task was cancelled by operator.".to_string();
             let _ = app.emit("browser-agent-status", json!({
@@ -477,13 +547,18 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
         step_count += 1;
         current_task.step_count = step_count;
 
+        let status_msg = format!("Step {}/{}: Agent reasoning...", step_count, max_steps);
         let _ = app.emit("browser-agent-status", json!({
             "task_id": task_id,
             "status": "Running",
             "step": step_count,
             "max_steps": max_steps,
-            "message": format!("Step {}/{}: Agent reasoning...", step_count, max_steps)
+            "message": status_msg.clone()
         }));
+
+        if let Some(ref rt) = task_runtime {
+            let _ = rt.update_progress(&task_id_obj, step_count, max_steps, status_msg).await;
+        }
 
         // Step 15: Bounded Context Truncation
         if messages.len() > 14 {
@@ -637,17 +712,63 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                     "message": format!("Executing `{}` on tab `{}`...", tool_name, current_tab)
                 }));
 
-                // Execute tool safely through Browser Tool Layer
-                match execute_browser_tool(app.clone(), &tool_name, &args, browser_state.clone()).await {
-                    Ok(res) => {
+                let universal_tool = to_universal_tool_name(&tool_name);
+                let tool_correlation = EventCorrelation {
+                    task_id: Some(task_id.clone()),
+                    ..Default::default()
+                };
+
+                let tool_exec_outcome: Result<(bool, Option<serde_json::Value>, Option<String>, Option<String>, u64), String> = if let Some(ref router) = tool_router {
+                    let req = ToolRequest::new(universal_tool.clone(), args.clone(), tool_correlation);
+                    let res = router.execute(req).await;
+                    match res.status {
+                        ToolStatus::Completed => {
+                            Ok((true, res.data, None, None, res.duration_ms))
+                        }
+                        ToolStatus::ApprovalRequired => {
+                            let policy_code = "REQUIRE_APPROVAL".to_string();
+                            let msg = "REQUIRE_APPROVAL: Action requires operator confirmation. Execution paused.".to_string();
+                            current_task.status = BrowserTaskStatus::Waiting;
+                            let _ = app.emit("browser-agent-status", json!({
+                                "task_id": task_id,
+                                "status": "Waiting",
+                                "step": step_count,
+                                "message": msg.clone()
+                            }));
+                            Ok((false, None, Some(msg), Some(policy_code), res.duration_ms))
+                        }
+                        ToolStatus::Blocked => {
+                            let err_msg = res.error.map(|e| e.to_string()).unwrap_or_else(|| "POLICY_BLOCKED: Action blocked by Policy Engine.".to_string());
+                            Ok((false, None, Some(err_msg.clone()), Some("POLICY_BLOCKED".to_string()), res.duration_ms))
+                        }
+                        ToolStatus::Cancelled => {
+                            final_status = BrowserTaskStatus::Cancelled;
+                            final_summary = "Tool execution was cancelled.".to_string();
+                            break;
+                        }
+                        ToolStatus::Failed => {
+                            let err_msg = res.error.map(|e| e.to_string()).unwrap_or_else(|| "Tool execution failed.".to_string());
+                            Ok((false, None, Some(err_msg), Some("TOOL_EXECUTION_FAILED".to_string()), res.duration_ms))
+                        }
+                        ToolStatus::Requested | ToolStatus::Approved | ToolStatus::Started => {
+                            Ok((false, None, Some("Execution in intermediate status.".to_string()), Some("TOOL_IN_PROGRESS".to_string()), res.duration_ms))
+                        }
+                    }
+                } else {
+                    execute_browser_tool(app.clone(), &tool_name, &args, browser_state.clone()).await
+                        .map(|r| (r.success, r.data, r.error, r.error_code, r.duration_ms))
+                };
+
+                match tool_exec_outcome {
+                    Ok((success, data, error, error_code, duration_ms)) => {
                         evidence.executed_tools.push(tool_name.clone());
-                        if res.success {
+                        if success {
                             evidence.successful_actions_count += 1;
                         }
 
                         // Collect evidence on observation or navigation
-                        if tool_name == "browser_observe" || tool_name == "browser_open_url" {
-                            if let Some(d) = res.data.as_ref() {
+                        if tool_name == "browser_observe" || tool_name == "browser_open_url" || universal_tool == "browser.observe" || universal_tool == "browser.navigate" {
+                            if let Some(d) = data.as_ref() {
                                 if let Some(u) = d.get("url").and_then(|v| v.as_str()) {
                                     evidence.observed_urls.push(u.to_string());
                                 }
@@ -658,13 +779,13 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                         }
 
                         let res_json = json!({
-                            "success": res.success,
-                            "tool_name": res.tool_name,
-                            "tab_id": res.tab_id,
-                            "data": res.data,
-                            "error": res.error,
-                            "error_code": res.error_code,
-                            "duration_ms": res.duration_ms,
+                            "success": success,
+                            "tool_name": tool_name,
+                            "tab_id": current_tab,
+                            "data": data,
+                            "error": error,
+                            "error_code": error_code,
+                            "duration_ms": duration_ms,
                         });
 
                         let _ = app.emit("browser-agent-step", json!({
@@ -672,8 +793,8 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                             "step": step_count,
                             "tool": tool_name,
                             "tab_id": current_tab,
-                            "success": res.success,
-                            "duration_ms": res.duration_ms
+                            "success": success,
+                            "duration_ms": duration_ms
                         }));
 
                         messages.push(ChatMessage {
@@ -722,6 +843,22 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
         *active = Some(current_task);
     }
 
+    // Synchronize TaskRuntime status
+    if let Some(ref rt) = task_runtime {
+        match final_status {
+            BrowserTaskStatus::Completed => {
+                let _ = rt.complete_task(&task_id_obj, if final_summary.is_empty() { "Autonomous task finished.".to_string() } else { final_summary.clone() }).await;
+            }
+            BrowserTaskStatus::Cancelled => {
+                let _ = rt.cancel_task(&task_id_obj, Some("Cancelled by user or system.".to_string())).await;
+            }
+            _ => {
+                let err = final_error.clone().unwrap_or_else(|| "Task ended with failure or timeout.".to_string());
+                let _ = rt.fail_task(&task_id_obj, err).await;
+            }
+        }
+    }
+
     // Step 11: Cleanup cancellation flag on exit
     if let Ok(mut flags) = agent_mgr.cancellation_flags.lock() {
         flags.remove(&task_id);
@@ -766,16 +903,23 @@ pub async fn browser_agent_run_task(
 
 #[tauri::command]
 pub async fn browser_agent_cancel_task(
+    app: AppHandle,
     task_id: String,
     agent_mgr: State<'_, BrowserAgentManager>,
 ) -> Result<bool, String> {
-    let flags = agent_mgr.cancellation_flags.lock().map_err(|e| e.to_string())?;
-    if let Some(flag) = flags.get(&task_id) {
-        flag.store(true, Ordering::Relaxed);
-        Ok(true)
-    } else {
-        Ok(false)
+    let mut cancelled = false;
+    {
+        let flags = agent_mgr.cancellation_flags.lock().map_err(|e| e.to_string())?;
+        if let Some(flag) = flags.get(&task_id) {
+            flag.store(true, Ordering::Relaxed);
+            cancelled = true;
+        }
     }
+    if let Some(rt) = app.try_state::<TaskRuntime>() {
+        let _ = rt.cancel_task(&TaskId::from_string(&task_id), Some("Operator cancelled task via browser_agent_cancel_task".to_string())).await;
+        cancelled = true;
+    }
+    Ok(cancelled)
 }
 
 #[tauri::command]

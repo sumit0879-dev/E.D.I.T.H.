@@ -13,7 +13,7 @@ impl BrowserAdapter {
         let op = req.operation.trim().to_lowercase();
 
         // 1. Evaluate URL / Navigation Actions
-        if op == "navigate" || op == "open_url" || op == "browser_open_url" {
+        if op == "navigate" || op == "open_url" || op == "browser_open_url" || op == "new_tab" || op == "browser_new_tab" {
             let url_str = match &req.target {
                 ActionTarget::Url(u) => Some(u.clone()),
                 _ => req.arguments.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
@@ -77,10 +77,16 @@ impl BrowserAdapter {
                     PolicyOutcome::Allow,
                     "Standard HTTP/HTTPS navigation approved.".to_string(),
                 );
+            } else if op == "new_tab" || op == "browser_new_tab" {
+                return (
+                    RiskLevel::Low,
+                    PolicyOutcome::Allow,
+                    "Opening blank new tab approved.".to_string(),
+                );
             }
         }
 
-        // 2. Read-only & Passive Observation Tools
+        // 2. Read-only, Passive Observation & Low-Risk Interaction Tools
         if matches!(
             op.as_str(),
             "get_tabs"
@@ -88,18 +94,48 @@ impl BrowserAdapter {
                 | "observe"
                 | "screenshot"
                 | "switch_tab"
+                | "close_tab"
                 | "back"
                 | "forward"
                 | "reload"
                 | "scroll"
+                | "press_key"
                 | "focus"
                 | "wait"
+                | "select_option"
+                | "history_recent"
+                | "history_search"
+                | "bookmarks_list"
+                | "bookmarks_search"
+                | "downloads_recent"
+                | "download_get"
                 | "extract"
         ) {
             return (
                 RiskLevel::Low,
                 PolicyOutcome::Allow,
-                "Passive observation and navigation action permitted.".to_string(),
+                "Passive observation, storage query, or standard navigation action permitted.".to_string(),
+            );
+        }
+
+        // 2b. Destructive or Sensitive Storage & Download Operations
+        if matches!(
+            op.as_str(),
+            "history_delete"
+                | "history_clear"
+                | "bookmark_remove"
+                | "download_cancel"
+                | "download_start"
+                | "save_page"
+                | "print"
+        ) {
+            return (
+                RiskLevel::High,
+                PolicyOutcome::ConfirmationRequired,
+                format!(
+                    "High consequence browser operation '{}' requires explicit operator confirmation.",
+                    op
+                ),
             );
         }
 
@@ -118,16 +154,21 @@ impl BrowserAdapter {
                 .and_then(|v| v.as_str())
                 .unwrap_or("");
 
-            let selector_or_name = match &req.target {
-                ActionTarget::BrowserElement { selector, .. } => selector.clone().unwrap_or_default(),
-                _ => req
+            let mut selector_or_name = match &req.target {
+                ActionTarget::BrowserElement { selector, element_id, .. } => {
+                    selector.clone().or_else(|| element_id.clone()).unwrap_or_default()
+                }
+                _ => String::new(),
+            };
+            if selector_or_name.is_empty() {
+                selector_or_name = req
                     .arguments
                     .get("selector")
                     .or_else(|| req.arguments.get("element_id"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
-                    .to_string(),
-            };
+                    .to_string();
+            }
 
             let lower_selector = selector_or_name.to_lowercase();
             let is_password_field = is_password
@@ -169,16 +210,19 @@ impl BrowserAdapter {
 
         // 4. Click Actions & High-Risk Buttons
         if op == "click" || op == "browser_click" {
-            let element_text = match &req.target {
+            let mut element_text = match &req.target {
                 ActionTarget::BrowserElement { text, .. } => text.clone().unwrap_or_default(),
-                _ => req
+                _ => String::new(),
+            };
+            if element_text.is_empty() {
+                element_text = req
                     .arguments
                     .get("element_text")
                     .or_else(|| req.arguments.get("text"))
                     .and_then(|v| v.as_str())
                     .unwrap_or("")
-                    .to_string(),
-            };
+                    .to_string();
+            }
 
             let lower_text = element_text.to_lowercase();
 

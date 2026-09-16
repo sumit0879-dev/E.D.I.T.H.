@@ -950,12 +950,32 @@ pub fn get_browser_tool_definitions() -> Vec<ToolDefinition> {
     ]
 }
 
-/// Executes a Browser Tool call deterministically through the Browser Core
+/// Executes a Browser Tool call deterministically through the Browser Core (with legacy standalone risk evaluation)
 pub async fn execute_browser_tool(
     app: AppHandle,
     tool_name: &str,
     args: &serde_json::Value,
     state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserToolExecutionResult, String> {
+    execute_browser_tool_internal(app, tool_name, args, state, false).await
+}
+
+/// Executes a Browser Tool call that has already been authorized by the centralized PolicyEngine in the Universal Tool Runtime
+pub async fn execute_browser_tool_authorized(
+    app: AppHandle,
+    tool_name: &str,
+    args: &serde_json::Value,
+    state: tauri::State<'_, BrowserState>,
+) -> Result<BrowserToolExecutionResult, String> {
+    execute_browser_tool_internal(app, tool_name, args, state, true).await
+}
+
+async fn execute_browser_tool_internal(
+    app: AppHandle,
+    tool_name: &str,
+    args: &serde_json::Value,
+    state: tauri::State<'_, BrowserState>,
+    pre_authorized: bool,
 ) -> Result<BrowserToolExecutionResult, String> {
     let start = Instant::now();
 
@@ -977,61 +997,63 @@ pub async fn execute_browser_tool(
         }
     }
 
-    // Phase 5.3: Central Host-Enforced Risk & Safety Assessment Before Execution
-    let action_url = args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let action_element_id = args.get("element_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-    let action_text = args.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
+    // Evaluate standalone risk check only when not pre-authorized by PolicyEngine
+    if !pre_authorized {
+        let action_url = args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let action_element_id = args.get("element_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let action_text = args.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
 
-    let risk_ctx = BrowserActionContext {
-        tool_name: tool_name.to_string(),
-        tab_id: target_tab_id.clone(),
-        url: action_url,
-        title: None,
-        element_id: action_element_id.clone(),
-        element_tag: None,
-        element_role: None,
-        element_text: action_text.clone(),
-        element_aria_label: None,
-        element_href: None,
-        input_type: None,
-        placeholder: None,
-        text_to_type: action_text,
-        is_password: false,
-        form_action: None,
-        form_method: None,
-        parent_region: None,
-    };
-
-    let assessment = BrowserRiskEngine::assess_risk(&risk_ctx);
-    BrowserRiskEngine::record_audit_log(None, tool_name.to_string(), target_tab_id.clone(), &assessment);
-
-    if assessment.decision == BrowserRiskDecision::Block {
-        return Ok(BrowserToolExecutionResult {
-            success: false,
+        let risk_ctx = BrowserActionContext {
             tool_name: tool_name.to_string(),
-            tab_id: if target_tab_id.is_empty() { None } else { Some(target_tab_id) },
-            data: None,
-            error: Some(assessment.user_explanation),
-            error_code: Some(assessment.policy_code),
-            duration_ms: start.elapsed().as_millis() as u64,
-        });
-    }
+            tab_id: target_tab_id.clone(),
+            url: action_url,
+            title: None,
+            element_id: action_element_id.clone(),
+            element_tag: None,
+            element_role: None,
+            element_text: action_text.clone(),
+            element_aria_label: None,
+            element_href: None,
+            input_type: None,
+            placeholder: None,
+            text_to_type: action_text,
+            is_password: false,
+            form_action: None,
+            form_method: None,
+            parent_region: None,
+        };
 
-    if assessment.decision == BrowserRiskDecision::RequireApproval {
-        let approval_id = BrowserRiskEngine::create_pending_approval(None, risk_ctx, assessment.clone());
-        return Ok(BrowserToolExecutionResult {
-            success: false,
-            tool_name: tool_name.to_string(),
-            tab_id: if target_tab_id.is_empty() { None } else { Some(target_tab_id) },
-            data: Some(json!({
-                "approval_required": true,
-                "approval_id": approval_id,
-                "policy_code": assessment.policy_code
-            })),
-            error: Some(format!("REQUIRE_APPROVAL: {}", assessment.user_explanation)),
-            error_code: Some("REQUIRE_APPROVAL".to_string()),
-            duration_ms: start.elapsed().as_millis() as u64,
-        });
+        let assessment = BrowserRiskEngine::assess_risk(&risk_ctx);
+        BrowserRiskEngine::record_audit_log(None, tool_name.to_string(), target_tab_id.clone(), &assessment);
+
+        if assessment.decision == BrowserRiskDecision::Block {
+            return Ok(BrowserToolExecutionResult {
+                success: false,
+                tool_name: tool_name.to_string(),
+                tab_id: if target_tab_id.is_empty() { None } else { Some(target_tab_id) },
+                data: None,
+                error: Some(assessment.user_explanation),
+                error_code: Some(assessment.policy_code),
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+        }
+
+        if assessment.decision == BrowserRiskDecision::RequireApproval {
+            let approval_id = BrowserRiskEngine::create_pending_approval(None, risk_ctx, assessment.clone());
+            return Ok(BrowserToolExecutionResult {
+                success: false,
+                tool_name: tool_name.to_string(),
+                tab_id: if target_tab_id.is_empty() { None } else { Some(target_tab_id) },
+                data: Some(json!({
+                    "approval_required": true,
+                    "approval_id": approval_id,
+                    "policy_code": assessment.policy_code
+                })),
+                error: Some(format!("REQUIRE_APPROVAL: {}", assessment.user_explanation)),
+                error_code: Some("REQUIRE_APPROVAL".to_string()),
+                duration_ms: start.elapsed().as_millis() as u64,
+            });
+        }
     }
 
     match tool_name {
@@ -2430,6 +2452,71 @@ pub async fn execute_browser_tool(
                     data: None,
                     error: Some(e),
                     error_code: Some("REMOVE_FROM_GROUP_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_new_tab" => {
+            let initial_url = args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str()).map(|s| s.to_string())
+                .unwrap_or_else(|| format!("tab_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()));
+
+            match browser_create_tab(app, tab_id.clone(), initial_url, None, None, state).await {
+                Ok(tab) => Ok(BrowserToolExecutionResult {
+                    success: true,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab.id.clone()),
+                    data: Some(json!({
+                        "tab_id": tab.id,
+                        "url": tab.url,
+                        "title": tab.title,
+                    })),
+                    error: None,
+                    error_code: None,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("NEW_TAB_FAILED".to_string()),
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+            }
+        }
+
+        "browser_select_option" => {
+            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
+            let element_id = args.get("element_id").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'element_id'.".to_string())?;
+            let value = args.get("value").and_then(|v| v.as_str())
+                .ok_or_else(|| "Missing required parameter 'value'.".to_string())?;
+
+            match crate::browser::browser_select_option(app, tab_id.to_string(), element_id.to_string(), value.to_string()).await {
+                Ok(res) => Ok(BrowserToolExecutionResult {
+                    success: res.success,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: Some(json!({
+                        "element_id": res.element_id,
+                        "selected_value": value,
+                        "page_changed": res.page_changed,
+                    })),
+                    error: res.error,
+                    error_code: res.error_code,
+                    duration_ms: start.elapsed().as_millis() as u64,
+                }),
+                Err(e) => Ok(BrowserToolExecutionResult {
+                    success: false,
+                    tool_name: tool_name.to_string(),
+                    tab_id: Some(tab_id.to_string()),
+                    data: None,
+                    error: Some(e),
+                    error_code: Some("SELECT_OPTION_FAILED".to_string()),
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
             }
