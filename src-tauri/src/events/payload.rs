@@ -18,6 +18,9 @@ pub enum EdithPayload {
 
     #[serde(rename = "runtime")]
     Runtime(RuntimePayload),
+
+    #[serde(rename = "security_policy")]
+    SecurityPolicy(SecurityPolicyPayload),
 }
 
 /// Lifecycle events for streaming LLM generations.
@@ -154,3 +157,36 @@ pub enum RuntimePayload {
     #[serde(rename = "notification")]
     Notification { level: String, message: String },
 }
+
+/// Events for host-enforced security evaluation, permission checks, and human approvals.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "security_event", content = "data")]
+pub enum SecurityPolicyPayload {
+    #[serde(rename = "policy_evaluated")]
+    PolicyEvaluated {
+        action_domain: String,
+        action_operation: String,
+        risk_level: String,
+        outcome: String,
+        reason: String,
+        approval_id: Option<String>,
+    },
+
+    #[serde(rename = "approval_requested")]
+    ApprovalRequested {
+        approval_id: String,
+        action_domain: String,
+        action_operation: String,
+        risk_level: String,
+        reason: String,
+        expires_at_ms: u64,
+    },
+
+    #[serde(rename = "approval_resolved")]
+    ApprovalResolved {
+        approval_id: String,
+        status: String,
+        notes: Option<String>,
+    },
+}
+

@@ -7,6 +7,7 @@ pub mod ai;
 pub mod events;
 pub mod conversation;
 pub mod task;
+pub mod policy;
 mod agent;
 mod chat;
 pub mod db;
@@ -340,6 +341,40 @@ async fn task_list_active(
     Ok(task_runtime.list_active_tasks().await)
 }
 
+#[tauri::command]
+async fn policy_evaluate_action(
+    request: policy::ActionRequest,
+    context: policy::PolicyContext,
+    policy_engine: State<'_, policy::PolicyEngine>,
+) -> Result<policy::PolicyDecision, String> {
+    Ok(policy_engine.evaluate(&request, &context).await)
+}
+
+#[tauri::command]
+async fn policy_list_pending_approvals(
+    policy_engine: State<'_, policy::PolicyEngine>,
+) -> Result<Vec<policy::ApprovalRequest>, String> {
+    Ok(policy_engine.list_pending_approvals().await)
+}
+
+#[tauri::command]
+async fn policy_resolve_approval(
+    approval_id: String,
+    decision: policy::OperatorDecision,
+    policy_engine: State<'_, policy::PolicyEngine>,
+) -> Result<policy::ApprovalRequest, String> {
+    policy_engine.resolve_approval(&approval_id, decision).await
+}
+
+#[tauri::command]
+async fn policy_get_audit_log(
+    limit: Option<usize>,
+    policy_engine: State<'_, policy::PolicyEngine>,
+) -> Result<Vec<policy::AuditRecord>, String> {
+    Ok(policy_engine.get_audit_log(limit.unwrap_or(100)).await)
+}
+
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -370,8 +405,10 @@ pub fn run() {
                 Some(std::sync::Arc::new(std::sync::Mutex::new(conn2))),
                 None,
             );
+            let policy_engine = policy::PolicyEngine::new(Some(emitter.clone()));
             app.manage(task_runtime);
             app.manage(conversation_core);
+            app.manage(policy_engine);
 
             Ok(())
         })
@@ -570,7 +607,11 @@ pub fn run() {
             task_create,
             task_cancel,
             task_get_status,
-            task_list_active
+            task_list_active,
+            policy_evaluate_action,
+            policy_list_pending_approvals,
+            policy_resolve_approval,
+            policy_get_audit_log
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
