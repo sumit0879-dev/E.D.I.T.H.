@@ -118,6 +118,43 @@ pub enum ToolPayload {
         tool_name: String,
         error: String,
     },
+
+    #[serde(rename = "approval_required")]
+    ApprovalRequired {
+        execution_id: String,
+        tool_name: String,
+        approval_id: String,
+        reason: String,
+    },
+
+    #[serde(rename = "approved")]
+    Approved {
+        execution_id: String,
+        tool_name: String,
+        approval_id: String,
+    },
+
+    #[serde(rename = "denied")]
+    Denied {
+        execution_id: String,
+        tool_name: String,
+        reason: String,
+    },
+
+    #[serde(rename = "progress")]
+    Progress {
+        execution_id: String,
+        tool_name: String,
+        step: u32,
+        status_text: String,
+    },
+
+    #[serde(rename = "cancelled")]
+    Cancelled {
+        execution_id: String,
+        tool_name: String,
+        reason: Option<String>,
+    },
 }
 
 /// Events for voice capture and realtime/pipeline speech sessions.
