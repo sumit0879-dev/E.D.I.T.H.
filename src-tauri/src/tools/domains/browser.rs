@@ -1,5 +1,5 @@
 use crate::browser::BrowserState;
-use crate::browser_tools::execute_browser_tool;
+use crate::browser_tools::execute_browser_tool_authorized;
 use crate::tools::cancellation::ScopedCancellationToken;
 use crate::tools::executor::DomainExecutor;
 use crate::tools::types::{ToolDefinition, ToolDomain, ToolExecutionError, ToolRequest};
@@ -239,6 +239,138 @@ pub fn get_browser_definitions() -> Vec<ToolDefinition> {
             false,
             15000,
         ),
+        ToolDefinition::new(
+            "browser.focus",
+            ToolDomain::Browser,
+            "Focus an element on the active page identified by element_id.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": { "type": "string", "description": "Target browser tab identifier" },
+                    "element_id": { "type": "string", "description": "Target element identifier" }
+                },
+                "required": ["tab_id", "element_id"]
+            }),
+            false,
+            5000,
+        ),
+        ToolDefinition::new(
+            "browser.wait",
+            ToolDomain::Browser,
+            "Wait for a page load, element, url change, or bounded timeout.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": { "type": "string", "description": "Target browser tab identifier" },
+                    "condition": {
+                        "type": "string",
+                        "enum": ["timeout", "url_changed", "element_present", "text_present", "page_load"],
+                        "description": "Condition to wait for"
+                    },
+                    "target": { "type": "string", "description": "Target element_id, text substring, or initial URL" },
+                    "timeout_ms": { "type": "number", "description": "Maximum wait timeout in milliseconds (default: 3000ms)" }
+                },
+                "required": ["tab_id", "condition"]
+            }),
+            false,
+            10000,
+        ),
+        ToolDefinition::new(
+            "browser.select_option",
+            ToolDomain::Browser,
+            "Select an option from a HTML dropdown select element.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "tab_id": { "type": "string", "description": "Target browser tab identifier" },
+                    "element_id": { "type": "string", "description": "Target select element identifier" },
+                    "value": { "type": "string", "description": "Option value to select" }
+                },
+                "required": ["tab_id", "element_id", "value"]
+            }),
+            false,
+            5000,
+        ),
+        ToolDefinition::new(
+            "browser.history_recent",
+            ToolDomain::Browser,
+            "Retrieve recent browser history entries ordered from newest to oldest.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "number", "minimum": 1, "maximum": 100, "description": "Maximum history items to return" }
+                }
+            }),
+            true,
+            5000,
+        ),
+        ToolDefinition::new(
+            "browser.history_search",
+            ToolDomain::Browser,
+            "Search browsing history entries matching a URL or page title query.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query matching against history URL or title" },
+                    "limit": { "type": "number", "minimum": 1, "maximum": 100, "description": "Maximum results to return" }
+                },
+                "required": ["query"]
+            }),
+            true,
+            5000,
+        ),
+        ToolDefinition::new(
+            "browser.bookmarks_list",
+            ToolDomain::Browser,
+            "Retrieve all saved browser bookmarks.",
+            json!({
+                "type": "object",
+                "properties": {}
+            }),
+            true,
+            5000,
+        ),
+        ToolDefinition::new(
+            "browser.bookmarks_search",
+            ToolDomain::Browser,
+            "Search saved browser bookmarks by title or URL query.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "query": { "type": "string", "description": "Search query matching bookmark title or URL" }
+                },
+                "required": ["query"]
+            }),
+            true,
+            5000,
+        ),
+        ToolDefinition::new(
+            "browser.downloads_recent",
+            ToolDomain::Browser,
+            "Retrieve recent file downloads with progress, file size, destination, and status.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "limit": { "type": "number", "minimum": 1, "maximum": 50, "description": "Maximum download records to return" }
+                }
+            }),
+            true,
+            5000,
+        ),
+        ToolDefinition::new(
+            "browser.download_get",
+            ToolDomain::Browser,
+            "Get detailed progress, status, and metadata for a specific download ID.",
+            json!({
+                "type": "object",
+                "properties": {
+                    "download_id": { "type": "string", "description": "Target download identifier" }
+                },
+                "required": ["download_id"]
+            }),
+            true,
+            5000,
+        ),
     ]
 }
 
@@ -254,7 +386,7 @@ impl BrowserDomainExecutor {
     }
 
     /// Translates namespaced "browser.*" name to legacy "browser_*" name expected by browser_tools.rs
-    fn map_tool_name(name: &str) -> &str {
+    pub fn map_tool_name(name: &str) -> &str {
         match name {
             "browser.observe" => "browser_observe",
             "browser.screenshot" => "browser_screenshot",
@@ -271,6 +403,15 @@ impl BrowserDomainExecutor {
             "browser.back" => "browser_back",
             "browser.forward" => "browser_forward",
             "browser.reload" => "browser_reload",
+            "browser.focus" => "browser_focus",
+            "browser.wait" => "browser_wait",
+            "browser.select_option" => "browser_select_option",
+            "browser.history_recent" => "browser_history_recent",
+            "browser.history_search" => "browser_history_search",
+            "browser.bookmarks_list" => "browser_bookmarks_list",
+            "browser.bookmarks_search" => "browser_bookmarks_search",
+            "browser.downloads_recent" => "browser_downloads_recent",
+            "browser.download_get" => "browser_download_get",
             other => other,
         }
     }
@@ -319,7 +460,7 @@ impl DomainExecutor for BrowserDomainExecutor {
                         "Execution was cancelled during browser operation.".to_string(),
                     ))
                 }
-                res = execute_browser_tool(app.clone(), legacy_name, &request.arguments, state) => {
+                res = execute_browser_tool_authorized(app.clone(), legacy_name, &request.arguments, state) => {
                     match res {
                         Ok(exec_res) => {
                             if exec_res.success {
