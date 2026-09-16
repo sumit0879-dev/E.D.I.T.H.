@@ -8,6 +8,7 @@ pub mod events;
 pub mod conversation;
 pub mod task;
 pub mod policy;
+pub mod tools;
 mod agent;
 mod chat;
 pub mod db;
@@ -374,6 +375,37 @@ async fn policy_get_audit_log(
     Ok(policy_engine.get_audit_log(limit.unwrap_or(100)).await)
 }
 
+#[tauri::command]
+fn tools_list_definitions(
+    registry: State<'_, tools::ToolRegistry>,
+) -> Result<Vec<tools::ToolDefinition>, String> {
+    Ok(registry.list())
+}
+
+#[tauri::command]
+fn tools_get_definition(
+    name: String,
+    registry: State<'_, tools::ToolRegistry>,
+) -> Result<Option<tools::ToolDefinition>, String> {
+    Ok(registry.get(&name).map(|d| (*d).clone()))
+}
+
+#[tauri::command]
+async fn tools_execute(
+    request: tools::ToolRequest,
+    router: State<'_, tools::ToolRouter>,
+) -> Result<tools::ToolExecutionResult, String> {
+    Ok(router.execute(request).await)
+}
+
+#[tauri::command]
+async fn tools_cancel_execution(
+    execution_id: String,
+    router: State<'_, tools::ToolRouter>,
+) -> Result<bool, String> {
+    Ok(router.cancel_execution(&execution_id).await)
+}
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -408,7 +440,23 @@ pub fn run() {
             let policy_engine = policy::PolicyEngine::new(Some(emitter.clone()));
             app.manage(task_runtime);
             app.manage(conversation_core);
-            app.manage(policy_engine);
+            app.manage(policy_engine.clone());
+
+            let tool_registry = tools::ToolRegistry::new();
+            for def in tools::get_browser_definitions() {
+                let _ = tool_registry.register(def);
+            }
+            let browser_executor = std::sync::Arc::new(tools::BrowserDomainExecutor::new(Some(app.handle().clone())));
+            let domain_executors = tools::DomainExecutorRegistry::new();
+            domain_executors.register(browser_executor);
+            let tool_router = tools::ToolRouter::with_defaults(
+                std::sync::Arc::new(tool_registry.clone()),
+                std::sync::Arc::new(domain_executors),
+                std::sync::Arc::new(policy_engine),
+                Some(emitter.clone()),
+            );
+            app.manage(tool_registry);
+            app.manage(tool_router);
 
             Ok(())
         })
@@ -611,7 +659,11 @@ pub fn run() {
             policy_evaluate_action,
             policy_list_pending_approvals,
             policy_resolve_approval,
-            policy_get_audit_log
+            policy_get_audit_log,
+            tools_list_definitions,
+            tools_get_definition,
+            tools_execute,
+            tools_cancel_execution
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
