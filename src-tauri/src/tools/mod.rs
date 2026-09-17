@@ -10,7 +10,9 @@ pub mod validator;
 mod tests;
 
 pub use cancellation::{CancellationRegistry, ScopedCancellationToken};
-pub use domains::{get_browser_definitions, BrowserDomainExecutor};
+pub use domains::{
+    get_browser_definitions, get_computer_definitions, BrowserDomainExecutor, ComputerDomainExecutor,
+};
 pub use executor::{BoxFuture, DomainExecutor, DomainExecutorRegistry};
 pub use registry::ToolRegistry;
 pub use router::ToolRouter;
