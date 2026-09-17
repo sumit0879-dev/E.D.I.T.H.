@@ -12,5 +12,6 @@ pub use ids::{
     ConversationId, EventId, StreamId, TaskId, ToolExecutionId, TurnId, VoiceSessionId,
 };
 pub use payload::{
-    EdithPayload, RuntimePayload, StreamPayload, TaskPayload, ToolPayload, VoicePayload,
+    DuplexVoiceState, EdithPayload, InputChannelState, OutputChannelState, ProcessingState,
+    RuntimePayload, SessionLifecycleState, StreamPayload, TaskPayload, ToolPayload, VoicePayload,
 };

@@ -7,6 +7,7 @@ import {
   Key,
   Cpu,
   Volume2,
+  Mic,
   User,
   AppWindow,
   FileText,
@@ -108,6 +109,44 @@ export const SettingsView: React.FC = () => {
   const [kokoroModels, setKokoroModels] = useState<string[]>([]);
   const [showKeys, setShowKeys] = useState<Record<string, boolean>>({});
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Audio Hardware Devices (Microphone & Speaker Selection)
+  const [audioDevices, setAudioDevices] = useState<tauriService.AudioDevicesSummary | null>(null);
+  const [selectedInputId, setSelectedInputId] = useState<string>('');
+  const [selectedOutputId, setSelectedOutputId] = useState<string>('');
+  const [isLoadingDevices, setIsLoadingDevices] = useState(false);
+
+  const fetchAudioDevices = async () => {
+    setIsLoadingDevices(true);
+    try {
+      const summary = await tauriService.voiceListDevices();
+      setAudioDevices(summary);
+      setSelectedInputId(summary.active_input_id || '');
+      setSelectedOutputId(summary.active_output_id || '');
+    } catch (e) {
+      console.warn('Failed to fetch audio devices:', e);
+    } finally {
+      setIsLoadingDevices(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeSubTab === 'tts') {
+      fetchAudioDevices();
+    }
+  }, [activeSubTab]);
+
+  const handleSelectInputDevice = async (id: string) => {
+    setSelectedInputId(id);
+    await tauriService.voiceSetInputDevice(id === '' ? null : id);
+    showToast('Input microphone updated without restart', 'info');
+  };
+
+  const handleSelectOutputDevice = async (id: string) => {
+    setSelectedOutputId(id);
+    await tauriService.voiceSetOutputDevice(id === '' ? null : id);
+    showToast('Output speaker updated without restart', 'info');
+  };
 
   // Debounced Profile Fields state (DEF-03)
   const [profileNickname, setProfileNickname] = useState(settings.nickname || '');
@@ -1296,6 +1335,72 @@ export const SettingsView: React.FC = () => {
               >
                 {settings.autoSpeak === 'true' ? 'ACTIVE' : 'OFF'}
               </button>
+            </div>
+
+            {/* Audio Hardware Devices Section */}
+            <div className="p-5 rounded-2xl glass-card border border-white/10 space-y-4">
+              <div className="flex items-center justify-between">
+                <div>
+                  <div className="text-sm font-bold text-white flex items-center gap-2">
+                    <Mic className="w-4 h-4 text-cyan-400" />
+                    <span>Hardware Audio Devices</span>
+                  </div>
+                  <div className="text-xs text-slate-400 mt-0.5">
+                    Select input microphone and output speaker. Switches cleanly without app restart.
+                  </div>
+                </div>
+                <button
+                  onClick={fetchAudioDevices}
+                  disabled={isLoadingDevices}
+                  className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs font-semibold border border-white/5 flex items-center gap-1.5 transition disabled:opacity-50"
+                  title="Rescan audio devices"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDevices ? 'animate-spin text-cyan-400' : ''}`} />
+                  <span>Rescan</span>
+                </button>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                {/* Microphone Selection */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <Mic className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Microphone (Input)</span>
+                  </label>
+                  <select
+                    value={selectedInputId}
+                    onChange={(e) => handleSelectInputDevice(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl glass-input text-xs text-slate-200 bg-slate-900/80 border border-white/10 focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="">System Default Microphone</option>
+                    {audioDevices?.input_devices.map((dev) => (
+                      <option key={dev.opaque_id} value={dev.opaque_id}>
+                        {dev.name} {dev.is_default ? '(Default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* Speaker Selection */}
+                <div className="space-y-1.5">
+                  <label className="text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5">
+                    <Volume2 className="w-3.5 h-3.5 text-cyan-400" />
+                    <span>Speaker / Headphone (Output)</span>
+                  </label>
+                  <select
+                    value={selectedOutputId}
+                    onChange={(e) => handleSelectOutputDevice(e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl glass-input text-xs text-slate-200 bg-slate-900/80 border border-white/10 focus:outline-none focus:border-cyan-500"
+                  >
+                    <option value="">System Default Speaker</option>
+                    {audioDevices?.output_devices.map((dev) => (
+                      <option key={dev.opaque_id} value={dev.opaque_id}>
+                        {dev.name} {dev.is_default ? '(Default)' : ''}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </div>
             </div>
 
             <button

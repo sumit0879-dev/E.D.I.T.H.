@@ -530,6 +530,36 @@ async fn realtime_voice_get_status(
     Ok(controller.status_summary().await)
 }
 
+#[tauri::command]
+async fn voice_list_devices(
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<voice::AudioDevicesSummary, String> {
+    controller.list_devices().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn voice_set_input_device(
+    device_id: Option<String>,
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<(), String> {
+    controller.set_input_device(device_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn voice_set_output_device(
+    device_id: Option<String>,
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<(), String> {
+    controller.set_output_device(device_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn voice_get_device_status(
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<voice::AudioDevicesSummary, String> {
+    controller.list_devices().map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -852,7 +882,11 @@ pub fn run() {
             voice_get_status,
             realtime_voice_start,
             realtime_voice_stop,
-            realtime_voice_get_status
+            realtime_voice_get_status,
+            voice_list_devices,
+            voice_set_input_device,
+            voice_set_output_device,
+            voice_get_device_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -95,9 +95,20 @@ pub struct VoiceStatusSummary {
     #[serde(default)]
     pub transport_type: Option<String>,
     #[serde(default)]
-    pub reconnect_attempt: Option<u32>,
     pub is_muted: bool,
     pub last_error: Option<String>,
+    #[serde(default)]
+    pub duplex_state: Option<crate::events::DuplexVoiceState>,
+    #[serde(default)]
+    pub active_input_device_id: Option<String>,
+    #[serde(default)]
+    pub active_output_device_id: Option<String>,
+    #[serde(default)]
+    pub active_input_device_name: Option<String>,
+    #[serde(default)]
+    pub active_output_device_name: Option<String>,
+    #[serde(default)]
+    pub reconnect_attempt: Option<u32>,
 }
 
 /// Central controller orchestrating both Realtime S2S (Path A) and Fallback (Path B) voice pipelines.
@@ -107,6 +118,7 @@ pub struct VoiceController {
     tts_adapter: Arc<dyn TTSAdapter>,
     audio_output: Arc<dyn AudioOutputDriver>,
     capture_driver: Arc<dyn AudioCaptureDriver>,
+    device_manager: Arc<super::devices::AudioDeviceManager>,
     event_emitter: Option<Arc<EventEmitter>>,
     active_session: Arc<RwLock<Option<VoiceSession>>>,
     realtime_engine: Arc<RwLock<Option<Arc<super::realtime::RealtimeVoiceEngine>>>>,
@@ -127,6 +139,7 @@ impl VoiceController {
             tts_adapter,
             audio_output,
             capture_driver,
+            device_manager: Arc::new(super::devices::AudioDeviceManager::new()),
             event_emitter,
             active_session: Arc::new(RwLock::new(None)),
             realtime_engine: Arc::new(RwLock::new(None)),
@@ -143,6 +156,24 @@ impl VoiceController {
     pub async fn set_realtime_engine(&self, engine: Arc<super::realtime::RealtimeVoiceEngine>) {
         let mut lock = self.realtime_engine.write().await;
         *lock = Some(engine);
+    }
+
+    pub fn device_manager(&self) -> &Arc<super::devices::AudioDeviceManager> {
+        &self.device_manager
+    }
+
+    pub fn list_devices(&self) -> Result<super::devices::AudioDevicesSummary, VoiceError> {
+        self.device_manager.list_devices()
+    }
+
+    pub fn set_input_device(&self, device_id: Option<String>) -> Result<(), VoiceError> {
+        self.device_manager.set_active_input_id(device_id.clone());
+        self.capture_driver.set_device(device_id)
+    }
+
+    pub fn set_output_device(&self, device_id: Option<String>) -> Result<(), VoiceError> {
+        self.device_manager.set_active_output_id(device_id.clone());
+        self.audio_output.set_device(device_id)
     }
 
     /// Helper to emit correlated voice events via EventEmitter if configured.
@@ -472,7 +503,7 @@ impl VoiceController {
                     mode: "realtime".to_string(),
                     state: format!("{:?}", rt_session.state).to_lowercase(),
                     session_id: Some(rt_session.id.to_string()),
-                    active_turn_id: active_turn,
+                    active_turn_id: active_turn.clone(),
                     stt_provider: "realtime_audio".to_string(),
                     tts_provider: rt_session.provider_id.clone(),
                     realtime_provider: Some(rt_session.provider_id.clone()),
@@ -483,6 +514,32 @@ impl VoiceController {
                         super::realtime::RealtimeSessionState::Failed(msg) => Some(msg.clone()),
                         _ => None,
                     },
+                    duplex_state: Some(crate::events::DuplexVoiceState {
+                        session: match &rt_session.state {
+                            super::realtime::RealtimeSessionState::Connecting => crate::events::SessionLifecycleState::Connecting,
+                            super::realtime::RealtimeSessionState::Connected | super::realtime::RealtimeSessionState::Listening => crate::events::SessionLifecycleState::Connected,
+                            super::realtime::RealtimeSessionState::Reconnecting => crate::events::SessionLifecycleState::Reconnecting,
+                            super::realtime::RealtimeSessionState::Failed(_) => crate::events::SessionLifecycleState::Error,
+                            _ => crate::events::SessionLifecycleState::Connected,
+                        },
+                        input: if is_active { crate::events::InputChannelState::ListeningAmbient } else { crate::events::InputChannelState::Inactive },
+                        output: if matches!(rt_session.state, super::realtime::RealtimeSessionState::Speaking) {
+                            crate::events::OutputChannelState::AssistantSpeaking
+                        } else {
+                            crate::events::OutputChannelState::Silent
+                        },
+                        processing: if matches!(rt_session.state, super::realtime::RealtimeSessionState::Processing) {
+                            crate::events::ProcessingState::ModelInferring
+                        } else {
+                            crate::events::ProcessingState::Idle
+                        },
+                        active_turn_id: active_turn,
+                        generation_id: rt_session.current_generation(),
+                    }),
+                    active_input_device_id: self.capture_driver.current_device_id(),
+                    active_output_device_id: self.audio_output.current_device_id(),
+                    active_input_device_name: self.capture_driver.current_device_name(),
+                    active_output_device_name: self.audio_output.current_device_name(),
                 };
             }
         }
@@ -513,6 +570,11 @@ impl VoiceController {
                     VoiceSessionState::Failed(msg) => Some(msg.clone()),
                     _ => None,
                 },
+                duplex_state: None,
+                active_input_device_id: self.capture_driver.current_device_id(),
+                active_output_device_id: self.audio_output.current_device_id(),
+                active_input_device_name: self.capture_driver.current_device_name(),
+                active_output_device_name: self.audio_output.current_device_name(),
             },
             None => VoiceStatusSummary {
                 is_active: false,
@@ -527,6 +589,11 @@ impl VoiceController {
                 reconnect_attempt: None,
                 is_muted: false,
                 last_error: None,
+                duplex_state: None,
+                active_input_device_id: self.capture_driver.current_device_id(),
+                active_output_device_id: self.audio_output.current_device_id(),
+                active_input_device_name: self.capture_driver.current_device_name(),
+                active_output_device_name: self.audio_output.current_device_name(),
             },
         }
     }

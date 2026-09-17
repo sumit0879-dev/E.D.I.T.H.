@@ -217,6 +217,108 @@ pub enum VoicePayload {
     RealtimeError {
         error: String,
     },
+
+    #[serde(rename = "duplex_state_changed")]
+    DuplexStateChanged {
+        state: DuplexVoiceState,
+    },
+
+    #[serde(rename = "visualizer_energy")]
+    VisualizerEnergy {
+        rms: u32,
+        peak: u32,
+        bands: [u32; 8],
+        is_speech: bool,
+        direction: String,
+    },
+
+    #[serde(rename = "device_changed")]
+    DeviceChanged {
+        device_type: String,
+        opaque_device_id: String,
+    },
+}
+
+/// Overall session connection lifecycle
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionLifecycleState {
+    Disabled,
+    Idle,
+    Connecting,
+    Connected,
+    Reconnecting,
+    Fallback,
+    Error,
+}
+
+/// Microphone capture / inbound stream activity
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InputChannelState {
+    Inactive,
+    ListeningAmbient,
+    UserSpeaking,
+}
+
+/// Speaker playback / outbound stream activity
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum OutputChannelState {
+    Silent,
+    AssistantSpeaking,
+    InterruptedDucking,
+}
+
+/// Backend reasoning / tool execution status
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProcessingState {
+    Idle,
+    ModelInferring,
+    ModelStreaming,
+    ToolExecuting,
+}
+
+/// Consolidated composite duplex voice state
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DuplexVoiceState {
+    pub session: SessionLifecycleState,
+    pub input: InputChannelState,
+    pub output: OutputChannelState,
+    pub processing: ProcessingState,
+    pub active_turn_id: Option<String>,
+    pub generation_id: u64,
+}
+
+impl Default for DuplexVoiceState {
+    fn default() -> Self {
+        Self {
+            session: SessionLifecycleState::Idle,
+            input: InputChannelState::Inactive,
+            output: OutputChannelState::Silent,
+            processing: ProcessingState::Idle,
+            active_turn_id: None,
+            generation_id: 0,
+        }
+    }
+}
+
+impl DuplexVoiceState {
+    pub fn is_user_speaking(&self) -> bool {
+        matches!(self.input, InputChannelState::UserSpeaking)
+    }
+
+    pub fn is_assistant_speaking(&self) -> bool {
+        matches!(
+            self.output,
+            OutputChannelState::AssistantSpeaking | OutputChannelState::InterruptedDucking
+        )
+    }
+
+    pub fn can_barge_in(&self) -> bool {
+        self.is_assistant_speaking() && self.is_user_speaking()
+    }
 }
 
 /// Global runtime status and error notifications.

@@ -1,5 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Mic, Sparkles, Activity, Radio, Zap } from 'lucide-react';
+import { eventRouter } from '../events';
 
 interface ArcReactorProps {
   status?: 'standby' | 'listening' | 'processing' | 'speaking' | 'online';
@@ -18,24 +19,85 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
   compact = false,
   className = '',
 }) => {
-  const [waveLevels, setWaveLevels] = useState<number[]>([40, 65, 30, 80, 55, 90, 45, 70, 35, 85, 60, 40]);
+  // 12 radial wave visualizer bars (15% to 100% height)
+  const [waveLevels, setWaveLevels] = useState<number[]>([
+    20, 25, 20, 30, 25, 35, 25, 30, 20, 25, 20, 20,
+  ]);
+  const [activeRms, setActiveRms] = useState<number>(0);
+  const [voiceDirection, setVoiceDirection] = useState<'input' | 'output' | 'idle'>('idle');
+  const [isSpeechActive, setIsSpeechActive] = useState<boolean>(false);
+  const lastPacketTimeRef = useRef<number>(Date.now());
 
-  // Audio wave simulation when listening or speaking
+  // Subscribe to real signal-driven VisualizerEnergy events from backend DSP pipeline
   useEffect(() => {
-    if (status !== 'listening' && status !== 'speaking') return;
+    const unsubscribe = eventRouter.onCategory('voice', (envelope) => {
+      const data = envelope.payload?.data;
+      if (!data) return;
 
-    const interval = setInterval(() => {
-      setWaveLevels((prev) =>
-        prev.map(() => Math.floor(Math.random() * 75) + 25)
-      );
-    }, 120);
+      if (data.voice_event === 'visualizer_energy') {
+        const { rms, bands, is_speech, direction } = data.data;
+        lastPacketTimeRef.current = Date.now();
+        setActiveRms(rms);
+        setIsSpeechActive(is_speech);
+        setVoiceDirection(direction === 'output' ? 'output' : 'input');
 
-    return () => clearInterval(interval);
-  }, [status]);
+        if (Array.isArray(bands) && bands.length >= 8) {
+          // Map 8 frequency bands (0..10000 basis points) symmetrically to 12 radial visualizer spikes
+          const mapped = [
+            bands[0], bands[1], bands[2], bands[3],
+            bands[4], bands[5], bands[6], bands[7],
+            bands[6], bands[4], bands[2], bands[0],
+          ].map((bp) => {
+            const pct = Math.round((bp / 10000) * 85) + 15;
+            return Math.max(15, Math.min(100, pct));
+          });
+          setWaveLevels(mapped);
+        }
+      } else if (data.voice_event === 'duplex_state_changed') {
+        const duplex = data.data;
+        if (duplex.output === 'assistant_speaking') {
+          setVoiceDirection('output');
+          setIsSpeechActive(true);
+        } else if (duplex.input === 'user_speaking') {
+          setVoiceDirection('input');
+          setIsSpeechActive(true);
+        } else {
+          setVoiceDirection('idle');
+          setIsSpeechActive(false);
+        }
+      }
+    });
 
-  const effectiveStatus = isListening ? 'listening' : status;
+    // Smooth signal decay when no new audio frames are arriving or during silence
+    const decayInterval = setInterval(() => {
+      const elapsed = Date.now() - lastPacketTimeRef.current;
+      if (elapsed > 120) {
+        setActiveRms((prev) => Math.max(0, Math.round(prev * 0.82)));
+        setWaveLevels((prev) =>
+          prev.map((lvl) => Math.max(15, Math.round(lvl * 0.88)))
+        );
+        if (elapsed > 350) {
+          setIsSpeechActive(false);
+          setVoiceDirection('idle');
+        }
+      }
+    }, 60);
 
-  // Determine glow color and speed based on status
+    return () => {
+      unsubscribe();
+      clearInterval(decayInterval);
+    };
+  }, []);
+
+  const effectiveStatus = isListening
+    ? 'listening'
+    : isSpeechActive && voiceDirection === 'output'
+    ? 'speaking'
+    : isSpeechActive && voiceDirection === 'input'
+    ? 'listening'
+    : status;
+
+  // Determine glow color, core gradient, and animation based on real duplex status
   const getCoreColors = () => {
     switch (effectiveStatus) {
       case 'listening':
@@ -74,6 +136,7 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
   };
 
   const colors = getCoreColors();
+  const rmsScale = 1.0 + Math.min(0.25, (activeRms / 10000) * 0.4);
 
   if (compact) {
     return (
@@ -81,21 +144,32 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
         onClick={onTriggerMic}
         className={`relative flex items-center justify-center cursor-pointer group ${className}`}
         style={{ width: 44, height: 44 }}
-        title={isListening ? 'E.D.I.T.H. is Listening...' : 'Click to activate voice'}
+        title={
+          effectiveStatus === 'listening'
+            ? 'E.D.I.T.H. is Listening...'
+            : effectiveStatus === 'speaking'
+            ? 'E.D.I.T.H. is Speaking...'
+            : 'Click to activate voice'
+        }
       >
         {/* Compact Orbit Ring */}
         <div className="absolute inset-0 rounded-full border border-dashed border-cyan-500/40 animate-spin-slow" />
         <div className="absolute inset-1 rounded-full border border-cyan-400/20 animate-spin-reverse-slow" />
-        
-        {/* Core */}
+
+        {/* Real-time Signal-modulated Core */}
         <div
-          className={`w-7 h-7 rounded-full bg-gradient-to-tr ${colors.core} flex items-center justify-center shadow-lg transition-all duration-300 group-hover:scale-110`}
-          style={{ boxShadow: colors.shadow }}
+          className={`w-7 h-7 rounded-full bg-gradient-to-tr ${colors.core} flex items-center justify-center shadow-lg transition-all duration-100 group-hover:scale-110`}
+          style={{
+            boxShadow: colors.shadow,
+            transform: `scale(${rmsScale})`,
+          }}
         >
           {effectiveStatus === 'listening' ? (
             <Radio className="w-3.5 h-3.5 text-slate-950 animate-pulse" />
           ) : effectiveStatus === 'processing' ? (
             <Activity className="w-3.5 h-3.5 text-slate-950 animate-spin" />
+          ) : effectiveStatus === 'speaking' ? (
+            <Zap className="w-3.5 h-3.5 text-slate-950 animate-pulse" />
           ) : (
             <Sparkles className="w-3.5 h-3.5 text-slate-950" />
           )}
@@ -109,19 +183,26 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
       className={`relative flex items-center justify-center select-none ${className}`}
       style={{ width: size, height: size }}
     >
-      {/* Dynamic Audio Waveform Spikes (Radiating 360) */}
+      {/* Dynamic Real-Signal Audio Waveform Spikes (Radiating 360) */}
       {(effectiveStatus === 'listening' || effectiveStatus === 'speaking') && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
           {waveLevels.map((lvl, idx) => {
             const angle = (idx * 360) / waveLevels.length;
+            const barColor =
+              effectiveStatus === 'speaking' ? 'bg-sky-400/90' : 'bg-cyan-400/90';
+            const barGlow =
+              effectiveStatus === 'speaking'
+                ? '0 0 10px rgba(56, 189, 248, 0.9)'
+                : '0 0 10px rgba(6, 182, 212, 0.9)';
+
             return (
               <div
                 key={idx}
-                className="absolute w-1 rounded-full bg-cyan-400/80 transition-all duration-100"
+                className={`absolute w-1 rounded-full ${barColor} transition-all duration-75`}
                 style={{
                   height: `${lvl}%`,
                   transform: `rotate(${angle}deg) translateY(-${size * 0.46}px)`,
-                  boxShadow: '0 0 8px rgba(6, 182, 212, 0.8)',
+                  boxShadow: barGlow,
                 }}
               />
             );
@@ -153,10 +234,18 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
           strokeDasharray="80 15 30 15 120 20"
         />
         {/* Cardinal Markers */}
-        <text x="145" y="18" fill="#22d3ee" fontSize="8" fontFamily="JetBrains Mono" opacity="0.8">000°</text>
-        <text x="274" y="153" fill="#22d3ee" fontSize="8" fontFamily="JetBrains Mono" opacity="0.8">090°</text>
-        <text x="145" y="292" fill="#22d3ee" fontSize="8" fontFamily="JetBrains Mono" opacity="0.8">180°</text>
-        <text x="8" y="153" fill="#22d3ee" fontSize="8" fontFamily="JetBrains Mono" opacity="0.8">270°</text>
+        <text x="145" y="18" fill="#22d3ee" fontSize="8" fontFamily="JetBrains Mono" opacity="0.8">
+          000°
+        </text>
+        <text x="274" y="153" fill="#22d3ee" fontSize="8" fontFamily="JetBrains Mono" opacity="0.8">
+          090°
+        </text>
+        <text x="145" y="292" fill="#22d3ee" fontSize="8" fontFamily="JetBrains Mono" opacity="0.8">
+          180°
+        </text>
+        <text x="8" y="153" fill="#22d3ee" fontSize="8" fontFamily="JetBrains Mono" opacity="0.8">
+          270°
+        </text>
       </svg>
 
       {/* Layer 2: Counter-rotating Geometrical Ring */}
@@ -210,15 +299,16 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
         />
       </svg>
 
-      {/* Center Core: Interactive Arc Reactor Button */}
+      {/* Center Core: Interactive Arc Reactor Button with Real-time Energy Modulation */}
       <div
         onClick={onTriggerMic}
         role="button"
         tabIndex={0}
         aria-label="Activate Voice Assistant E.D.I.T.H."
-        className={`relative z-10 w-28 h-28 rounded-full bg-gradient-to-tr ${colors.core} flex flex-col items-center justify-center cursor-pointer transition-all duration-300 transform hover:scale-105 active:scale-95 group focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-4 focus:ring-offset-[#030712]`}
+        className={`relative z-10 w-28 h-28 rounded-full bg-gradient-to-tr ${colors.core} flex flex-col items-center justify-center cursor-pointer transition-all duration-100 transform hover:scale-105 active:scale-95 group focus:outline-none focus:ring-2 focus:ring-cyan-400 focus:ring-offset-4 focus:ring-offset-[#030712]`}
         style={{
           boxShadow: colors.shadow,
+          transform: `scale(${rmsScale})`,
         }}
       >
         {/* Core Tech Segment Overlay */}

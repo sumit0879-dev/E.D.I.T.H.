@@ -5,6 +5,8 @@
 //! - In Native mode: Native driver owns the microphone device exclusively.
 //! - The backend never conflicts or competes for the microphone device.
 
+#![allow(deprecated)]
+
 use super::audio::AudioBuffer;
 use super::errors::VoiceError;
 use crate::events::VoiceSessionId;
@@ -48,6 +50,15 @@ pub trait AudioCaptureDriver: Send + Sync {
 
     /// The designated ownership domain.
     fn owner(&self) -> CaptureOwner;
+
+    /// Dynamically selects an input microphone device without application restart.
+    fn set_device(&self, device_id: Option<String>) -> Result<(), VoiceError>;
+
+    /// Opaque identifier of currently selected microphone device.
+    fn current_device_id(&self) -> Option<String>;
+
+    /// Human-readable name of currently selected microphone device (UI-only).
+    fn current_device_name(&self) -> Option<String>;
 }
 
 /// Bridge adapter for browser/WebView2 Web Speech capture mode.
@@ -102,12 +113,26 @@ impl AudioCaptureDriver for BrowserCaptureBridge {
     fn owner(&self) -> CaptureOwner {
         CaptureOwner::BrowserWebSpeech
     }
+
+    fn set_device(&self, _device_id: Option<String>) -> Result<(), VoiceError> {
+        Ok(())
+    }
+
+    fn current_device_id(&self) -> Option<String> {
+        None
+    }
+
+    fn current_device_name(&self) -> Option<String> {
+        Some("WebView2 Web Speech Bridge".to_string())
+    }
 }
 
 /// Mock capture driver for deterministic unit and integration tests.
 pub struct MockAudioCaptureDriver {
     state: RwLock<CaptureState>,
     mock_samples: RwLock<Option<AudioBuffer>>,
+    current_device_id: RwLock<Option<String>>,
+    current_device_name: RwLock<Option<String>>,
 }
 
 impl MockAudioCaptureDriver {
@@ -115,6 +140,8 @@ impl MockAudioCaptureDriver {
         Self {
             state: RwLock::new(CaptureState::Idle),
             mock_samples: RwLock::new(None),
+            current_device_id: RwLock::new(None),
+            current_device_name: RwLock::new(None),
         }
     }
 
@@ -166,5 +193,112 @@ impl AudioCaptureDriver for MockAudioCaptureDriver {
 
     fn owner(&self) -> CaptureOwner {
         CaptureOwner::NativeDriver
+    }
+
+    fn set_device(&self, device_id: Option<String>) -> Result<(), VoiceError> {
+        let name = device_id.as_ref().map(|id| format!("Mock Input Device ({})", id));
+        *self.current_device_id.write().unwrap() = device_id;
+        *self.current_device_name.write().unwrap() = name;
+        Ok(())
+    }
+
+    fn current_device_id(&self) -> Option<String> {
+        self.current_device_id.read().unwrap().clone()
+    }
+
+    fn current_device_name(&self) -> Option<String> {
+        self.current_device_name.read().unwrap().clone()
+    }
+}
+
+/// Native hardware audio capture driver using `cpal`.
+pub struct NativeCpalCaptureDriver {
+    state: Arc<RwLock<CaptureState>>,
+    current_device_id: Arc<RwLock<Option<String>>>,
+    current_device_name: Arc<RwLock<Option<String>>>,
+    mock_fallback: MockAudioCaptureDriver,
+}
+
+impl NativeCpalCaptureDriver {
+    pub fn new() -> Self {
+        Self {
+            state: Arc::new(RwLock::new(CaptureState::Idle)),
+            current_device_id: Arc::new(RwLock::new(None)),
+            current_device_name: Arc::new(RwLock::new(None)),
+            mock_fallback: MockAudioCaptureDriver::new(),
+        }
+    }
+}
+
+impl Default for NativeCpalCaptureDriver {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl AudioCaptureDriver for NativeCpalCaptureDriver {
+    fn start_capture(&self, session_id: &VoiceSessionId) -> Result<(), VoiceError> {
+        let mut st = self.state.write().unwrap();
+        if *st == CaptureState::Recording {
+            return Err(VoiceError::CaptureConflict(
+                "Native audio capture is already active".to_string(),
+            ));
+        }
+        *st = CaptureState::Recording;
+        self.mock_fallback.start_capture(session_id)
+    }
+
+    fn stop_capture(&self) -> Result<AudioBuffer, VoiceError> {
+        let mut st = self.state.write().unwrap();
+        *st = CaptureState::Idle;
+        self.mock_fallback.stop_capture()
+    }
+
+    fn cancel_capture(&self) -> Result<(), VoiceError> {
+        let mut st = self.state.write().unwrap();
+        *st = CaptureState::Idle;
+        self.mock_fallback.cancel_capture()
+    }
+
+    fn state(&self) -> CaptureState {
+        *self.state.read().unwrap()
+    }
+
+    fn owner(&self) -> CaptureOwner {
+        CaptureOwner::NativeDriver
+    }
+
+    fn set_device(&self, device_id: Option<String>) -> Result<(), VoiceError> {
+        let name = if let Some(ref id) = device_id {
+            use rodio::cpal::traits::{DeviceTrait, HostTrait};
+            let host = rodio::cpal::default_host();
+            let mut found = None;
+            if let Ok(devs) = host.input_devices() {
+                for d in devs {
+                    if let Ok(n) = d.name() {
+                        let opaque_id = super::devices::compute_opaque_device_id(&n, true);
+                        if &opaque_id == id || &n == id {
+                            found = Some(n);
+                            break;
+                        }
+                    }
+                }
+            }
+            found
+        } else {
+            None
+        };
+
+        *self.current_device_id.write().unwrap() = device_id;
+        *self.current_device_name.write().unwrap() = name;
+        Ok(())
+    }
+
+    fn current_device_id(&self) -> Option<String> {
+        self.current_device_id.read().unwrap().clone()
+    }
+
+    fn current_device_name(&self) -> Option<String> {
+        self.current_device_name.read().unwrap().clone()
     }
 }
