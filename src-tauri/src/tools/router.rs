@@ -118,6 +118,15 @@ impl ToolRouter {
                     ActionTarget::None
                 }
             }
+            ToolDomain::Computer => {
+                if let Some(app) = args.get("app_name").and_then(|v| v.as_str()) {
+                    ActionTarget::SystemTarget(app.to_string())
+                } else if let Some(title) = args.get("title").and_then(|v| v.as_str()) {
+                    ActionTarget::SystemTarget(title.to_string())
+                } else {
+                    ActionTarget::None
+                }
+            }
             ToolDomain::Filesystem => {
                 if let Some(path_str) = args.get("path").and_then(|v| v.as_str()) {
                     ActionTarget::Path(PathBuf::from(path_str))

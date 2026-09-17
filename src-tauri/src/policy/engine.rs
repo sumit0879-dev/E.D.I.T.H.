@@ -1,4 +1,4 @@
-use super::adapters::{BrowserAdapter, CommandAdapter};
+use super::adapters::{BrowserAdapter, CommandAdapter, ComputerAdapter};
 use super::approval::{ApprovalRequest, ApprovalStore, OperatorDecision};
 use super::audit::{AuditRecord, SecurityAuditTrail};
 use super::context::PolicyContext;
@@ -161,6 +161,8 @@ impl PolicyEngine {
             CommandAdapter::evaluate(req, ctx, &constraints)
         } else if domain_lower == "browser" {
             BrowserAdapter::evaluate(req, ctx, &constraints)
+        } else if domain_lower == "computer" {
+            ComputerAdapter::evaluate(req, ctx, &constraints)
         } else {
             // General external actions evaluation
             if !constraints.allow_external_services {

@@ -26,6 +26,7 @@ pub mod browser_agent;
 pub mod browser_risk;
 pub mod browser_orchestrator;
 pub mod browser_control;
+pub mod computer_control;
 pub mod browser_storage;
 pub mod browser_download;
 pub mod browser_profile;
@@ -446,9 +447,14 @@ pub fn run() {
             for def in tools::get_browser_definitions() {
                 let _ = tool_registry.register(def);
             }
+            for def in tools::get_computer_definitions() {
+                let _ = tool_registry.register(def);
+            }
             let browser_executor = std::sync::Arc::new(tools::BrowserDomainExecutor::new(Some(app.handle().clone())));
+            let computer_executor = std::sync::Arc::new(tools::ComputerDomainExecutor::new(Some(app.handle().clone())));
             let domain_executors = tools::DomainExecutorRegistry::new();
             domain_executors.register(browser_executor);
+            domain_executors.register(computer_executor);
             let tool_router = tools::ToolRouter::with_defaults(
                 std::sync::Arc::new(tool_registry.clone()),
                 std::sync::Arc::new(domain_executors),
