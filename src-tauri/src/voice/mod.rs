@@ -13,6 +13,7 @@ pub mod audio;
 pub mod capture;
 pub mod errors;
 pub mod output;
+pub mod realtime;
 pub mod session;
 pub mod stt;
 pub mod tts;
@@ -29,6 +30,12 @@ pub use capture::{
 };
 pub use errors::VoiceError;
 pub use output::{AudioOutputDriver, MockAudioOutputDriver, RodioAudioOutputDriver};
+pub use realtime::{
+    AudioFrame, AudioFrameTransport, FrameDirection, MockAudioFrameTransport,
+    MockRealtimeSessionAdapter, RealtimeEngineConfig, RealtimeProviderEvent,
+    RealtimeSessionAdapter, RealtimeSessionState, RealtimeVoiceEngine, RealtimeVoiceSession,
+    TransportEvent, TransportState,
+};
 pub use session::{VoiceController, VoiceSession, VoiceSessionState, VoiceStatusSummary};
 pub use stt::{CloudSTTAdapter, MockSTTAdapter, STTAdapter, STTOptions, Transcript, WebSpeechSTTBridge};
 pub use tts::{EdgeTtsAdapter, LocalTtsAdapter, MockTtsAdapter, TTSAdapter, TTSOptions, VoiceDescriptor};

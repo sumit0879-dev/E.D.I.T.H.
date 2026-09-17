@@ -2260,11 +2260,15 @@ export async function runtimeGetCapabilities(): Promise<CapabilitiesSummary | nu
 
 export interface VoiceStatusSummary {
   is_active: boolean;
+  mode?: string;
   state: string;
   session_id?: string;
   active_turn_id?: string;
   stt_provider: string;
   tts_provider: string;
+  realtime_provider?: string;
+  transport_type?: string;
+  reconnect_attempt?: number;
   is_muted: boolean;
   last_error?: string;
 }
@@ -2326,6 +2330,7 @@ export async function voiceGetStatus(): Promise<VoiceStatusSummary | null> {
   if (!isTauri()) {
     return {
       is_active: false,
+      mode: 'fallback',
       state: 'idle',
       stt_provider: 'browser-speech-api',
       tts_provider: 'browser-speech-synthesis',
@@ -2336,6 +2341,47 @@ export async function voiceGetStatus(): Promise<VoiceStatusSummary | null> {
     return await invoke<VoiceStatusSummary>('voice_get_status');
   } catch (e) {
     console.warn('Failed to get voice status:', e);
+    return null;
+  }
+}
+
+export async function realtimeVoiceStart(
+  conversationId: string,
+  providerId?: string
+): Promise<string> {
+  if (!isTauri()) {
+    return 'browser-realtime-session-' + Date.now();
+  }
+  return await invoke<string>('realtime_voice_start', {
+    conversationId,
+    providerId,
+  });
+}
+
+export async function realtimeVoiceStop(): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke('realtime_voice_stop');
+  } catch (e) {
+    console.warn('Failed to stop realtime voice:', e);
+  }
+}
+
+export async function realtimeVoiceGetStatus(): Promise<VoiceStatusSummary | null> {
+  if (!isTauri()) {
+    return {
+      is_active: false,
+      mode: 'realtime',
+      state: 'idle',
+      stt_provider: 'realtime_audio',
+      tts_provider: 'gemini-live',
+      is_muted: false,
+    };
+  }
+  try {
+    return await invoke<VoiceStatusSummary>('realtime_voice_get_status');
+  } catch (e) {
+    console.warn('Failed to get realtime voice status:', e);
     return null;
   }
 }

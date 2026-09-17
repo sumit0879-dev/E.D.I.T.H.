@@ -12,6 +12,6 @@ pub use errors::{normalize_http_error, sanitize_error_message, ProviderError};
 pub use model::{Modality, ModelAvailability, ModelMetadata};
 pub use provider::{
     ChatMessage, GenerateRequest, GenerateResponse, ModelDiscoveryCapability, Provider,
-    StreamChunk, StreamingTextCapability, TextGenerationCapability,
+    RealtimeAudioCapability, StreamChunk, StreamingTextCapability, TextGenerationCapability,
 };
 pub use registry::{ProviderRegistry, ProviderSummary};

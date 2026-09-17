@@ -99,6 +99,12 @@ pub trait ModelDiscoveryCapability: Send + Sync {
     ) -> Pin<Box<dyn Future<Output = Result<Vec<ModelMetadata>, ProviderError>> + Send + 'a>>;
 }
 
+/// Capability interface for real-time duplex audio sessions.
+pub trait RealtimeAudioCapability: Send + Sync {
+    /// Returns the provider's default realtime model name or endpoint identifier.
+    fn default_realtime_model(&self) -> &str;
+}
+
 /// The core Provider trait representing an AI service.
 /// Rather than a monolithic trait containing all methods, this trait defines
 /// provider identity, metadata, and accessor methods for specific capability interfaces.
@@ -128,6 +134,10 @@ pub trait Provider: std::fmt::Debug + Send + Sync {
     }
 
     fn as_model_discovery(&self) -> Option<&dyn ModelDiscoveryCapability> {
+        None
+    }
+
+    fn as_realtime_audio(&self) -> Option<&dyn RealtimeAudioCapability> {
         None
     }
 }
