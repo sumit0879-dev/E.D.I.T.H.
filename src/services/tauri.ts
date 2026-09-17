@@ -649,12 +649,7 @@ export async function ttsSpeak(text: string, voice?: string): Promise<void> {
   }
 
   try {
-    const b64 = await invoke<string>('tts_speak', { text, voice });
-    if (b64 && typeof b64 === 'string' && b64.length > 50) {
-      const audio = new Audio('data:audio/mp3;base64,' + b64);
-      activeTtsAudio = audio;
-      await audio.play();
-    }
+    await invoke<string>('tts_speak', { text, voice });
   } catch (err) {
     console.warn('Tauri native TTS synthesis error, falling back to Web Speech API:', err);
     if ('speechSynthesis' in window) {
@@ -2262,3 +2257,86 @@ export async function runtimeGetCapabilities(): Promise<CapabilitiesSummary | nu
     return null;
   }
 }
+
+export interface VoiceStatusSummary {
+  is_active: boolean;
+  state: string;
+  session_id?: string;
+  active_turn_id?: string;
+  stt_provider: string;
+  tts_provider: string;
+  is_muted: boolean;
+  last_error?: string;
+}
+
+export async function voiceSessionStart(conversationId: string): Promise<string> {
+  if (!isTauri()) {
+    return 'browser-voice-session-' + Date.now();
+  }
+  return await invoke<string>('voice_session_start', { conversationId });
+}
+
+export async function voiceSessionSubmitTranscript(
+  sessionId: string,
+  transcript: string,
+  confidence?: number,
+  language?: string,
+  providerId?: string,
+  modelId?: string,
+  appSettings?: Record<string, any>
+): Promise<string> {
+  if (!isTauri()) {
+    return 'Browser simulated response for voice transcript: ' + transcript;
+  }
+  return await invoke<string>('voice_session_submit_transcript', {
+    sessionId,
+    transcript,
+    confidence,
+    language,
+    providerId,
+    modelId,
+    appSettings,
+  });
+}
+
+export async function voiceSessionCancel(sessionId: string, reason?: string): Promise<void> {
+  if (!isTauri()) return;
+  try {
+    await invoke('voice_session_cancel', { sessionId, reason });
+  } catch (e) {
+    console.warn('Failed to cancel voice session:', e);
+  }
+}
+
+export async function voiceStopPlayback(): Promise<void> {
+  if (!isTauri()) {
+    if ('speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+    }
+    return;
+  }
+  try {
+    await invoke('voice_stop_playback');
+  } catch (e) {
+    console.warn('Failed to stop voice playback:', e);
+  }
+}
+
+export async function voiceGetStatus(): Promise<VoiceStatusSummary | null> {
+  if (!isTauri()) {
+    return {
+      is_active: false,
+      state: 'idle',
+      stt_provider: 'browser-speech-api',
+      tts_provider: 'browser-speech-synthesis',
+      is_muted: false,
+    };
+  }
+  try {
+    return await invoke<VoiceStatusSummary>('voice_get_status');
+  } catch (e) {
+    console.warn('Failed to get voice status:', e);
+    return null;
+  }
+}
+

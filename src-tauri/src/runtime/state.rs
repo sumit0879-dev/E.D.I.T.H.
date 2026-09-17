@@ -32,6 +32,7 @@ pub struct EdithRuntimeState {
     policy_engine: Arc<PolicyEngine>,
     app_handle: Option<tauri::AppHandle>,
     db_conn: Option<Arc<std::sync::Mutex<rusqlite::Connection>>>,
+    voice_controller: Option<Arc<crate::voice::VoiceController>>,
     start_time: Instant,
 }
 
@@ -56,8 +57,15 @@ impl EdithRuntimeState {
             policy_engine,
             app_handle,
             db_conn,
+            voice_controller: None,
             start_time: Instant::now(),
         }
+    }
+
+    /// Attaches the authoritative VoiceController coordination layer.
+    pub fn with_voice_controller(mut self, voice_controller: Arc<crate::voice::VoiceController>) -> Self {
+        self.voice_controller = Some(voice_controller);
+        self
     }
 
     /// Creates an in-memory mock EdithRuntimeState for tests without database or Tauri handles.
@@ -190,6 +198,11 @@ impl EdithRuntimeState {
         let pending_approvals = self.policy_engine.approvals().list_pending().await;
         let (active_provider, active_model) = self.get_active_model_settings();
         let active_turn_ids = self.conversation_core.get_active_turn_ids().await;
+        let voice = if let Some(ref vc) = self.voice_controller {
+            Some(vc.status_summary().await)
+        } else {
+            None
+        };
 
         RuntimeStatusSummary {
             session_id,
@@ -203,7 +216,12 @@ impl EdithRuntimeState {
             active_provider,
             active_model,
             uptime_seconds: self.start_time.elapsed().as_secs(),
+            voice,
         }
+    }
+
+    pub fn voice_controller(&self) -> Option<&Arc<crate::voice::VoiceController>> {
+        self.voice_controller.as_ref()
     }
 
     /// Projects all registered tools and active provider capabilities into a structured catalog.
