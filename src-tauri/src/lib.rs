@@ -34,6 +34,7 @@ pub mod browser_privacy;
 pub mod browser_recovery;
 pub mod weather;
 pub mod runtime;
+pub mod voice;
 
 use db::DbState;
 use std::collections::HashMap;
@@ -425,6 +426,79 @@ async fn runtime_get_capabilities(
 }
 
 
+#[tauri::command]
+async fn voice_session_start(
+    conversation_id: String,
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<String, String> {
+    let cid = events::ConversationId::from_string(conversation_id);
+    let sid = controller
+        .start_session(cid, voice::CaptureOwner::BrowserWebSpeech)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(sid.to_string())
+}
+
+#[tauri::command]
+async fn voice_session_submit_transcript(
+    session_id: String,
+    transcript: String,
+    confidence: Option<f32>,
+    language: Option<String>,
+    provider_id: Option<String>,
+    model_id: Option<String>,
+    app_settings: Option<serde_json::Value>,
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<String, String> {
+    let sid = events::VoiceSessionId::from_string(session_id);
+    let creds = if let Some(ref settings) = app_settings {
+        let cred_store = ai::SettingsCredentialStore::from_json_value(settings);
+        let prov = provider_id.clone().unwrap_or_else(|| "groq".to_string());
+        cred_store.get_credential(&prov).ok().flatten()
+    } else {
+        None
+    };
+    controller
+        .submit_web_speech_transcript(
+            &sid,
+            transcript,
+            confidence,
+            language,
+            provider_id,
+            model_id,
+            creds,
+        )
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn voice_session_cancel(
+    session_id: String,
+    reason: Option<String>,
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<(), String> {
+    let sid = events::VoiceSessionId::from_string(session_id);
+    controller
+        .cancel_session(&sid, reason)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn voice_stop_playback(
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<(), String> {
+    controller.stop_playback().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn voice_get_status(
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<voice::VoiceStatusSummary, String> {
+    Ok(controller.status_summary().await)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -487,6 +561,19 @@ pub fn run() {
             );
             let tool_router_arc = std::sync::Arc::new(tool_router.clone());
 
+            let voice_stt = std::sync::Arc::new(voice::CloudSTTAdapter::new("cloud-stt", ""));
+            let voice_tts = std::sync::Arc::new(voice::EdgeTtsAdapter::new());
+            let voice_output = std::sync::Arc::new(voice::RodioAudioOutputDriver::new());
+            let voice_capture = std::sync::Arc::new(voice::BrowserCaptureBridge::new());
+            let voice_controller = std::sync::Arc::new(voice::VoiceController::new(
+                conversation_core_arc.clone(),
+                voice_stt,
+                voice_tts,
+                voice_output,
+                voice_capture,
+                Some(std::sync::Arc::new(emitter.clone())),
+            ));
+
             let runtime_state = runtime::EdithRuntimeState::new(
                 conversation_core_arc,
                 task_runtime_arc,
@@ -496,7 +583,7 @@ pub fn run() {
                 policy_engine_arc,
                 Some(app.handle().clone()),
                 Some(conn2_arc),
-            );
+            ).with_voice_controller(voice_controller.clone());
             let edith_executor = std::sync::Arc::new(tools::EdithDomainExecutor::new(std::sync::Arc::new(runtime_state.clone())));
             domain_executors_arc.register(edith_executor);
 
@@ -506,6 +593,7 @@ pub fn run() {
             app.manage(tool_registry);
             app.manage(tool_router);
             app.manage(runtime_state);
+            app.manage(voice_controller);
 
             Ok(())
         })
@@ -714,7 +802,12 @@ pub fn run() {
             tools_execute,
             tools_cancel_execution,
             runtime_get_status,
-            runtime_get_capabilities
+            runtime_get_capabilities,
+            voice_session_start,
+            voice_session_submit_transcript,
+            voice_session_cancel,
+            voice_stop_playback,
+            voice_get_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

@@ -309,6 +309,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       ttsAbortControllerRef.current = null;
     }
     try {
+      await tauriService.voiceStopPlayback();
       await tauriService.ttsStop();
     } catch (e) {
       console.error('Stop TTS error:', e);
@@ -443,6 +444,9 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       showToast('Speech recognition is not supported in this browser environment.', 'warning');
       return;
     }
+
+    // Turn Interruption (Barge-in): Halt active speech output before opening microphone
+    stopSpeaking();
 
     try {
       const recog = new SpeechRecognition();

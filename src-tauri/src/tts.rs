@@ -128,9 +128,9 @@ pub async fn tts_speak(text: String, voice: Option<String>) -> Result<String, St
         let _ = sender.send(AudioCommand::PlayEncodedBytes(res.audio.clone()));
     }
     
-    let b64 = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &res.audio);
-    println!("[CLOUD TTS] Done!");
-    Ok(b64)
+    // Eliminates duplicate playback: host audio sink is authoritative.
+    println!("[CLOUD TTS] Done (audio playing natively on host soundcard)!");
+    Ok("".to_string())
 }
 
 #[tauri::command]

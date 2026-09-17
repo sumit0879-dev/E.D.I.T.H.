@@ -80,6 +80,8 @@ pub struct RuntimeStatusSummary {
     pub active_provider: String,
     pub active_model: String,
     pub uptime_seconds: u64,
+    #[serde(default)]
+    pub voice: Option<crate::voice::VoiceStatusSummary>,
 }
 
 /// Summary of tools available in a specific domain.
