@@ -95,11 +95,38 @@ export type ToolEventData =
       };
     };
 
+export interface DuplexVoiceState {
+  session: 'disabled' | 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'fallback' | 'error';
+  input: 'inactive' | 'listening_ambient' | 'user_speaking' | 'muted';
+  output: 'silent' | 'assistant_speaking' | 'interrupted_ducking';
+  processing: 'idle' | 'model_inferring' | 'model_streaming' | 'tool_executing';
+  active_turn_id?: string;
+  generation_id: number;
+}
+
+export interface VisualizerEnergyData {
+  rms: number;
+  peak: number;
+  bands: number[];
+  is_speech: boolean;
+  direction: string;
+}
+
+export interface DeviceChangedData {
+  input_device_id?: string;
+  output_device_id?: string;
+  input_device_name?: string;
+  output_device_name?: string;
+}
+
 export type VoiceEventData =
   | { voice_event: 'session_started'; data: { session_id: string } }
   | { voice_event: 'state_changed'; data: { state: string; decibel?: number } }
   | { voice_event: 'barge_in'; data: { interrupted_source: string } }
-  | { voice_event: 'session_ended'; data: { session_id: string; reason?: string } };
+  | { voice_event: 'session_ended'; data: { session_id: string; reason?: string } }
+  | { voice_event: 'duplex_state_changed'; data: DuplexVoiceState }
+  | { voice_event: 'visualizer_energy'; data: VisualizerEnergyData }
+  | { voice_event: 'device_changed'; data: DeviceChangedData };
 
 export type RuntimeEventData =
   | {

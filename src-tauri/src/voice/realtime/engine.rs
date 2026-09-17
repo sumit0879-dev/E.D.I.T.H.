@@ -287,6 +287,37 @@ impl RealtimeVoiceEngine {
                             },
                         );
 
+                        // Signal-driven Visualizer Energy for outbound assistant speech
+                        let rms = frame.rms_energy();
+                        let peak = frame.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                        let mut bands = [0.0f32; 8];
+                        let chunk_size = frame.samples.len() / 8;
+                        if chunk_size > 0 {
+                            for (i, b) in bands.iter_mut().enumerate() {
+                                let start = i * chunk_size;
+                                let end = (start + chunk_size).min(frame.samples.len());
+                                let sub_sq: f32 = frame.samples[start..end].iter().map(|s| s * s).sum();
+                                *b = (sub_sq / (end - start) as f32).sqrt().clamp(0.0, 1.0);
+                            }
+                        }
+                        let rms_bp = (rms * 10000.0).clamp(0.0, 10000.0) as u32;
+                        let peak_bp = (peak * 10000.0).clamp(0.0, 10000.0) as u32;
+                        let mut bands_bp = [0u32; 8];
+                        for idx in 0..8 {
+                            bands_bp[idx] = (bands[idx] * 10000.0).clamp(0.0, 10000.0) as u32;
+                        }
+                        self.emit_voice_event(
+                            &session,
+                            Some(&active_tid),
+                            VoicePayload::VisualizerEnergy {
+                                rms: rms_bp,
+                                peak: peak_bp,
+                                bands: bands_bp,
+                                is_speech: true,
+                                direction: "output".to_string(),
+                            },
+                        );
+
                         // Direct streaming to single authoritative hardware audio sink
                         let _ = self
                             .audio_output
@@ -435,6 +466,40 @@ impl RealtimeVoiceEngine {
             samples,
             FrameDirection::Input,
             session.current_generation(),
+        );
+
+        // Signal-driven Visualizer Energy for live microphone speech
+        let rms = frame.rms_energy();
+        let peak = frame.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        let mut bands = [0.0f32; 8];
+        let chunk_size = frame.samples.len() / 8;
+        if chunk_size > 0 {
+            for (i, b) in bands.iter_mut().enumerate() {
+                let start = i * chunk_size;
+                let end = (start + chunk_size).min(frame.samples.len());
+                let sub_sq: f32 = frame.samples[start..end].iter().map(|s| s * s).sum();
+                *b = (sub_sq / (end - start) as f32).sqrt().clamp(0.0, 1.0);
+            }
+        }
+        let is_speech = rms >= 0.02;
+
+        let rms_bp = (rms * 10000.0).clamp(0.0, 10000.0) as u32;
+        let peak_bp = (peak * 10000.0).clamp(0.0, 10000.0) as u32;
+        let mut bands_bp = [0u32; 8];
+        for idx in 0..8 {
+            bands_bp[idx] = (bands[idx] * 10000.0).clamp(0.0, 10000.0) as u32;
+        }
+
+        self.emit_voice_event(
+            session,
+            None,
+            VoicePayload::VisualizerEnergy {
+                rms: rms_bp,
+                peak: peak_bp,
+                bands: bands_bp,
+                is_speech,
+                direction: "input".to_string(),
+            },
         );
 
         // Send outbound with timeout to avoid stalling on network slowdown

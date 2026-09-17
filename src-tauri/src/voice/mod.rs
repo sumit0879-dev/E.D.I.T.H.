@@ -11,11 +11,14 @@
 
 pub mod audio;
 pub mod capture;
+pub mod devices;
+pub mod dsp;
 pub mod errors;
 pub mod output;
 pub mod realtime;
 pub mod session;
 pub mod stt;
+pub mod telemetry;
 pub mod tts;
 
 #[cfg(test)]
@@ -27,6 +30,12 @@ pub use audio::{
 };
 pub use capture::{
     AudioCaptureDriver, BrowserCaptureBridge, CaptureOwner, CaptureState, MockAudioCaptureDriver,
+    NativeCpalCaptureDriver,
+};
+pub use devices::{compute_opaque_device_id, AudioDeviceInfo, AudioDeviceManager, AudioDevicesSummary};
+pub use dsp::{
+    AudioNormalizer, AudioPreprocessor, EchoCanceller, EnergyVad, SoftwareDuckingEchoCanceller,
+    VadConfig, VoiceActivityDetector,
 };
 pub use errors::VoiceError;
 pub use output::{AudioOutputDriver, MockAudioOutputDriver, RodioAudioOutputDriver};
@@ -38,4 +47,5 @@ pub use realtime::{
 };
 pub use session::{VoiceController, VoiceSession, VoiceSessionState, VoiceStatusSummary};
 pub use stt::{CloudSTTAdapter, MockSTTAdapter, STTAdapter, STTOptions, Transcript, WebSpeechSTTBridge};
+pub use telemetry::{VoiceTelemetryCollector, VoiceTelemetryReport};
 pub use tts::{EdgeTtsAdapter, LocalTtsAdapter, MockTtsAdapter, TTSAdapter, TTSOptions, VoiceDescriptor};
