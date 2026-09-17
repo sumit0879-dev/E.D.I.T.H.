@@ -1,7 +1,7 @@
-use super::adapters::{BrowserAdapter, CommandAdapter, ComputerAdapter};
+use super::adapters::{BrowserAdapter, CommandAdapter, ComputerAdapter, EdithAdapter};
 use super::approval::{ApprovalRequest, ApprovalStore, OperatorDecision};
 use super::audit::{AuditRecord, SecurityAuditTrail};
-use super::context::PolicyContext;
+use super::context::{PolicyContext, SecurityMode};
 use super::decision::PolicyDecision;
 use super::types::{ActionRequest, PolicyConstraints, PolicyOutcome, RiskLevel};
 use crate::events::emitter::EventEmitter;
@@ -20,6 +20,7 @@ pub struct PolicyEngine {
     audit_trail: Arc<SecurityAuditTrail>,
     emitter: Option<EventEmitter>,
     policy_version: Arc<AtomicU32>,
+    security_mode: Arc<RwLock<SecurityMode>>,
 }
 
 impl Default for PolicyEngine {
@@ -42,7 +43,20 @@ impl PolicyEngine {
             audit_trail: Arc::new(SecurityAuditTrail::default()),
             emitter,
             policy_version: Arc::new(AtomicU32::new(1)),
+            security_mode: Arc::new(RwLock::new(SecurityMode::Standard)),
         }
+    }
+
+    /// Returns the active security mode.
+    pub async fn get_security_mode(&self) -> SecurityMode {
+        *self.security_mode.read().await
+    }
+
+    /// Updates the active security mode and increments the policy version.
+    pub async fn set_security_mode(&self, mode: SecurityMode) {
+        let mut guard = self.security_mode.write().await;
+        *guard = mode;
+        self.policy_version.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Returns the current policy configuration version.
@@ -154,27 +168,35 @@ impl PolicyEngine {
 
         // 2. Domain-Specific Policy Assessment
         let domain_lower = req.domain.trim().to_lowercase();
-        let (risk_level, outcome, reason) = if domain_lower == "system"
+        let (risk_level, outcome, policy_code, reason) = if domain_lower == "system"
             || domain_lower == "command"
             || domain_lower == "terminal"
         {
-            CommandAdapter::evaluate(req, ctx, &constraints)
+            let (r, o, msg) = CommandAdapter::evaluate(req, ctx, &constraints);
+            (r, o, "POLICY_ALLOW".to_string(), msg)
         } else if domain_lower == "browser" {
-            BrowserAdapter::evaluate(req, ctx, &constraints)
+            let (r, o, msg) = BrowserAdapter::evaluate(req, ctx, &constraints);
+            (r, o, "POLICY_ALLOW".to_string(), msg)
         } else if domain_lower == "computer" {
-            ComputerAdapter::evaluate(req, ctx, &constraints)
+            let (r, o, msg) = ComputerAdapter::evaluate(req, ctx, &constraints);
+            (r, o, "POLICY_ALLOW".to_string(), msg)
+        } else if domain_lower == "edith" {
+            let decision = EdithAdapter::evaluate(req, ctx, current_policy_version);
+            (decision.risk_level, decision.outcome, decision.policy_code, decision.reason)
         } else {
             // General external actions evaluation
             if !constraints.allow_external_services {
                 (
                     RiskLevel::High,
                     PolicyOutcome::Blocked,
+                    "EXTERNAL_SERVICES_DISABLED".to_string(),
                     "External services are disabled in policy configuration.".to_string(),
                 )
             } else {
                 (
                     RiskLevel::Medium,
                     PolicyOutcome::Allow,
+                    "POLICY_ALLOW".to_string(),
                     "Standard operation evaluated under general policy constraints.".to_string(),
                 )
             }
@@ -185,7 +207,7 @@ impl PolicyEngine {
             PolicyOutcome::Allow => (
                 PolicyDecision::allow(
                     risk_level,
-                    "POLICY_ALLOW",
+                    if policy_code.is_empty() || policy_code == "POLICY_BLOCKED" { "POLICY_ALLOW" } else { &policy_code },
                     reason.clone(),
                     current_policy_version,
                 ),
@@ -253,7 +275,7 @@ impl PolicyEngine {
             PolicyOutcome::Blocked => (
                 PolicyDecision::blocked(
                     risk_level,
-                    "POLICY_BLOCKED",
+                    if policy_code.is_empty() { "POLICY_BLOCKED" } else { &policy_code },
                     reason.clone(),
                     current_policy_version,
                 ),

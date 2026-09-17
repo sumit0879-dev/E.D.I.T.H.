@@ -11,7 +11,8 @@ mod tests;
 
 pub use cancellation::{CancellationRegistry, ScopedCancellationToken};
 pub use domains::{
-    get_browser_definitions, get_computer_definitions, BrowserDomainExecutor, ComputerDomainExecutor,
+    get_browser_definitions, get_computer_definitions, get_edith_definitions,
+    BrowserDomainExecutor, ComputerDomainExecutor, EdithDomainExecutor,
 };
 pub use executor::{BoxFuture, DomainExecutor, DomainExecutorRegistry};
 pub use registry::ToolRegistry;

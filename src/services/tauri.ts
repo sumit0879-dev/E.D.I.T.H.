@@ -2189,6 +2189,76 @@ export async function browserTabGroupCloseTabs(groupId: string): Promise<string[
   return await invoke<string[]>('browser_tab_group_close_tabs', { groupId });
 }
 
+// --- Phase 8 Runtime State & Self-Knowledge APIs ---
 
+export interface RuntimeStatusSummary {
+  autonomy_state: string;
+  active_tasks_count: number;
+  active_tool_executions_count: number;
+  has_active_turns: boolean;
+  active_turn_ids: string[];
+  security_mode: string;
+  uptime_seconds: number;
+  timestamp: string;
+}
 
+export interface ToolDomainSummary {
+  domain: string;
+  count: number;
+  tools: string[];
+}
 
+export interface CapabilitiesSummary {
+  domains: ToolDomainSummary[];
+  total_tools: number;
+  providers_available: string[];
+  active_provider: string | null;
+  policy_mode: string;
+  supports_browser_control: boolean;
+  supports_computer_control: boolean;
+  supports_self_inspection: boolean;
+}
+
+export async function runtimeGetStatus(): Promise<RuntimeStatusSummary | null> {
+  if (!isTauri()) {
+    return {
+      autonomy_state: 'idle',
+      active_tasks_count: 0,
+      active_tool_executions_count: 0,
+      has_active_turns: false,
+      active_turn_ids: [],
+      security_mode: 'Standard',
+      uptime_seconds: 42,
+      timestamp: new Date().toISOString(),
+    };
+  }
+  try {
+    return await invoke<RuntimeStatusSummary>('runtime_get_status');
+  } catch (err) {
+    console.error('Failed to get runtime status:', err);
+    return null;
+  }
+}
+
+export async function runtimeGetCapabilities(): Promise<CapabilitiesSummary | null> {
+  if (!isTauri()) {
+    return {
+      domains: [
+        { domain: 'edith', count: 11, tools: ['edith.get_status', 'edith.get_capabilities'] },
+      ],
+      total_tools: 11,
+      providers_available: ['simulated'],
+      active_provider: 'simulated',
+      policy_mode: 'Standard',
+      supports_browser_control: true,
+      supports_computer_control: true,
+      supports_self_inspection: true,
+    };
+  }
+  try {
+    return await invoke<CapabilitiesSummary>('runtime_get_capabilities');
+  } catch (err) {
+    console.error('Failed to get runtime capabilities:', err);
+    return null;
+  }
+}

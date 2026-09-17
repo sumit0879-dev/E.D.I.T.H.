@@ -155,6 +155,24 @@ impl CancellationRegistry {
         let mut lock = self.executions.write().await;
         lock.remove(execution_id);
     }
+
+    /// Returns the number of currently active in-flight executions.
+    pub async fn active_execution_count(&self) -> usize {
+        let lock = self.executions.read().await;
+        lock.len()
+    }
+
+    /// Lists the IDs of all currently registered in-flight tool executions.
+    pub async fn list_active_executions(&self) -> Vec<String> {
+        let lock = self.executions.read().await;
+        lock.keys().cloned().collect()
+    }
+
+    /// Checks if a specific tool execution is currently registered as in-flight.
+    pub async fn is_execution_active(&self, execution_id: &str) -> bool {
+        let lock = self.executions.read().await;
+        lock.contains_key(execution_id)
+    }
 }
 
 fn t_token_cancelled(token: &ScopedCancellationToken) -> bool {

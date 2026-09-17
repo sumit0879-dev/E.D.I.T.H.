@@ -415,4 +415,29 @@ impl ConversationCore {
         let turn = turn_arc.read().await;
         Some(turn.cancellation_token.clone())
     }
+
+    /// Checks whether any conversational turns are currently in an active (non-terminal) state.
+    pub async fn has_active_turns(&self) -> bool {
+        let lock = self.turns.read().await;
+        for turn_arc in lock.values() {
+            let turn = turn_arc.read().await;
+            if !turn.status.is_terminal() {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Lists TurnIds of currently in-flight turns.
+    pub async fn get_active_turn_ids(&self) -> Vec<String> {
+        let lock = self.turns.read().await;
+        let mut active = Vec::new();
+        for (id, turn_arc) in lock.iter() {
+            let turn = turn_arc.read().await;
+            if !turn.status.is_terminal() {
+                active.push(id.clone());
+            }
+        }
+        active
+    }
 }
