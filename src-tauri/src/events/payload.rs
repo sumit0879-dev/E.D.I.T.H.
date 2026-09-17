@@ -178,6 +178,45 @@ pub enum VoicePayload {
         session_id: String,
         reason: Option<String>,
     },
+
+    #[serde(rename = "realtime_connected")]
+    RealtimeConnected {
+        provider: String,
+        transport: String,
+    },
+
+    #[serde(rename = "transcript_delta")]
+    TranscriptDelta {
+        text: String,
+        is_final: bool,
+    },
+
+    #[serde(rename = "assistant_audio_delta")]
+    AssistantAudioDelta {
+        sequence: u64,
+        duration_ms: u64,
+    },
+
+    #[serde(rename = "realtime_interrupted")]
+    RealtimeInterrupted {
+        reason: String,
+    },
+
+    #[serde(rename = "realtime_reconnecting")]
+    RealtimeReconnecting {
+        attempt: u32,
+        max_attempts: u32,
+    },
+
+    #[serde(rename = "realtime_fallback_triggered")]
+    RealtimeFallbackTriggered {
+        reason: String,
+    },
+
+    #[serde(rename = "realtime_error")]
+    RealtimeError {
+        error: String,
+    },
 }
 
 /// Global runtime status and error notifications.

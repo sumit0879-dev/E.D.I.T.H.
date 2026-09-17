@@ -440,4 +440,97 @@ impl ConversationCore {
         }
         active
     }
+
+    /// Authoritative turn creation specifically for duplex realtime conversational exchanges.
+    /// Allocates an authoritative TurnId, initializes the Turn state machine in `Processing` state,
+    /// and registers it in ConversationCore.
+    pub async fn start_realtime_turn(
+        &self,
+        session_id: &str,
+        provider_id: Option<String>,
+        model_id: Option<String>,
+    ) -> Result<TurnId, ConversationError> {
+        let turn_id = TurnId::new();
+        let stream_id = StreamId::new();
+
+        let model_selection = ModelSelection {
+            provider_id: provider_id.unwrap_or_else(|| "gemini".to_string()),
+            model_id: model_id.unwrap_or_else(|| "gemini-2.0-flash-exp".to_string()),
+            temperature: 0.7,
+        };
+
+        let mut turn = Turn::new(
+            turn_id.clone(),
+            session_id.to_string(),
+            stream_id,
+            String::new(), // Populated dynamically as transcript deltas arrive
+            model_selection,
+        );
+        turn.status = TurnStatus::Processing;
+
+        let mut lock = self.turns.write().await;
+        lock.insert(turn_id.to_string(), Arc::new(RwLock::new(turn)));
+
+        Ok(turn_id)
+    }
+
+    /// Authoritative turn finalization for duplex realtime conversational exchanges.
+    /// Transitions the turn to Completed, records final transcripts, and persists history.
+    pub async fn complete_realtime_turn(
+        &self,
+        turn_id: &TurnId,
+        user_transcript: Option<String>,
+        assistant_response: Option<String>,
+    ) -> Result<(), ConversationError> {
+        let turn_arc = {
+            let lock = self.turns.read().await;
+            lock.get(turn_id.as_str())
+                .cloned()
+                .ok_or_else(|| ConversationError::NotFound(turn_id.to_string()))?
+        };
+
+        let mut turn = turn_arc.write().await;
+        if turn.status.is_terminal() {
+            return Ok(());
+        }
+
+        turn.status = TurnStatus::Completed;
+        turn.completed_at_ms = Some(now_ms());
+
+        let session_id = turn.session_id.clone();
+
+        if let Some(user_text) = user_transcript {
+            turn.user_message = user_text.clone();
+            if let Some(ref db_conn) = self.db_conn {
+                if let Ok(conn) = db_conn.lock() {
+                    let timestamp = current_timestamp_str();
+                    let _ = crate::db::save_session_message(
+                        &conn,
+                        &session_id,
+                        "user",
+                        &user_text,
+                        &timestamp,
+                    );
+                }
+            }
+        }
+
+        if let Some(assistant_text) = assistant_response {
+            turn.final_response = Some(assistant_text.clone());
+            if let Some(ref db_conn) = self.db_conn {
+                if let Ok(conn) = db_conn.lock() {
+                    let timestamp = current_timestamp_str();
+                    let _ = crate::db::save_session_message(
+                        &conn,
+                        &session_id,
+                        "assistant",
+                        &assistant_text,
+                        &timestamp,
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
 }

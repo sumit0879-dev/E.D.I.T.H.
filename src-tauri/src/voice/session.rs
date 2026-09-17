@@ -75,20 +75,32 @@ impl VoiceSession {
     }
 }
 
+fn default_voice_mode() -> String {
+    "fallback".to_string()
+}
+
 /// Read-model summary of voice state projected to EdithRuntimeState.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VoiceStatusSummary {
     pub is_active: bool,
+    #[serde(default = "default_voice_mode")]
+    pub mode: String,
     pub state: String,
     pub session_id: Option<String>,
     pub active_turn_id: Option<String>,
     pub stt_provider: String,
     pub tts_provider: String,
+    #[serde(default)]
+    pub realtime_provider: Option<String>,
+    #[serde(default)]
+    pub transport_type: Option<String>,
+    #[serde(default)]
+    pub reconnect_attempt: Option<u32>,
     pub is_muted: bool,
     pub last_error: Option<String>,
 }
 
-/// Central controller orchestrating the turn-based fallback voice pipeline.
+/// Central controller orchestrating both Realtime S2S (Path A) and Fallback (Path B) voice pipelines.
 pub struct VoiceController {
     conversation_core: Arc<ConversationCore>,
     stt_adapter: Arc<dyn STTAdapter>,
@@ -97,6 +109,7 @@ pub struct VoiceController {
     capture_driver: Arc<dyn AudioCaptureDriver>,
     event_emitter: Option<Arc<EventEmitter>>,
     active_session: Arc<RwLock<Option<VoiceSession>>>,
+    realtime_engine: Arc<RwLock<Option<Arc<super::realtime::RealtimeVoiceEngine>>>>,
 }
 
 impl VoiceController {
@@ -116,7 +129,20 @@ impl VoiceController {
             capture_driver,
             event_emitter,
             active_session: Arc::new(RwLock::new(None)),
+            realtime_engine: Arc::new(RwLock::new(None)),
         }
+    }
+
+    /// Associates the RealtimeVoiceEngine for Path A duplex voice.
+    pub fn with_realtime_engine(self, engine: Arc<super::realtime::RealtimeVoiceEngine>) -> Self {
+        *self.realtime_engine.try_write().unwrap() = Some(engine);
+        self
+    }
+
+    /// Sets the realtime engine on an existing Arc/shared controller.
+    pub async fn set_realtime_engine(&self, engine: Arc<super::realtime::RealtimeVoiceEngine>) {
+        let mut lock = self.realtime_engine.write().await;
+        *lock = Some(engine);
     }
 
     /// Helper to emit correlated voice events via EventEmitter if configured.
@@ -425,6 +451,43 @@ impl VoiceController {
 
     /// Produces a bounded, sanitized status summary for EdithRuntimeState.
     pub async fn status_summary(&self) -> VoiceStatusSummary {
+        // 1. If Realtime S2S engine is active, project realtime status
+        let rt_lock = self.realtime_engine.read().await;
+        if let Some(ref rt) = *rt_lock {
+            let session_lock = rt.active_session().read().await;
+            if let Some(ref rt_session) = *session_lock {
+                let is_active = matches!(
+                    rt_session.state,
+                    super::realtime::RealtimeSessionState::Connecting
+                        | super::realtime::RealtimeSessionState::Connected
+                        | super::realtime::RealtimeSessionState::Listening
+                        | super::realtime::RealtimeSessionState::Processing
+                        | super::realtime::RealtimeSessionState::Speaking
+                        | super::realtime::RealtimeSessionState::Interrupted
+                        | super::realtime::RealtimeSessionState::Reconnecting
+                );
+                let active_turn = rt_session.active_turn_id.read().await.as_ref().map(|t| t.to_string());
+                return VoiceStatusSummary {
+                    is_active,
+                    mode: "realtime".to_string(),
+                    state: format!("{:?}", rt_session.state).to_lowercase(),
+                    session_id: Some(rt_session.id.to_string()),
+                    active_turn_id: active_turn,
+                    stt_provider: "realtime_audio".to_string(),
+                    tts_provider: rt_session.provider_id.clone(),
+                    realtime_provider: Some(rt_session.provider_id.clone()),
+                    transport_type: Some(rt_session.transport_type.clone()),
+                    reconnect_attempt: None,
+                    is_muted: false,
+                    last_error: match &rt_session.state {
+                        super::realtime::RealtimeSessionState::Failed(msg) => Some(msg.clone()),
+                        _ => None,
+                    },
+                };
+            }
+        }
+
+        // 2. Otherwise project Fallback Voice status
         let lock = self.active_session.read().await;
         match *lock {
             Some(ref session) => VoiceStatusSummary {
@@ -436,11 +499,15 @@ impl VoiceController {
                         | VoiceSessionState::Synthesizing
                         | VoiceSessionState::Speaking
                 ),
+                mode: "fallback".to_string(),
                 state: format!("{:?}", session.state).to_lowercase(),
                 session_id: Some(session.id.to_string()),
                 active_turn_id: session.turn_id.as_ref().map(|t| t.to_string()),
                 stt_provider: session.stt_provider.clone(),
                 tts_provider: session.tts_provider.clone(),
+                realtime_provider: None,
+                transport_type: None,
+                reconnect_attempt: None,
                 is_muted: false,
                 last_error: match &session.state {
                     VoiceSessionState::Failed(msg) => Some(msg.clone()),
@@ -449,15 +516,36 @@ impl VoiceController {
             },
             None => VoiceStatusSummary {
                 is_active: false,
+                mode: "fallback".to_string(),
                 state: "idle".to_string(),
                 session_id: None,
                 active_turn_id: None,
                 stt_provider: self.stt_adapter.name().to_string(),
                 tts_provider: self.tts_adapter.name().to_string(),
+                realtime_provider: None,
+                transport_type: None,
+                reconnect_attempt: None,
                 is_muted: false,
                 last_error: None,
             },
         }
+    }
+
+    /// Triggers clean, controlled fallback from Realtime to Phase 9.
+    pub async fn trigger_fallback(
+        &self,
+        conversation_id: ConversationId,
+        _reason: &str,
+    ) -> Result<VoiceSessionId, VoiceError> {
+        // 1. If Realtime engine is running, halt it cleanly and release capture
+        let rt_lock = self.realtime_engine.read().await;
+        if let Some(ref rt) = *rt_lock {
+            let _ = rt.stop_session().await;
+        }
+        drop(rt_lock);
+
+        // 2. Start fallback session
+        self.start_session(conversation_id, CaptureOwner::BrowserWebSpeech).await
     }
 
     pub fn audio_output(&self) -> &Arc<dyn AudioOutputDriver> {
@@ -470,5 +558,9 @@ impl VoiceController {
 
     pub fn stt_adapter(&self) -> &Arc<dyn STTAdapter> {
         &self.stt_adapter
+    }
+
+    pub fn realtime_engine(&self) -> Arc<RwLock<Option<Arc<super::realtime::RealtimeVoiceEngine>>>> {
+        Arc::clone(&self.realtime_engine)
     }
 }

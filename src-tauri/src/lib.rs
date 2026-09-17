@@ -499,6 +499,37 @@ async fn voice_get_status(
     Ok(controller.status_summary().await)
 }
 
+#[tauri::command]
+async fn realtime_voice_start(
+    conversation_id: String,
+    provider_id: Option<String>,
+    engine: State<'_, std::sync::Arc<voice::RealtimeVoiceEngine>>,
+) -> Result<String, String> {
+    let cid = events::ConversationId::from_string(conversation_id);
+    let prov = provider_id.unwrap_or_else(|| "gemini-live".to_string());
+    let transport = std::sync::Arc::new(voice::MockAudioFrameTransport::new(32));
+    let adapter = std::sync::Arc::new(voice::MockRealtimeSessionAdapter::new(transport));
+    let sid = engine
+        .start_session(cid, prov, adapter)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(sid.to_string())
+}
+
+#[tauri::command]
+async fn realtime_voice_stop(
+    engine: State<'_, std::sync::Arc<voice::RealtimeVoiceEngine>>,
+) -> Result<(), String> {
+    engine.stop_session().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+async fn realtime_voice_get_status(
+    controller: State<'_, std::sync::Arc<voice::VoiceController>>,
+) -> Result<voice::VoiceStatusSummary, String> {
+    Ok(controller.status_summary().await)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let app = tauri::Builder::default()
@@ -565,14 +596,24 @@ pub fn run() {
             let voice_tts = std::sync::Arc::new(voice::EdgeTtsAdapter::new());
             let voice_output = std::sync::Arc::new(voice::RodioAudioOutputDriver::new());
             let voice_capture = std::sync::Arc::new(voice::BrowserCaptureBridge::new());
-            let voice_controller = std::sync::Arc::new(voice::VoiceController::new(
+            let realtime_engine = std::sync::Arc::new(voice::RealtimeVoiceEngine::new(
                 conversation_core_arc.clone(),
-                voice_stt,
-                voice_tts,
-                voice_output,
-                voice_capture,
+                tool_router_arc.clone(),
+                voice_output.clone(),
+                voice_capture.clone(),
                 Some(std::sync::Arc::new(emitter.clone())),
             ));
+            let voice_controller = std::sync::Arc::new(
+                voice::VoiceController::new(
+                    conversation_core_arc.clone(),
+                    voice_stt,
+                    voice_tts,
+                    voice_output,
+                    voice_capture,
+                    Some(std::sync::Arc::new(emitter.clone())),
+                )
+                .with_realtime_engine(realtime_engine.clone()),
+            );
 
             let runtime_state = runtime::EdithRuntimeState::new(
                 conversation_core_arc,
@@ -593,6 +634,7 @@ pub fn run() {
             app.manage(tool_registry);
             app.manage(tool_router);
             app.manage(runtime_state);
+            app.manage(realtime_engine);
             app.manage(voice_controller);
 
             Ok(())
@@ -807,7 +849,10 @@ pub fn run() {
             voice_session_submit_transcript,
             voice_session_cancel,
             voice_stop_playback,
-            voice_get_status
+            voice_get_status,
+            realtime_voice_start,
+            realtime_voice_stop,
+            realtime_voice_get_status
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
