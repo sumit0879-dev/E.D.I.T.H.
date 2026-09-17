@@ -8,7 +8,7 @@ use super::validator::ArgumentValidator;
 use crate::events::emitter::EventEmitter;
 use crate::events::envelope::EventCorrelation;
 use crate::events::payload::{EdithPayload, ToolPayload};
-use crate::policy::context::{ActionSource, PolicyContext, SecurityMode};
+use crate::policy::context::{ActionSource, PolicyContext};
 use crate::policy::engine::PolicyEngine;
 use crate::policy::types::{ActionRequest, ActionTarget, PolicyOutcome};
 use std::path::PathBuf;
@@ -160,6 +160,15 @@ impl ToolRouter {
                     ActionTarget::None
                 }
             }
+            ToolDomain::Edith => {
+                if let Some(task_id) = args.get("task_id").and_then(|v| v.as_str()) {
+                    ActionTarget::SystemTarget(format!("task:{}", task_id))
+                } else if let Some(exec_id) = args.get("execution_id").and_then(|v| v.as_str()) {
+                    ActionTarget::SystemTarget(format!("execution:{}", exec_id))
+                } else {
+                    ActionTarget::SystemTarget("edith_runtime".to_string())
+                }
+            }
             _ => ActionTarget::None,
         }
     }
@@ -260,13 +269,14 @@ impl ToolRouter {
             request.correlation.clone(),
         );
 
+        let security_mode = self.policy_engine.get_security_mode().await;
         let policy_ctx = PolicyContext {
             session_id: request.correlation.conversation_id.clone(),
             conversation_id: request.correlation.conversation_id.clone(),
             turn_id: request.correlation.turn_id.clone(),
             task_id: request.correlation.task_id.clone(),
             source: ActionSource::AiAutonomous,
-            security_mode: SecurityMode::Standard,
+            security_mode,
             workspace_roots: vec![std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))],
             active_approval_id: request.active_approval_id.clone(),
         };

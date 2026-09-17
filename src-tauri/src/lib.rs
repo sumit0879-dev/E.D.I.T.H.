@@ -33,6 +33,7 @@ pub mod browser_profile;
 pub mod browser_privacy;
 pub mod browser_recovery;
 pub mod weather;
+pub mod runtime;
 
 use db::DbState;
 use std::collections::HashMap;
@@ -407,6 +408,22 @@ async fn tools_cancel_execution(
     Ok(router.cancel_execution(&execution_id).await)
 }
 
+#[tauri::command]
+async fn runtime_get_status(
+    session_id: Option<String>,
+    runtime_state: State<'_, runtime::EdithRuntimeState>,
+) -> Result<runtime::RuntimeStatusSummary, String> {
+    Ok(runtime_state.get_runtime_status(session_id).await)
+}
+
+#[tauri::command]
+async fn runtime_get_capabilities(
+    domain: Option<String>,
+    runtime_state: State<'_, runtime::EdithRuntimeState>,
+) -> Result<runtime::CapabilitiesSummary, String> {
+    Ok(runtime_state.get_capabilities(domain.as_deref()).await)
+}
+
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -432,16 +449,17 @@ pub fn run() {
             let emitter = events::EventEmitter::new(app.handle().clone());
             let task_runtime = task::TaskRuntime::new(emitter.clone());
             let registry = ai::ProviderRegistry::standard_builtins();
+            let conn2_arc = std::sync::Arc::new(std::sync::Mutex::new(conn2));
             let conversation_core = conversation::ConversationCore::new(
                 registry,
                 emitter.clone(),
-                Some(std::sync::Arc::new(std::sync::Mutex::new(conn2))),
+                Some(conn2_arc.clone()),
                 None,
             );
             let policy_engine = policy::PolicyEngine::new(Some(emitter.clone()));
-            app.manage(task_runtime);
-            app.manage(conversation_core);
-            app.manage(policy_engine.clone());
+            let task_runtime_arc = std::sync::Arc::new(task_runtime.clone());
+            let conversation_core_arc = std::sync::Arc::new(conversation_core.clone());
+            let policy_engine_arc = std::sync::Arc::new(policy_engine.clone());
 
             let tool_registry = tools::ToolRegistry::new();
             for def in tools::get_browser_definitions() {
@@ -450,19 +468,44 @@ pub fn run() {
             for def in tools::get_computer_definitions() {
                 let _ = tool_registry.register(def);
             }
+            for def in tools::get_edith_definitions() {
+                let _ = tool_registry.register(def);
+            }
             let browser_executor = std::sync::Arc::new(tools::BrowserDomainExecutor::new(Some(app.handle().clone())));
             let computer_executor = std::sync::Arc::new(tools::ComputerDomainExecutor::new(Some(app.handle().clone())));
             let domain_executors = tools::DomainExecutorRegistry::new();
             domain_executors.register(browser_executor);
             domain_executors.register(computer_executor);
+            let domain_executors_arc = std::sync::Arc::new(domain_executors);
+            let tool_registry_arc = std::sync::Arc::new(tool_registry.clone());
+
             let tool_router = tools::ToolRouter::with_defaults(
-                std::sync::Arc::new(tool_registry.clone()),
-                std::sync::Arc::new(domain_executors),
-                std::sync::Arc::new(policy_engine),
+                tool_registry_arc.clone(),
+                domain_executors_arc.clone(),
+                policy_engine_arc.clone(),
                 Some(emitter.clone()),
             );
+            let tool_router_arc = std::sync::Arc::new(tool_router.clone());
+
+            let runtime_state = runtime::EdithRuntimeState::new(
+                conversation_core_arc,
+                task_runtime_arc,
+                tool_registry_arc,
+                tool_router_arc,
+                conversation_core.registry(),
+                policy_engine_arc,
+                Some(app.handle().clone()),
+                Some(conn2_arc),
+            );
+            let edith_executor = std::sync::Arc::new(tools::EdithDomainExecutor::new(std::sync::Arc::new(runtime_state.clone())));
+            domain_executors_arc.register(edith_executor);
+
+            app.manage(task_runtime);
+            app.manage(conversation_core);
+            app.manage(policy_engine);
             app.manage(tool_registry);
             app.manage(tool_router);
+            app.manage(runtime_state);
 
             Ok(())
         })
@@ -669,7 +712,9 @@ pub fn run() {
             tools_list_definitions,
             tools_get_definition,
             tools_execute,
-            tools_cancel_execution
+            tools_cancel_execution,
+            runtime_get_status,
+            runtime_get_capabilities
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");
