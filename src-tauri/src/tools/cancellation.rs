@@ -129,7 +129,9 @@ impl CancellationRegistry {
     /// Cancels a conversation turn, cascading cancellation to linked tool executions.
     pub async fn cancel_turn(&self, turn_id: &str) -> bool {
         let mut lock = self.turns.write().await;
-        let token = lock.entry(turn_id.to_string()).or_insert_with(ScopedCancellationToken::new);
+        let token = lock
+            .entry(turn_id.to_string())
+            .or_insert_with(ScopedCancellationToken::new);
         token.cancel();
         true
     }
@@ -137,7 +139,9 @@ impl CancellationRegistry {
     /// Cancels a background task, cascading cancellation to linked tool executions.
     pub async fn cancel_task(&self, task_id: &str) -> bool {
         let mut lock = self.tasks.write().await;
-        let token = lock.entry(task_id.to_string()).or_insert_with(ScopedCancellationToken::new);
+        let token = lock
+            .entry(task_id.to_string())
+            .or_insert_with(ScopedCancellationToken::new);
         token.cancel();
         true
     }
@@ -145,7 +149,9 @@ impl CancellationRegistry {
     /// Cancels a session, cascading cancellation to linked tool executions.
     pub async fn cancel_session(&self, session_id: &str) -> bool {
         let mut lock = self.sessions.write().await;
-        let token = lock.entry(session_id.to_string()).or_insert_with(ScopedCancellationToken::new);
+        let token = lock
+            .entry(session_id.to_string())
+            .or_insert_with(ScopedCancellationToken::new);
         token.cancel();
         true
     }

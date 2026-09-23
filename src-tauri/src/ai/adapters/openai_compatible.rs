@@ -76,18 +76,15 @@ impl OpenAICompatibleAdapter {
         }
 
         let mut models = Vec::new();
-        let default_caps = CapabilitySet::from_slice(&[
-            Capability::TextGeneration,
-            Capability::Streaming,
-        ]);
+        let default_caps =
+            CapabilitySet::from_slice(&[Capability::TextGeneration, Capability::Streaming]);
 
         if let Some(arr) = val.get("models").and_then(|m| m.as_array()) {
             for m in arr {
                 if let Some(m_id) = m.get("id").and_then(|i| i.as_str()) {
                     let label = m.get("label").and_then(|l| l.as_str()).unwrap_or(m_id);
                     models.push(
-                        ModelMetadata::new(id, m_id, label, default_caps.clone())
-                            .with_custom(true),
+                        ModelMetadata::new(id, m_id, label, default_caps.clone()).with_custom(true),
                     );
                 }
             }
@@ -113,10 +110,7 @@ impl Provider for OpenAICompatibleAdapter {
     }
 
     fn capabilities(&self) -> CapabilitySet {
-        CapabilitySet::from_slice(&[
-            Capability::TextGeneration,
-            Capability::Streaming,
-        ])
+        CapabilitySet::from_slice(&[Capability::TextGeneration, Capability::Streaming])
     }
 
     fn models(&self) -> Vec<ModelMetadata> {
@@ -162,9 +156,15 @@ impl TextGenerationCapability for OpenAICompatibleAdapter {
                 req_builder = req_builder.bearer_auth(key);
             }
 
-            let res = req_builder.send().await.map_err(|e| ProviderError::NetworkFailure {
-                message: format!("Failed to reach provider '{}' at {}: {}", self.id, self.chat_endpoint, e),
-            })?;
+            let res = req_builder
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkFailure {
+                    message: format!(
+                        "Failed to reach provider '{}' at {}: {}",
+                        self.id, self.chat_endpoint, e
+                    ),
+                })?;
 
             let status = res.status();
             if !status.is_success() {
@@ -172,9 +172,12 @@ impl TextGenerationCapability for OpenAICompatibleAdapter {
                 return Err(normalize_http_error(status, &text));
             }
 
-            let val: Value = res.json().await.map_err(|e| ProviderError::MalformedResponse {
-                message: format!("Failed to parse response from '{}': {}", self.id, e),
-            })?;
+            let val: Value = res
+                .json()
+                .await
+                .map_err(|e| ProviderError::MalformedResponse {
+                    message: format!("Failed to parse response from '{}': {}", self.id, e),
+                })?;
 
             let text = val["choices"][0]["message"]["content"]
                 .as_str()
@@ -215,9 +218,15 @@ impl StreamingTextCapability for OpenAICompatibleAdapter {
                 req_builder = req_builder.bearer_auth(key);
             }
 
-            let mut res = req_builder.send().await.map_err(|e| ProviderError::NetworkFailure {
-                message: format!("Failed to reach provider '{}' at {}: {}", self.id, self.chat_endpoint, e),
-            })?;
+            let mut res = req_builder
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkFailure {
+                    message: format!(
+                        "Failed to reach provider '{}' at {}: {}",
+                        self.id, self.chat_endpoint, e
+                    ),
+                })?;
 
             let status = res.status();
             if !status.is_success() {
@@ -243,7 +252,8 @@ impl StreamingTextCapability for OpenAICompatibleAdapter {
                         }
 
                         if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                            if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
+                            if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str()
+                            {
                                 full_text.push_str(content);
                                 on_chunk(StreamChunk {
                                     text: content.to_string(),
@@ -279,9 +289,15 @@ impl ModelDiscoveryCapability for OpenAICompatibleAdapter {
                 req_builder = req_builder.bearer_auth(key);
             }
 
-            let res = req_builder.send().await.map_err(|e| ProviderError::NetworkFailure {
-                message: format!("Failed to query models from '{}' at {}: {}", self.id, self.models_endpoint, e),
-            })?;
+            let res = req_builder
+                .send()
+                .await
+                .map_err(|e| ProviderError::NetworkFailure {
+                    message: format!(
+                        "Failed to query models from '{}' at {}: {}",
+                        self.id, self.models_endpoint, e
+                    ),
+                })?;
 
             let status = res.status();
             if !status.is_success() {
@@ -289,15 +305,16 @@ impl ModelDiscoveryCapability for OpenAICompatibleAdapter {
                 return Err(normalize_http_error(status, &text));
             }
 
-            let val: Value = res.json().await.map_err(|e| ProviderError::MalformedResponse {
-                message: format!("Failed to parse models JSON from '{}': {}", self.id, e),
-            })?;
+            let val: Value = res
+                .json()
+                .await
+                .map_err(|e| ProviderError::MalformedResponse {
+                    message: format!("Failed to parse models JSON from '{}': {}", self.id, e),
+                })?;
 
             let mut discovered = Vec::new();
-            let text_and_stream = CapabilitySet::from_slice(&[
-                Capability::TextGeneration,
-                Capability::Streaming,
-            ]);
+            let text_and_stream =
+                CapabilitySet::from_slice(&[Capability::TextGeneration, Capability::Streaming]);
 
             if let Some(data) = val.get("data").and_then(|d| d.as_array()) {
                 for item in data {
@@ -332,12 +349,30 @@ mod tests {
 
     #[test]
     fn test_url_normalization() {
-        let a1 = OpenAICompatibleAdapter::new("ollama", "Ollama", "http://localhost:11434/v1", vec![], None);
-        assert_eq!(a1.chat_endpoint, "http://localhost:11434/v1/chat/completions");
+        let a1 = OpenAICompatibleAdapter::new(
+            "ollama",
+            "Ollama",
+            "http://localhost:11434/v1",
+            vec![],
+            None,
+        );
+        assert_eq!(
+            a1.chat_endpoint,
+            "http://localhost:11434/v1/chat/completions"
+        );
         assert_eq!(a1.models_endpoint, "http://localhost:11434/v1/models");
 
-        let a2 = OpenAICompatibleAdapter::new("custom", "Custom", "http://localhost:8080/v1/chat/completions/", vec![], None);
-        assert_eq!(a2.chat_endpoint, "http://localhost:8080/v1/chat/completions");
+        let a2 = OpenAICompatibleAdapter::new(
+            "custom",
+            "Custom",
+            "http://localhost:8080/v1/chat/completions/",
+            vec![],
+            None,
+        );
+        assert_eq!(
+            a2.chat_endpoint,
+            "http://localhost:8080/v1/chat/completions"
+        );
         assert_eq!(a2.models_endpoint, "http://localhost:8080/v1/models");
     }
 
@@ -355,7 +390,10 @@ mod tests {
         let adapter = OpenAICompatibleAdapter::from_json_value(&json).unwrap();
         assert_eq!(adapter.id(), "my_local");
         assert_eq!(adapter.name(), "Local vLLM");
-        assert_eq!(adapter.default_model(), Some("meta-llama/Llama-3-8b".to_string()));
+        assert_eq!(
+            adapter.default_model(),
+            Some("meta-llama/Llama-3-8b".to_string())
+        );
         assert_eq!(adapter.models().len(), 1);
     }
 }

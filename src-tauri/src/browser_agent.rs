@@ -6,15 +6,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::browser::{BrowserState, browser_get_multi_state};
+use crate::browser::{browser_get_multi_state, BrowserState};
 use crate::browser_tools::execute_browser_tool;
 use crate::db::DbState;
+use crate::events::{EventCorrelation, TaskId};
 use crate::llm::ChatMessage;
-use crate::tools::types::{ToolRequest, ToolStatus};
-use crate::tools::ToolRouter;
 use crate::task::runtime::TaskRuntime;
 use crate::task::types::{TaskOwner, TaskType};
-use crate::events::{EventCorrelation, TaskId};
+use crate::tools::types::{ToolRequest, ToolStatus};
+use crate::tools::ToolRouter;
 
 /// Translates legacy browser tool names to canonical Universal Tool Runtime names ("browser.*")
 pub fn to_universal_tool_name(name: &str) -> String {
@@ -120,7 +120,9 @@ use crate::ai::CredentialStore;
 // Step 2: Robust, Bracket-Aware Tool Parser
 // -----------------------------------------------------------------------------
 
-fn extract_single_browser_tool_call(text: &str) -> Result<Option<(String, serde_json::Value)>, String> {
+fn extract_single_browser_tool_call(
+    text: &str,
+) -> Result<Option<(String, serde_json::Value)>, String> {
     let prefix = "[BROWSER_TOOL:";
     let start_idx = match text.find(prefix) {
         Some(idx) => idx + prefix.len(),
@@ -130,7 +132,9 @@ fn extract_single_browser_tool_call(text: &str) -> Result<Option<(String, serde_
     let remaining = &text[start_idx..];
     let trimmed = remaining.trim_start();
     if !trimmed.starts_with('{') {
-        return Err("TOOL_SYNTAX_ERROR: Tool arguments must start with a JSON object '{'.".to_string());
+        return Err(
+            "TOOL_SYNTAX_ERROR: Tool arguments must start with a JSON object '{'.".to_string(),
+        );
     }
 
     // Bracket-aware JSON slice extractor
@@ -167,15 +171,25 @@ fn extract_single_browser_tool_call(text: &str) -> Result<Option<(String, serde_
 
     let json_end = match end_idx {
         Some(idx) => idx,
-        None => return Err("TOOL_SYNTAX_ERROR: Unclosed JSON object in BROWSER_TOOL call.".to_string()),
+        None => {
+            return Err("TOOL_SYNTAX_ERROR: Unclosed JSON object in BROWSER_TOOL call.".to_string())
+        }
     };
 
     let json_str = &trimmed[..json_end];
-    let parsed: serde_json::Value = serde_json::from_str(json_str)
-        .map_err(|e| format!("TOOL_SYNTAX_ERROR: Malformed JSON in BROWSER_TOOL call: {}", e))?;
+    let parsed: serde_json::Value = serde_json::from_str(json_str).map_err(|e| {
+        format!(
+            "TOOL_SYNTAX_ERROR: Malformed JSON in BROWSER_TOOL call: {}",
+            e
+        )
+    })?;
 
-    let tool_name = parsed.get("name").and_then(|v| v.as_str())
-        .ok_or_else(|| "TOOL_VALIDATION_ERROR: Missing 'name' field in BROWSER_TOOL call.".to_string())?
+    let tool_name = parsed
+        .get("name")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            "TOOL_VALIDATION_ERROR: Missing 'name' field in BROWSER_TOOL call.".to_string()
+        })?
         .to_string();
 
     let empty_args = json!({});
@@ -192,14 +206,33 @@ fn extract_single_browser_tool_call(text: &str) -> Result<Option<(String, serde_
 // Step 3: Central Pre-Execution Tool Validation & Bounds Check
 // -----------------------------------------------------------------------------
 
-fn validate_browser_tool_call(tool_name: &str, args: &serde_json::Value) -> Result<(), (String, String)> {
+fn validate_browser_tool_call(
+    tool_name: &str,
+    args: &serde_json::Value,
+) -> Result<(), (String, String)> {
     let valid_tools = crate::browser_tools::get_browser_tool_definitions();
-    let def = valid_tools.iter().find(|t| t.name == tool_name)
-        .ok_or_else(|| ("UNKNOWN_TOOL".to_string(), format!("Tool '{}' is not recognized in the Browser Tool Layer.", tool_name)))?;
+    let def = valid_tools
+        .iter()
+        .find(|t| t.name == tool_name)
+        .ok_or_else(|| {
+            (
+                "UNKNOWN_TOOL".to_string(),
+                format!(
+                    "Tool '{}' is not recognized in the Browser Tool Layer.",
+                    tool_name
+                ),
+            )
+        })?;
 
     // Check risk classification
     if def.risk_level == "BLOCKED_FOR_AI" {
-        return Err(("SECURITY_BLOCK".to_string(), format!("Tool '{}' is blocked from autonomous execution by security policy.", tool_name)));
+        return Err((
+            "SECURITY_BLOCK".to_string(),
+            format!(
+                "Tool '{}' is blocked from autonomous execution by security policy.",
+                tool_name
+            ),
+        ));
     }
 
     // Check required fields
@@ -207,7 +240,13 @@ fn validate_browser_tool_call(tool_name: &str, args: &serde_json::Value) -> Resu
         for r in req_arr {
             if let Some(field) = r.as_str() {
                 if args.get(field).is_none() {
-                    return Err(("MISSING_ARGUMENT".to_string(), format!("Missing required argument '{}' for tool '{}'.", field, tool_name)));
+                    return Err((
+                        "MISSING_ARGUMENT".to_string(),
+                        format!(
+                            "Missing required argument '{}' for tool '{}'.",
+                            field, tool_name
+                        ),
+                    ));
                 }
             }
         }
@@ -217,7 +256,10 @@ fn validate_browser_tool_call(tool_name: &str, args: &serde_json::Value) -> Resu
     if tool_name == "browser_type" {
         if let Some(txt) = args.get("text").and_then(|v| v.as_str()) {
             if txt.len() > 5000 {
-                return Err(("INPUT_TOO_LARGE".to_string(), "Type text exceeds bounded maximum length (5000 characters).".to_string()));
+                return Err((
+                    "INPUT_TOO_LARGE".to_string(),
+                    "Type text exceeds bounded maximum length (5000 characters).".to_string(),
+                ));
             }
         }
     }
@@ -234,12 +276,26 @@ fn validate_browser_tool_call(tool_name: &str, args: &serde_json::Value) -> Resu
     if tool_name == "browser_press_key" {
         if let Some(k) = args.get("key").and_then(|v| v.as_str()) {
             let allowed_keys = [
-                "Enter", "Escape", "Tab", "Backspace", "Delete",
-                "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight",
-                "Home", "End", "PageUp", "PageDown", "Space"
+                "Enter",
+                "Escape",
+                "Tab",
+                "Backspace",
+                "Delete",
+                "ArrowUp",
+                "ArrowDown",
+                "ArrowLeft",
+                "ArrowRight",
+                "Home",
+                "End",
+                "PageUp",
+                "PageDown",
+                "Space",
             ];
             if !allowed_keys.contains(&k) {
-                return Err(("INVALID_ENUM".to_string(), format!("Invalid key '{}'. Must be one of: {:?}", k, allowed_keys)));
+                return Err((
+                    "INVALID_ENUM".to_string(),
+                    format!("Invalid key '{}'. Must be one of: {:?}", k, allowed_keys),
+                ));
             }
         }
     }
@@ -265,9 +321,18 @@ fn verify_completion_evidence(goal: &str, evidence: &TaskEvidence) -> Result<(),
     }
 
     let goal_lower = goal.to_lowercase();
-    for domain in ["example.com", "wikipedia.org", "google.com", "github.com", "iana.org"] {
+    for domain in [
+        "example.com",
+        "wikipedia.org",
+        "google.com",
+        "github.com",
+        "iana.org",
+    ] {
         if goal_lower.contains(domain) {
-            let visited = evidence.observed_urls.iter().any(|u| u.to_lowercase().contains(domain));
+            let visited = evidence
+                .observed_urls
+                .iter()
+                .any(|u| u.to_lowercase().contains(domain));
             if !visited {
                 return Err(format!("COMPLETION_CLAIM_REJECTED: The goal requested interaction with '{}', but no observation or navigation to that domain was recorded in task evidence.", domain));
             }
@@ -294,7 +359,9 @@ pub async fn run_autonomous_browser_loop(
     {
         let active = agent_mgr.active_task.lock().map_err(|e| e.to_string())?;
         if let Some(task) = active.as_ref() {
-            if task.status == BrowserTaskStatus::Planning || task.status == BrowserTaskStatus::Running {
+            if task.status == BrowserTaskStatus::Planning
+                || task.status == BrowserTaskStatus::Running
+            {
                 return Err("TASK_ALREADY_RUNNING: An autonomous browser task is already running. Please cancel or wait for it to complete.".to_string());
             }
         }
@@ -307,7 +374,10 @@ pub async fn run_autonomous_browser_loop(
 
     let cancel_flag = Arc::new(AtomicBool::new(false));
     {
-        let mut flags = agent_mgr.cancellation_flags.lock().map_err(|e| e.to_string())?;
+        let mut flags = agent_mgr
+            .cancellation_flags
+            .lock()
+            .map_err(|e| e.to_string())?;
         flags.insert(task_id.clone(), cancel_flag.clone());
     }
 
@@ -320,13 +390,15 @@ pub async fn run_autonomous_browser_loop(
     };
 
     if let Some(ref rt) = task_runtime {
-        let _ = rt.create_task_with_id(
-            task_id_obj.clone(),
-            TaskType::BrowserAgent,
-            goal.clone(),
-            correlation.clone(),
-            TaskOwner::System,
-        ).await;
+        let _ = rt
+            .create_task_with_id(
+                task_id_obj.clone(),
+                TaskType::BrowserAgent,
+                goal.clone(),
+                correlation.clone(),
+                TaskOwner::System,
+            )
+            .await;
         let _ = rt.start_task(&task_id_obj).await;
     }
 
@@ -355,26 +427,38 @@ pub async fn run_autonomous_browser_loop(
         *active = Some(current_task.clone());
     }
 
-    let _ = app.emit("browser-agent-status", json!({
-        "task_id": task_id,
-        "status": "Planning",
-        "step": 0,
-        "max_steps": max_steps,
-        "message": format!("Planning autonomous browser task: {}", goal)
-    }));
+    let _ = app.emit(
+        "browser-agent-status",
+        json!({
+            "task_id": task_id,
+            "status": "Planning",
+            "step": 0,
+            "max_steps": max_steps,
+            "message": format!("Planning autonomous browser task: {}", goal)
+        }),
+    );
 
     let settings = {
         let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
         crate::db::get_all_settings(&conn).unwrap_or_default()
     };
 
-    let ai_mode = settings.get("aiMode").cloned().unwrap_or_else(|| "api".to_string());
+    let ai_mode = settings
+        .get("aiMode")
+        .cloned()
+        .unwrap_or_else(|| "api".to_string());
     let provider_id = if ai_mode == "local" {
         "local".to_string()
     } else {
-        settings.get("selectedProvider").cloned().unwrap_or_else(|| "groq".to_string())
+        settings
+            .get("selectedProvider")
+            .cloned()
+            .unwrap_or_else(|| "groq".to_string())
     };
-    let model = settings.get("selectedModel").cloned().unwrap_or_else(|| "llama-3.3-70b-versatile".to_string());
+    let model = settings
+        .get("selectedModel")
+        .cloned()
+        .unwrap_or_else(|| "llama-3.3-70b-versatile".to_string());
 
     let mut registry = crate::ai::ProviderRegistry::standard_builtins();
     if let Some(custom_providers_raw) = settings.get("customProviders") {
@@ -387,12 +471,15 @@ pub async fn run_autonomous_browser_loop(
         let err_msg = "API Key is missing for selected provider.".to_string();
         current_task.status = BrowserTaskStatus::Failed;
         current_task.last_error = Some(err_msg.clone());
-        let _ = app.emit("browser-agent-status", json!({
-            "task_id": task_id,
-            "status": "Failed",
-            "error": err_msg
-        }));
-        
+        let _ = app.emit(
+            "browser-agent-status",
+            json!({
+                "task_id": task_id,
+                "status": "Failed",
+                "error": err_msg
+            }),
+        );
+
         // Cleanup cancellation flag
         if let Ok(mut flags) = agent_mgr.cancellation_flags.lock() {
             flags.remove(&task_id);
@@ -416,11 +503,14 @@ pub async fn run_autonomous_browser_loop(
             let err_msg = e.to_string();
             current_task.status = BrowserTaskStatus::Failed;
             current_task.last_error = Some(err_msg.clone());
-            let _ = app.emit("browser-agent-status", json!({
-                "task_id": task_id,
-                "status": "Failed",
-                "error": err_msg
-            }));
+            let _ = app.emit(
+                "browser-agent-status",
+                json!({
+                    "task_id": task_id,
+                    "status": "Failed",
+                    "error": err_msg
+                }),
+            );
             if let Ok(mut flags) = agent_mgr.cancellation_flags.lock() {
                 flags.remove(&task_id);
             }
@@ -494,8 +584,14 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
     );
 
     let mut messages = vec![
-        ChatMessage { role: "system".to_string(), content: system_prompt },
-        ChatMessage { role: "user".to_string(), content: format!("Start executing the goal: \"{}\"", goal) }
+        ChatMessage {
+            role: "system".to_string(),
+            content: system_prompt,
+        },
+        ChatMessage {
+            role: "user".to_string(),
+            content: format!("Start executing the goal: \"{}\"", goal),
+        },
     ];
 
     let mut step_count = 0;
@@ -513,7 +609,10 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
         // 1. Check cooperative cancellation (both atomic flag and TaskRuntime cancellation token)
         let is_task_cancelled = cancel_flag.load(Ordering::Relaxed) || {
             if let Some(ref rt) = task_runtime {
-                rt.get_cancellation_token(&task_id_obj).await.map(|t| t.is_cancelled()).unwrap_or(false)
+                rt.get_cancellation_token(&task_id_obj)
+                    .await
+                    .map(|t| t.is_cancelled())
+                    .unwrap_or(false)
             } else {
                 false
             }
@@ -521,12 +620,15 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
         if is_task_cancelled {
             final_status = BrowserTaskStatus::Cancelled;
             final_summary = "Task was cancelled by operator.".to_string();
-            let _ = app.emit("browser-agent-status", json!({
-                "task_id": task_id,
-                "status": "Cancelled",
-                "step": step_count,
-                "message": "Task was cancelled."
-            }));
+            let _ = app.emit(
+                "browser-agent-status",
+                json!({
+                    "task_id": task_id,
+                    "status": "Cancelled",
+                    "step": step_count,
+                    "message": "Task was cancelled."
+                }),
+            );
             break;
         }
 
@@ -535,12 +637,15 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
             final_status = BrowserTaskStatus::TimedOut;
             final_summary = format!("Task timed out after {} ms.", timeout_ms);
             final_error = Some("EXECUTION_TIMEOUT".to_string());
-            let _ = app.emit("browser-agent-status", json!({
-                "task_id": task_id,
-                "status": "TimedOut",
-                "step": step_count,
-                "error": "Execution timeout exceeded."
-            }));
+            let _ = app.emit(
+                "browser-agent-status",
+                json!({
+                    "task_id": task_id,
+                    "status": "TimedOut",
+                    "step": step_count,
+                    "error": "Execution timeout exceeded."
+                }),
+            );
             break;
         }
 
@@ -548,16 +653,21 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
         current_task.step_count = step_count;
 
         let status_msg = format!("Step {}/{}: Agent reasoning...", step_count, max_steps);
-        let _ = app.emit("browser-agent-status", json!({
-            "task_id": task_id,
-            "status": "Running",
-            "step": step_count,
-            "max_steps": max_steps,
-            "message": status_msg.clone()
-        }));
+        let _ = app.emit(
+            "browser-agent-status",
+            json!({
+                "task_id": task_id,
+                "status": "Running",
+                "step": step_count,
+                "max_steps": max_steps,
+                "message": status_msg.clone()
+            }),
+        );
 
         if let Some(ref rt) = task_runtime {
-            let _ = rt.update_progress(&task_id_obj, step_count, max_steps, status_msg).await;
+            let _ = rt
+                .update_progress(&task_id_obj, step_count, max_steps, status_msg)
+                .await;
         }
 
         // Step 15: Bounded Context Truncation
@@ -617,25 +727,31 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
             }
         };
 
-        messages.push(ChatMessage { role: "assistant".to_string(), content: ai_text.clone() });
+        messages.push(ChatMessage {
+            role: "assistant".to_string(),
+            content: ai_text.clone(),
+        });
 
         // 4. Check for task completion claim with False Success Protection (Step 5)
         if ai_text.contains("[TASK_COMPLETE:") {
             if let Some(start) = ai_text.find("[TASK_COMPLETE:") {
                 if let Some(end) = ai_text[start..].find("]") {
-                    let claimed_summary = ai_text[start + 15 .. start + end].trim().to_string();
-                    
+                    let claimed_summary = ai_text[start + 15..start + end].trim().to_string();
+
                     // Validate completion claim against task evidence
                     match verify_completion_evidence(&goal, &evidence) {
                         Ok(()) => {
                             final_summary = claimed_summary;
                             final_status = BrowserTaskStatus::Completed;
-                            let _ = app.emit("browser-agent-status", json!({
-                                "task_id": task_id,
-                                "status": "Completed",
-                                "step": step_count,
-                                "summary": final_summary
-                            }));
+                            let _ = app.emit(
+                                "browser-agent-status",
+                                json!({
+                                    "task_id": task_id,
+                                    "status": "Completed",
+                                    "step": step_count,
+                                    "summary": final_summary
+                                }),
+                            );
                             break;
                         }
                         Err(rejection_msg) => {
@@ -653,16 +769,19 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
         if ai_text.contains("[TASK_FAILED:") {
             if let Some(start) = ai_text.find("[TASK_FAILED:") {
                 if let Some(end) = ai_text[start..].find("]") {
-                    let reason = ai_text[start + 13 .. start + end].trim().to_string();
+                    let reason = ai_text[start + 13..start + end].trim().to_string();
                     final_summary = format!("Task reported failure: {}", reason);
                     final_error = Some(reason);
                     final_status = BrowserTaskStatus::Failed;
-                    let _ = app.emit("browser-agent-status", json!({
-                        "task_id": task_id,
-                        "status": "Failed",
-                        "step": step_count,
-                        "error": final_summary
-                    }));
+                    let _ = app.emit(
+                        "browser-agent-status",
+                        json!({
+                            "task_id": task_id,
+                            "status": "Failed",
+                            "step": step_count,
+                            "error": final_summary
+                        }),
+                    );
                     break;
                 }
             }
@@ -675,7 +794,7 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                 if let Err((err_code, err_msg)) = validate_browser_tool_call(&tool_name, &args) {
                     messages.push(ChatMessage {
                         role: "user".to_string(),
-                        content: format!("TOOL_VALIDATION_ERROR ({}): {}", err_code, err_msg)
+                        content: format!("TOOL_VALIDATION_ERROR ({}): {}", err_code, err_msg),
                     });
                     continue;
                 }
@@ -697,7 +816,8 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                         });
                         final_status = BrowserTaskStatus::Failed;
                         final_error = Some("REPETITION_DETECTED_TERMINATION".to_string());
-                        final_summary = "Task terminated due to repetitive failure loops.".to_string();
+                        final_summary =
+                            "Task terminated due to repetitive failure loops.".to_string();
                         break;
                     }
                 } else {
@@ -705,12 +825,15 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                     last_action_sig = Some(action_sig);
                 }
 
-                let _ = app.emit("browser-agent-status", json!({
-                    "task_id": task_id,
-                    "status": "Running",
-                    "step": step_count,
-                    "message": format!("Executing `{}` on tab `{}`...", tool_name, current_tab)
-                }));
+                let _ = app.emit(
+                    "browser-agent-status",
+                    json!({
+                        "task_id": task_id,
+                        "status": "Running",
+                        "step": step_count,
+                        "message": format!("Executing `{}` on tab `{}`...", tool_name, current_tab)
+                    }),
+                );
 
                 let universal_tool = to_universal_tool_name(&tool_name);
                 let tool_correlation = EventCorrelation {
@@ -718,28 +841,47 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                     ..Default::default()
                 };
 
-                let tool_exec_outcome: Result<(bool, Option<serde_json::Value>, Option<String>, Option<String>, u64), String> = if let Some(ref router) = tool_router {
-                    let req = ToolRequest::new(universal_tool.clone(), args.clone(), tool_correlation);
+                let tool_exec_outcome: Result<
+                    (
+                        bool,
+                        Option<serde_json::Value>,
+                        Option<String>,
+                        Option<String>,
+                        u64,
+                    ),
+                    String,
+                > = if let Some(ref router) = tool_router {
+                    let req =
+                        ToolRequest::new(universal_tool.clone(), args.clone(), tool_correlation);
                     let res = router.execute(req).await;
                     match res.status {
-                        ToolStatus::Completed => {
-                            Ok((true, res.data, None, None, res.duration_ms))
-                        }
+                        ToolStatus::Completed => Ok((true, res.data, None, None, res.duration_ms)),
                         ToolStatus::ApprovalRequired => {
                             let policy_code = "REQUIRE_APPROVAL".to_string();
                             let msg = "REQUIRE_APPROVAL: Action requires operator confirmation. Execution paused.".to_string();
                             current_task.status = BrowserTaskStatus::Waiting;
-                            let _ = app.emit("browser-agent-status", json!({
-                                "task_id": task_id,
-                                "status": "Waiting",
-                                "step": step_count,
-                                "message": msg.clone()
-                            }));
+                            let _ = app.emit(
+                                "browser-agent-status",
+                                json!({
+                                    "task_id": task_id,
+                                    "status": "Waiting",
+                                    "step": step_count,
+                                    "message": msg.clone()
+                                }),
+                            );
                             Ok((false, None, Some(msg), Some(policy_code), res.duration_ms))
                         }
                         ToolStatus::Blocked => {
-                            let err_msg = res.error.map(|e| e.to_string()).unwrap_or_else(|| "POLICY_BLOCKED: Action blocked by Policy Engine.".to_string());
-                            Ok((false, None, Some(err_msg.clone()), Some("POLICY_BLOCKED".to_string()), res.duration_ms))
+                            let err_msg = res.error.map(|e| e.to_string()).unwrap_or_else(|| {
+                                "POLICY_BLOCKED: Action blocked by Policy Engine.".to_string()
+                            });
+                            Ok((
+                                false,
+                                None,
+                                Some(err_msg.clone()),
+                                Some("POLICY_BLOCKED".to_string()),
+                                res.duration_ms,
+                            ))
                         }
                         ToolStatus::Cancelled => {
                             final_status = BrowserTaskStatus::Cancelled;
@@ -747,15 +889,29 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                             break;
                         }
                         ToolStatus::Failed => {
-                            let err_msg = res.error.map(|e| e.to_string()).unwrap_or_else(|| "Tool execution failed.".to_string());
-                            Ok((false, None, Some(err_msg), Some("TOOL_EXECUTION_FAILED".to_string()), res.duration_ms))
+                            let err_msg = res
+                                .error
+                                .map(|e| e.to_string())
+                                .unwrap_or_else(|| "Tool execution failed.".to_string());
+                            Ok((
+                                false,
+                                None,
+                                Some(err_msg),
+                                Some("TOOL_EXECUTION_FAILED".to_string()),
+                                res.duration_ms,
+                            ))
                         }
-                        ToolStatus::Requested | ToolStatus::Approved | ToolStatus::Started => {
-                            Ok((false, None, Some("Execution in intermediate status.".to_string()), Some("TOOL_IN_PROGRESS".to_string()), res.duration_ms))
-                        }
+                        ToolStatus::Requested | ToolStatus::Approved | ToolStatus::Started => Ok((
+                            false,
+                            None,
+                            Some("Execution in intermediate status.".to_string()),
+                            Some("TOOL_IN_PROGRESS".to_string()),
+                            res.duration_ms,
+                        )),
                     }
                 } else {
-                    execute_browser_tool(app.clone(), &tool_name, &args, browser_state.clone()).await
+                    execute_browser_tool(app.clone(), &tool_name, &args, browser_state.clone())
+                        .await
                         .map(|r| (r.success, r.data, r.error, r.error_code, r.duration_ms))
                 };
 
@@ -767,7 +923,11 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                         }
 
                         // Collect evidence on observation or navigation
-                        if tool_name == "browser_observe" || tool_name == "browser_open_url" || universal_tool == "browser.observe" || universal_tool == "browser.navigate" {
+                        if tool_name == "browser_observe"
+                            || tool_name == "browser_open_url"
+                            || universal_tool == "browser.observe"
+                            || universal_tool == "browser.navigate"
+                        {
                             if let Some(d) = data.as_ref() {
                                 if let Some(u) = d.get("url").and_then(|v| v.as_str()) {
                                     evidence.observed_urls.push(u.to_string());
@@ -788,24 +948,30 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
                             "duration_ms": duration_ms,
                         });
 
-                        let _ = app.emit("browser-agent-step", json!({
-                            "task_id": task_id,
-                            "step": step_count,
-                            "tool": tool_name,
-                            "tab_id": current_tab,
-                            "success": success,
-                            "duration_ms": duration_ms
-                        }));
+                        let _ = app.emit(
+                            "browser-agent-step",
+                            json!({
+                                "task_id": task_id,
+                                "step": step_count,
+                                "tool": tool_name,
+                                "tab_id": current_tab,
+                                "success": success,
+                                "duration_ms": duration_ms
+                            }),
+                        );
 
                         messages.push(ChatMessage {
                             role: "user".to_string(),
-                            content: format!("Browser Tool Result:\n{}", serde_json::to_string_pretty(&res_json).unwrap_or_default())
+                            content: format!(
+                                "Browser Tool Result:\n{}",
+                                serde_json::to_string_pretty(&res_json).unwrap_or_default()
+                            ),
                         });
                     }
                     Err(e) => {
                         messages.push(ChatMessage {
                             role: "user".to_string(),
-                            content: format!("Browser Tool Execution Failed: {}", e)
+                            content: format!("Browser Tool Execution Failed: {}", e),
                         });
                     }
                 }
@@ -832,7 +998,10 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
 
     if step_count >= max_steps && final_status == BrowserTaskStatus::Running {
         final_status = BrowserTaskStatus::TimedOut;
-        final_summary = format!("Task terminated: maximum step limit ({}) reached.", max_steps);
+        final_summary = format!(
+            "Task terminated: maximum step limit ({}) reached.",
+            max_steps
+        );
         final_error = Some("MAX_STEPS_REACHED".to_string());
     }
 
@@ -847,13 +1016,29 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
     if let Some(ref rt) = task_runtime {
         match final_status {
             BrowserTaskStatus::Completed => {
-                let _ = rt.complete_task(&task_id_obj, if final_summary.is_empty() { "Autonomous task finished.".to_string() } else { final_summary.clone() }).await;
+                let _ = rt
+                    .complete_task(
+                        &task_id_obj,
+                        if final_summary.is_empty() {
+                            "Autonomous task finished.".to_string()
+                        } else {
+                            final_summary.clone()
+                        },
+                    )
+                    .await;
             }
             BrowserTaskStatus::Cancelled => {
-                let _ = rt.cancel_task(&task_id_obj, Some("Cancelled by user or system.".to_string())).await;
+                let _ = rt
+                    .cancel_task(
+                        &task_id_obj,
+                        Some("Cancelled by user or system.".to_string()),
+                    )
+                    .await;
             }
             _ => {
-                let err = final_error.clone().unwrap_or_else(|| "Task ended with failure or timeout.".to_string());
+                let err = final_error
+                    .clone()
+                    .unwrap_or_else(|| "Task ended with failure or timeout.".to_string());
                 let _ = rt.fail_task(&task_id_obj, err).await;
             }
         }
@@ -868,7 +1053,11 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
         task_id,
         status: final_status,
         goal,
-        summary: if final_summary.is_empty() { "Autonomous task finished.".to_string() } else { final_summary },
+        summary: if final_summary.is_empty() {
+            "Autonomous task finished.".to_string()
+        } else {
+            final_summary
+        },
         steps_taken: step_count,
         duration_ms: start_instant.elapsed().as_millis() as u64,
         final_tab_id: current_tab,
@@ -898,7 +1087,8 @@ pub async fn browser_agent_run_task(
         browser_state,
         db_state,
         agent_mgr,
-    ).await
+    )
+    .await
 }
 
 #[tauri::command]
@@ -909,14 +1099,22 @@ pub async fn browser_agent_cancel_task(
 ) -> Result<bool, String> {
     let mut cancelled = false;
     {
-        let flags = agent_mgr.cancellation_flags.lock().map_err(|e| e.to_string())?;
+        let flags = agent_mgr
+            .cancellation_flags
+            .lock()
+            .map_err(|e| e.to_string())?;
         if let Some(flag) = flags.get(&task_id) {
             flag.store(true, Ordering::Relaxed);
             cancelled = true;
         }
     }
     if let Some(rt) = app.try_state::<TaskRuntime>() {
-        let _ = rt.cancel_task(&TaskId::from_string(&task_id), Some("Operator cancelled task via browser_agent_cancel_task".to_string())).await;
+        let _ = rt
+            .cancel_task(
+                &TaskId::from_string(&task_id),
+                Some("Operator cancelled task via browser_agent_cancel_task".to_string()),
+            )
+            .await;
         cancelled = true;
     }
     Ok(cancelled)

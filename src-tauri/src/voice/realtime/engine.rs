@@ -115,7 +115,9 @@ impl RealtimeVoiceEngine {
                 None,
             )
             .await
-            .map_err(|e| VoiceError::Internal(format!("ConversationCore turn creation failed: {}", e)))?;
+            .map_err(|e| {
+                VoiceError::Internal(format!("ConversationCore turn creation failed: {}", e))
+            })?;
 
         *turn_lock = Some(turn_id.clone());
         Ok(turn_id)
@@ -296,7 +298,8 @@ impl RealtimeVoiceEngine {
                             for (i, b) in bands.iter_mut().enumerate() {
                                 let start = i * chunk_size;
                                 let end = (start + chunk_size).min(frame.samples.len());
-                                let sub_sq: f32 = frame.samples[start..end].iter().map(|s| s * s).sum();
+                                let sub_sq: f32 =
+                                    frame.samples[start..end].iter().map(|s| s * s).sum();
                                 *b = (sub_sq / (end - start) as f32).sqrt().clamp(0.0, 1.0);
                             }
                         }
@@ -342,12 +345,8 @@ impl RealtimeVoiceEngine {
                         correlation.turn_id = Some(active_tid.to_string());
                         correlation.tool_execution_id = Some(exec_id.clone());
 
-                        let tool_request = ToolRequest::new(
-                            tool_name,
-                            arguments,
-                            correlation,
-                        )
-                        .with_execution_id(ToolExecutionId::from_string(exec_id));
+                        let tool_request = ToolRequest::new(tool_name, arguments, correlation)
+                            .with_execution_id(ToolExecutionId::from_string(exec_id));
 
                         // Dispatch to ToolRouter with full PolicyEngine gating
                         let result = self.tool_router.execute(tool_request).await;
@@ -357,7 +356,8 @@ impl RealtimeVoiceEngine {
                     }
                     RealtimeProviderEvent::Interrupted { reason } => {
                         // Low-latency barge-in handling
-                        self.handle_barge_in(&session, adapter.as_ref(), &reason).await;
+                        self.handle_barge_in(&session, adapter.as_ref(), &reason)
+                            .await;
                     }
                     RealtimeProviderEvent::TurnComplete => {
                         let u_text = if accumulated_transcript.is_empty() {
@@ -371,9 +371,7 @@ impl RealtimeVoiceEngine {
                             Some(accumulated_assistant.clone())
                         };
 
-                        let _ = self
-                            .finalize_active_turn(&session, u_text, a_text)
-                            .await;
+                        let _ = self.finalize_active_turn(&session, u_text, a_text).await;
 
                         accumulated_transcript.clear();
                         accumulated_assistant.clear();
@@ -540,8 +538,7 @@ impl RealtimeVoiceEngine {
                 );
 
                 Err(VoiceError::Internal(
-                    "Input stream backpressure timeout; stream discontinuity triggered"
-                        .to_string(),
+                    "Input stream backpressure timeout; stream discontinuity triggered".to_string(),
                 ))
             }
         }
@@ -552,7 +549,9 @@ impl RealtimeVoiceEngine {
         let mut lock = self.active_session.write().await;
         if let Some(session) = lock.take() {
             session.cancellation_token.cancel();
-            let _ = self.cancel_active_turn(&session, "session_stopped_by_user").await;
+            let _ = self
+                .cancel_active_turn(&session, "session_stopped_by_user")
+                .await;
             let _ = self.capture_driver.cancel_capture();
             let _ = self.audio_output.stop();
 

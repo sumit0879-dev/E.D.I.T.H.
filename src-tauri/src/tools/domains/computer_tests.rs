@@ -23,8 +23,8 @@ use crate::computer_control::GLOBAL_COMPUTER_CONTROL_MGR;
 use crate::events::envelope::EventCorrelation;
 use crate::events::EventEmitter;
 use crate::policy::context::PolicyContext;
-use crate::policy::{OperatorDecision, PolicyEngine};
 use crate::policy::types::{ActionRequest, ActionTarget, PolicyOutcome, RiskLevel};
+use crate::policy::{OperatorDecision, PolicyEngine};
 use crate::tools::executor::DomainExecutorRegistry;
 use crate::tools::registry::ToolRegistry;
 use crate::tools::router::ToolRouter;
@@ -277,7 +277,10 @@ async fn test_09_computer_confirmation_resumption() {
     }
     let exec_reg = Arc::new(DomainExecutorRegistry::new());
     let mock_platform = Arc::new(MockPlatformAdapter::new());
-    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(None, mock_platform)));
+    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(
+        None,
+        mock_platform,
+    )));
 
     let router = ToolRouter::with_defaults(registry, exec_reg, engine.clone(), None);
 
@@ -293,7 +296,10 @@ async fn test_09_computer_confirmation_resumption() {
     let approval_id = res.approval_id.expect("Expected approval_id");
 
     // Operator approves the action
-    assert!(engine.resolve_approval(&approval_id, OperatorDecision::Approve).await.is_ok());
+    assert!(engine
+        .resolve_approval(&approval_id, OperatorDecision::Approve)
+        .await
+        .is_ok());
 
     // Replay with active approval token succeeds
     req.active_approval_id = Some(approval_id.clone());
@@ -314,11 +320,17 @@ async fn test_10_computer_replay_consumed_rejected() {
     );
     let ctx = PolicyContext::default();
     let initial_decision = engine.evaluate(&req, &ctx).await;
-    assert_eq!(initial_decision.outcome, PolicyOutcome::ConfirmationRequired);
+    assert_eq!(
+        initial_decision.outcome,
+        PolicyOutcome::ConfirmationRequired
+    );
     let approval_id = initial_decision.approval_id.expect("Expected approval_id");
 
     // Approve token
-    assert!(engine.resolve_approval(&approval_id, OperatorDecision::Approve).await.is_ok());
+    assert!(engine
+        .resolve_approval(&approval_id, OperatorDecision::Approve)
+        .await
+        .is_ok());
 
     // First consume succeeds
     let mut authed_ctx = ctx.clone();
@@ -340,12 +352,17 @@ async fn test_11_computer_human_takeover_preemption() {
     }
     let exec_reg = Arc::new(DomainExecutorRegistry::new());
     let mock_platform = Arc::new(MockPlatformAdapter::new());
-    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(None, mock_platform)));
+    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(
+        None,
+        mock_platform,
+    )));
 
     let router = ToolRouter::with_defaults(registry, exec_reg, engine, None);
 
     // Operator pauses AI control (human takeover)
-    assert!(GLOBAL_COMPUTER_CONTROL_MGR.pause_ai_control(Some("User moved mouse".to_string())).is_ok());
+    assert!(GLOBAL_COMPUTER_CONTROL_MGR
+        .pause_ai_control(Some("User moved mouse".to_string()))
+        .is_ok());
 
     let req = ToolRequest::new(
         "computer.move_cursor".to_string(),
@@ -371,7 +388,10 @@ async fn test_12_computer_scoped_cancellation() {
     }
     let exec_reg = Arc::new(DomainExecutorRegistry::new());
     let mock_platform = Arc::new(MockPlatformAdapter::new());
-    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(None, mock_platform)));
+    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(
+        None,
+        mock_platform,
+    )));
 
     let router = Arc::new(ToolRouter::with_defaults(registry, exec_reg, engine, None));
 
@@ -404,7 +424,10 @@ async fn test_13_computer_execution_timeout() {
     }
     let exec_reg = Arc::new(DomainExecutorRegistry::new());
     let mock_platform = Arc::new(MockPlatformAdapter::new());
-    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(None, mock_platform)));
+    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(
+        None,
+        mock_platform,
+    )));
 
     let router = ToolRouter::with_defaults(registry, exec_reg, engine, None);
 
@@ -429,7 +452,10 @@ async fn test_14_computer_correlated_events_lifecycle() {
     }
     let exec_reg = Arc::new(DomainExecutorRegistry::new());
     let mock_platform = Arc::new(MockPlatformAdapter::new());
-    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(None, mock_platform)));
+    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(
+        None,
+        mock_platform,
+    )));
 
     let router = ToolRouter::with_defaults(registry, exec_reg, engine, Some(emitter));
 
@@ -460,7 +486,10 @@ async fn test_15_computer_error_normalization() {
     }
     let exec_reg = Arc::new(DomainExecutorRegistry::new());
     let mock_platform = Arc::new(MockPlatformAdapter::new());
-    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(None, mock_platform)));
+    exec_reg.register(Arc::new(ComputerDomainExecutor::with_platform(
+        None,
+        mock_platform,
+    )));
 
     let router = ToolRouter::with_defaults(registry, exec_reg, engine, None);
 

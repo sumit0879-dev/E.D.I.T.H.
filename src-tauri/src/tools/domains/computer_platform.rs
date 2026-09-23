@@ -3,7 +3,7 @@
 //! Encapsulates low-level platform APIs for screen observation, window enumeration,
 //! cursor movement, mouse clicks, and keyboard inputs behind the `ComputerPlatform` trait.
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 use std::sync::Mutex;
@@ -84,7 +84,10 @@ extern "system" {
     fn GetForegroundWindow() -> isize;
     fn GetWindowTextW(hwnd: isize, lpString: *mut u16, nMaxCount: i32) -> i32;
     fn GetWindowThreadProcessId(hwnd: isize, lpdwProcessId: *mut u32) -> u32;
-    fn EnumWindows(lpEnumFunc: unsafe extern "system" fn(isize, isize) -> i32, lParam: isize) -> i32;
+    fn EnumWindows(
+        lpEnumFunc: unsafe extern "system" fn(isize, isize) -> i32,
+        lParam: isize,
+    ) -> i32;
     fn IsWindowVisible(hwnd: isize) -> i32;
     fn SetForegroundWindow(hwnd: isize) -> i32;
     fn ShowWindow(hwnd: isize, nCmdShow: i32) -> i32;
@@ -103,7 +106,12 @@ extern "system" {
 extern "system" {
     fn OpenProcess(dwDesiredAccess: u32, bInheritHandle: i32, dwProcessId: u32) -> isize;
     fn CloseHandle(hObject: isize) -> i32;
-    fn QueryFullProcessImageNameW(hProcess: isize, dwFlags: u32, lpExeName: *mut u16, lpdwSize: *mut u32) -> i32;
+    fn QueryFullProcessImageNameW(
+        hProcess: isize,
+        dwFlags: u32,
+        lpExeName: *mut u16,
+        lpdwSize: *mut u32,
+    ) -> i32;
 }
 
 #[cfg(target_os = "windows")]
@@ -275,9 +283,7 @@ unsafe extern "system" fn enum_windows_callback(hwnd: isize, lparam: isize) -> i
 #[cfg(target_os = "windows")]
 impl ComputerPlatform for WindowsPlatformAdapter {
     fn observe_screen(&self) -> Result<PlatformScreenMetrics, String> {
-        let (w, h) = unsafe {
-            (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
-        };
+        let (w, h) = unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
         let mut pt = POINT::default();
         unsafe {
             GetCursorPos(&mut pt);
@@ -296,12 +302,16 @@ impl ComputerPlatform for WindowsPlatformAdapter {
     }
 
     fn screenshot(&self, target: &str) -> Result<String, String> {
-        let screens = screenshots::Screen::all().map_err(|e| format!("Failed to query screens: {}", e))?;
+        let screens =
+            screenshots::Screen::all().map_err(|e| format!("Failed to query screens: {}", e))?;
         let screen = screens.first().ok_or("No screen display detected.")?;
-        let capture = screen.capture().map_err(|e| format!("Failed screen capture: {}", e))?;
+        let capture = screen
+            .capture()
+            .map_err(|e| format!("Failed screen capture: {}", e))?;
 
-        let mut img = image::RgbaImage::from_raw(capture.width(), capture.height(), capture.into_raw())
-            .ok_or("Failed to construct image buffer.")?;
+        let mut img =
+            image::RgbaImage::from_raw(capture.width(), capture.height(), capture.into_raw())
+                .ok_or("Failed to construct image buffer.")?;
 
         if target.eq_ignore_ascii_case("active_window") {
             if let Ok(Some(win)) = self.get_active_window() {
@@ -318,7 +328,8 @@ impl ComputerPlatform for WindowsPlatformAdapter {
 
         let dyn_img = image::DynamicImage::ImageRgba8(img);
         let mut buf = Cursor::new(Vec::new());
-        dyn_img.write_to(&mut buf, image::ImageFormat::Jpeg)
+        dyn_img
+            .write_to(&mut buf, image::ImageFormat::Jpeg)
             .map_err(|e| format!("Image JPEG encoding failed: {}", e))?;
         let b64 = BASE64_STANDARD.encode(buf.into_inner());
         Ok(format!("data:image/jpeg;base64,{}", b64))
@@ -362,15 +373,18 @@ impl ComputerPlatform for WindowsPlatformAdapter {
 
     fn close_window(&self, title: &str) -> Result<bool, String> {
         let windows = self.list_windows()?;
-        let target = windows.into_iter().find(|w| {
-            w.title.to_lowercase().contains(&title.to_lowercase())
-        });
+        let target = windows
+            .into_iter()
+            .find(|w| w.title.to_lowercase().contains(&title.to_lowercase()));
 
         if let Some(win) = target {
             // Safety guard: prevent closing explorer.exe or edith-v2
             let proc_lower = win.process_name.to_lowercase();
             if proc_lower.contains("explorer") || proc_lower.contains("edith") {
-                return Err(format!("Closing protected core system window '{}' is strictly prohibited.", win.process_name));
+                return Err(format!(
+                    "Closing protected core system window '{}' is strictly prohibited.",
+                    win.process_name
+                ));
             }
             unsafe {
                 PostMessageW(win.handle as isize, WM_CLOSE, 0, 0);
@@ -382,9 +396,8 @@ impl ComputerPlatform for WindowsPlatformAdapter {
     }
 
     fn move_cursor(&self, x: i32, y: i32) -> Result<(), String> {
-        let (max_w, max_h) = unsafe {
-            (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN))
-        };
+        let (max_w, max_h) =
+            unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) };
         let clamped_x = x.clamp(0, max_w);
         let clamped_y = y.clamp(0, max_h);
         unsafe {
@@ -463,8 +476,8 @@ impl ComputerPlatform for WindowsPlatformAdapter {
     }
 
     fn press_key(&self, key: &str) -> Result<(), String> {
-        let vk = Self::key_to_vk(key)
-            .ok_or_else(|| format!("Unsupported keyboard key: '{}'", key))?;
+        let vk =
+            Self::key_to_vk(key).ok_or_else(|| format!("Unsupported keyboard key: '{}'", key))?;
         unsafe {
             keybd_event(vk, 0, 0, 0);
             std::thread::sleep(std::time::Duration::from_millis(15));
@@ -517,7 +530,12 @@ impl Default for MockPlatformAdapter {
                     title: "Notepad".to_string(),
                     process_name: "notepad.exe".to_string(),
                     pid: 1234,
-                    bounds: WindowBounds { x: 100, y: 100, width: 800, height: 600 },
+                    bounds: WindowBounds {
+                        x: 100,
+                        y: 100,
+                        width: 800,
+                        height: 600,
+                    },
                     is_minimized: false,
                 },
                 PlatformWindowInfo {
@@ -525,7 +543,12 @@ impl Default for MockPlatformAdapter {
                     title: "Calculator".to_string(),
                     process_name: "calc.exe".to_string(),
                     pid: 5678,
-                    bounds: WindowBounds { x: 200, y: 200, width: 400, height: 500 },
+                    bounds: WindowBounds {
+                        x: 200,
+                        y: 200,
+                        width: 400,
+                        height: 500,
+                    },
                     is_minimized: false,
                 },
             ]),
@@ -557,7 +580,10 @@ impl ComputerPlatform for MockPlatformAdapter {
     }
 
     fn screenshot(&self, target: &str) -> Result<String, String> {
-        Ok(format!("data:image/jpeg;base64,MOCK_SCREENSHOT_DATA_{}", target))
+        Ok(format!(
+            "data:image/jpeg;base64,MOCK_SCREENSHOT_DATA_{}",
+            target
+        ))
     }
 
     fn get_active_window(&self) -> Result<Option<PlatformWindowInfo>, String> {
@@ -570,7 +596,10 @@ impl ComputerPlatform for MockPlatformAdapter {
 
     fn focus_window(&self, title: &str, _process_name: Option<&str>) -> Result<bool, String> {
         let mut list = self.windows.lock().unwrap();
-        if let Some(pos) = list.iter().position(|w| w.title.to_lowercase().contains(&title.to_lowercase())) {
+        if let Some(pos) = list
+            .iter()
+            .position(|w| w.title.to_lowercase().contains(&title.to_lowercase()))
+        {
             let win = list.remove(pos);
             list.insert(0, win);
             Ok(true)
@@ -581,7 +610,10 @@ impl ComputerPlatform for MockPlatformAdapter {
 
     fn close_window(&self, title: &str) -> Result<bool, String> {
         let mut list = self.windows.lock().unwrap();
-        if let Some(pos) = list.iter().position(|w| w.title.to_lowercase().contains(&title.to_lowercase())) {
+        if let Some(pos) = list
+            .iter()
+            .position(|w| w.title.to_lowercase().contains(&title.to_lowercase()))
+        {
             list.remove(pos);
             Ok(true)
         } else {
@@ -599,7 +631,10 @@ impl ComputerPlatform for MockPlatformAdapter {
         if let (Some(cx), Some(cy)) = (x, y) {
             self.move_cursor(cx, cy)?;
         }
-        self.key_log.lock().unwrap().push(format!("click:{}", button));
+        self.key_log
+            .lock()
+            .unwrap()
+            .push(format!("click:{}", button));
         Ok(())
     }
 

@@ -33,10 +33,7 @@ pub struct AudioBuffer {
 impl AudioBuffer {
     /// Creates a new `AudioBuffer` with given parameters and clamped f32 samples.
     pub fn new(sample_rate: u32, channels: u16, samples: Vec<f32>) -> Self {
-        let clamped: Vec<f32> = samples
-            .into_iter()
-            .map(|s| s.clamp(-1.0, 1.0))
-            .collect();
+        let clamped: Vec<f32> = samples.into_iter().map(|s| s.clamp(-1.0, 1.0)).collect();
         Self {
             sample_rate,
             channels: channels.max(1),

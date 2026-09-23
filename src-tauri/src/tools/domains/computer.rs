@@ -284,7 +284,8 @@ impl DomainExecutor for ComputerDomainExecutor {
         request: &'a ToolRequest,
         _definition: &'a ToolDefinition,
         cancel_token: ScopedCancellationToken,
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ToolExecutionError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ToolExecutionError>> + Send + 'a>>
+    {
         Box::pin(async move {
             // 1. Cooperative Cancellation Check
             if cancel_token.is_cancelled() {
@@ -296,7 +297,8 @@ impl DomainExecutor for ComputerDomainExecutor {
             // 2. Human Takeover & Control State Preemption
             if GLOBAL_COMPUTER_CONTROL_MGR.get_control_state() == ComputerControlState::AiPaused {
                 return Err(ToolExecutionError::DomainError(
-                    "Computer execution preempted: Human operator is currently in control.".to_string(),
+                    "Computer execution preempted: Human operator is currently in control."
+                        .to_string(),
                 ));
             }
 
@@ -324,7 +326,10 @@ impl DomainExecutor for ComputerDomainExecutor {
                 }
 
                 "screenshot" => {
-                    let target = args.get("target").and_then(|v| v.as_str()).unwrap_or("screen");
+                    let target = args
+                        .get("target")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("screen");
                     let data_url = self.platform.screenshot(target).map_err(|e| {
                         ToolExecutionError::DomainError(format!("Screenshot capture failed: {}", e))
                     })?;
@@ -337,7 +342,10 @@ impl DomainExecutor for ComputerDomainExecutor {
 
                 "get_active_window" => {
                     let window = self.platform.get_active_window().map_err(|e| {
-                        ToolExecutionError::DomainError(format!("Failed to query active window: {}", e))
+                        ToolExecutionError::DomainError(format!(
+                            "Failed to query active window: {}",
+                            e
+                        ))
                     })?;
                     Ok(json!({
                         "success": true,
@@ -347,7 +355,10 @@ impl DomainExecutor for ComputerDomainExecutor {
 
                 "list_windows" => {
                     let windows = self.platform.list_windows().map_err(|e| {
-                        ToolExecutionError::DomainError(format!("Failed to list open windows: {}", e))
+                        ToolExecutionError::DomainError(format!(
+                            "Failed to list open windows: {}",
+                            e
+                        ))
                     })?;
                     Ok(json!({
                         "success": true,
@@ -357,15 +368,22 @@ impl DomainExecutor for ComputerDomainExecutor {
                 }
 
                 "focus_window" => {
-                    let title = args
-                        .get("title")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| ToolExecutionError::InvalidArguments("Missing required field 'title'.".to_string()))?;
+                    let title = args.get("title").and_then(|v| v.as_str()).ok_or_else(|| {
+                        ToolExecutionError::InvalidArguments(
+                            "Missing required field 'title'.".to_string(),
+                        )
+                    })?;
                     let process_name = args.get("process_name").and_then(|v| v.as_str());
 
-                    let focused = self.platform.focus_window(title, process_name).map_err(|e| {
-                        ToolExecutionError::DomainError(format!("Failed to focus window: {}", e))
-                    })?;
+                    let focused = self
+                        .platform
+                        .focus_window(title, process_name)
+                        .map_err(|e| {
+                            ToolExecutionError::DomainError(format!(
+                                "Failed to focus window: {}",
+                                e
+                            ))
+                        })?;
 
                     if !focused {
                         return Err(ToolExecutionError::DomainError(format!(
@@ -382,10 +400,14 @@ impl DomainExecutor for ComputerDomainExecutor {
                 }
 
                 "launch_app" => {
-                    let app_name = args
-                        .get("app_name")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| ToolExecutionError::InvalidArguments("Missing required field 'app_name'.".to_string()))?;
+                    let app_name =
+                        args.get("app_name")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ToolExecutionError::InvalidArguments(
+                                    "Missing required field 'app_name'.".to_string(),
+                                )
+                            })?;
 
                     // Execute through central AppLauncherPolicy with database connection if available
                     let conn_guard = if let Some(ref app) = self.app {
@@ -399,8 +421,14 @@ impl DomainExecutor for ComputerDomainExecutor {
                     };
 
                     let res = if let Some(state) = conn_guard {
-                        let conn = state.conn.lock().map_err(|e| ToolExecutionError::DomainError(e.to_string()))?;
-                        crate::security::AppLauncherPolicy::validate_and_launch(app_name, Some(&conn))
+                        let conn = state
+                            .conn
+                            .lock()
+                            .map_err(|e| ToolExecutionError::DomainError(e.to_string()))?;
+                        crate::security::AppLauncherPolicy::validate_and_launch(
+                            app_name,
+                            Some(&conn),
+                        )
                     } else {
                         crate::security::AppLauncherPolicy::validate_and_launch(app_name, None)
                     };
@@ -416,10 +444,11 @@ impl DomainExecutor for ComputerDomainExecutor {
                 }
 
                 "close_window" => {
-                    let title = args
-                        .get("title")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| ToolExecutionError::InvalidArguments("Missing required field 'title'.".to_string()))?;
+                    let title = args.get("title").and_then(|v| v.as_str()).ok_or_else(|| {
+                        ToolExecutionError::InvalidArguments(
+                            "Missing required field 'title'.".to_string(),
+                        )
+                    })?;
 
                     let closed = self.platform.close_window(title).map_err(|e| {
                         ToolExecutionError::DomainError(format!("Failed to close window: {}", e))
@@ -440,10 +469,14 @@ impl DomainExecutor for ComputerDomainExecutor {
 
                 "move_cursor" => {
                     let x = args.get("x").and_then(|v| v.as_i64()).ok_or_else(|| {
-                        ToolExecutionError::InvalidArguments("Missing required integer 'x'.".to_string())
+                        ToolExecutionError::InvalidArguments(
+                            "Missing required integer 'x'.".to_string(),
+                        )
                     })? as i32;
                     let y = args.get("y").and_then(|v| v.as_i64()).ok_or_else(|| {
-                        ToolExecutionError::InvalidArguments("Missing required integer 'y'.".to_string())
+                        ToolExecutionError::InvalidArguments(
+                            "Missing required integer 'y'.".to_string(),
+                        )
                     })? as i32;
 
                     self.platform.move_cursor(x, y).map_err(|e| {
@@ -457,7 +490,10 @@ impl DomainExecutor for ComputerDomainExecutor {
                 }
 
                 "click" => {
-                    let button = args.get("button").and_then(|v| v.as_str()).unwrap_or("left");
+                    let button = args
+                        .get("button")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("left");
                     let x = args.get("x").and_then(|v| v.as_i64()).map(|v| v as i32);
                     let y = args.get("y").and_then(|v| v.as_i64()).map(|v| v as i32);
 
@@ -501,10 +537,11 @@ impl DomainExecutor for ComputerDomainExecutor {
                 }
 
                 "type" => {
-                    let text = args
-                        .get("text")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| ToolExecutionError::InvalidArguments("Missing required field 'text'.".to_string()))?;
+                    let text = args.get("text").and_then(|v| v.as_str()).ok_or_else(|| {
+                        ToolExecutionError::InvalidArguments(
+                            "Missing required field 'text'.".to_string(),
+                        )
+                    })?;
 
                     self.platform.type_text(text).map_err(|e| {
                         ToolExecutionError::DomainError(format!("Keyboard typing failed: {}", e))
@@ -517,10 +554,11 @@ impl DomainExecutor for ComputerDomainExecutor {
                 }
 
                 "press_key" => {
-                    let key = args
-                        .get("key")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| ToolExecutionError::InvalidArguments("Missing required field 'key'.".to_string()))?;
+                    let key = args.get("key").and_then(|v| v.as_str()).ok_or_else(|| {
+                        ToolExecutionError::InvalidArguments(
+                            "Missing required field 'key'.".to_string(),
+                        )
+                    })?;
 
                     self.platform.press_key(key).map_err(|e| {
                         ToolExecutionError::DomainError(format!("Key press failed: {}", e))
@@ -533,10 +571,12 @@ impl DomainExecutor for ComputerDomainExecutor {
                 }
 
                 "hotkey" => {
-                    let keys_arr = args
-                        .get("keys")
-                        .and_then(|v| v.as_array())
-                        .ok_or_else(|| ToolExecutionError::InvalidArguments("Missing required array 'keys'.".to_string()))?;
+                    let keys_arr =
+                        args.get("keys").and_then(|v| v.as_array()).ok_or_else(|| {
+                            ToolExecutionError::InvalidArguments(
+                                "Missing required array 'keys'.".to_string(),
+                            )
+                        })?;
 
                     let keys: Vec<String> = keys_arr
                         .iter()

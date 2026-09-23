@@ -1,8 +1,11 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Deserialize, Serialize};
-use tauri::{AppHandle, Manager, WebviewBuilder, WebviewUrl, Url, LogicalPosition, LogicalSize, Position, Size};
+use tauri::{
+    AppHandle, LogicalPosition, LogicalSize, Manager, Position, Size, Url, WebviewBuilder,
+    WebviewUrl,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BrowserViewportBounds {
@@ -311,7 +314,10 @@ pub fn get_tab_label(tab_id: &str) -> String {
 pub fn get_favicon_url(url_str: &str) -> Option<String> {
     if let Ok(parsed) = Url::parse(url_str) {
         if let Some(host) = parsed.host_str() {
-            return Some(format!("https://www.google.com/s2/favicons?domain={}&sz=32", host));
+            return Some(format!(
+                "https://www.google.com/s2/favicons?domain={}&sz=32",
+                host
+            ));
         }
     }
     None
@@ -326,11 +332,17 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
 
     // Explicit security check: Disallow dangerous schemes like javascript: from omnibox
     if trimmed.to_lowercase().starts_with("javascript:") {
-        return Err("Security Policy: 'javascript:' execution from omnibox is strictly prohibited.".to_string());
+        return Err(
+            "Security Policy: 'javascript:' execution from omnibox is strictly prohibited."
+                .to_string(),
+        );
     }
 
     if trimmed.to_lowercase().starts_with("file:") {
-        return Err("Security Policy: Local 'file:' system URLs are restricted from remote browser tabs.".to_string());
+        return Err(
+            "Security Policy: Local 'file:' system URLs are restricted from remote browser tabs."
+                .to_string(),
+        );
     }
 
     let lower = trimmed.to_lowercase();
@@ -346,7 +358,10 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
     }
 
     // Supported direct protocols
-    if trimmed.starts_with("http://") || trimmed.starts_with("https://") || trimmed.starts_with("about:") {
+    if trimmed.starts_with("http://")
+        || trimmed.starts_with("https://")
+        || trimmed.starts_with("about:")
+    {
         return Ok(trimmed.to_string());
     }
 
@@ -364,7 +379,10 @@ pub fn normalize_url(input: &str) -> Result<String, String> {
         Ok(format!("https://{}", trimmed))
     } else {
         // Deterministic Google search fallback
-        Ok(format!("https://www.google.com/search?q={}", urlencoding::encode(trimmed)))
+        Ok(format!(
+            "https://www.google.com/search?q={}",
+            urlencoding::encode(trimmed)
+        ))
     }
 }
 
@@ -614,16 +632,17 @@ pub async fn browser_create_tab(
 ) -> Result<BrowserTabInfo, String> {
     let raw_input = url.unwrap_or_else(|| "https://example.com".to_string());
     let target_url_str = normalize_url(&raw_input)?;
-    let target_url = Url::parse(&target_url_str)
-        .map_err(|e| format!("Invalid URL format: {}", e))?;
+    let target_url =
+        Url::parse(&target_url_str).map_err(|e| format!("Invalid URL format: {}", e))?;
 
     let label = get_tab_label(&tab_id);
 
-    let target_profile_id = profile_id.unwrap_or_else(|| {
-        crate::browser_profile::GLOBAL_PROFILE_MGR.get_active_profile_id()
-    });
-    let is_temp = target_profile_id.starts_with("agent_") || target_profile_id.contains("temporary");
-    let profile_data_dir = crate::browser_profile::get_profile_data_dir(&target_profile_id, is_temp);
+    let target_profile_id = profile_id
+        .unwrap_or_else(|| crate::browser_profile::GLOBAL_PROFILE_MGR.get_active_profile_id());
+    let is_temp =
+        target_profile_id.starts_with("agent_") || target_profile_id.contains("temporary");
+    let profile_data_dir =
+        crate::browser_profile::get_profile_data_dir(&target_profile_id, is_temp);
 
     if let Some(ref b) = bounds {
         *state.bounds.lock().unwrap() = Some(b.clone());
@@ -663,7 +682,8 @@ pub async fn browser_create_tab(
         }
         let _ = existing_webview.navigate(target_url);
     } else {
-        let window = app.get_window("main")
+        let window = app
+            .get_window("main")
             .ok_or_else(|| "Main window 'main' not found.".to_string())?;
 
         let webview_url = WebviewUrl::External(target_url);
@@ -676,7 +696,8 @@ pub async fn browser_create_tab(
         builder = builder.initialization_script(LIVE_OBSERVER_INIT_SCRIPT);
 
         // Phase 5.6E: Privacy & Content Blocker Pre-flight Script (Step 10)
-        builder = builder.initialization_script(crate::browser_privacy::PRIVACY_PREFLIGHT_INIT_SCRIPT);
+        builder =
+            builder.initialization_script(crate::browser_privacy::PRIVACY_PREFLIGHT_INIT_SCRIPT);
 
         // Native Navigation Policy Callback & Find IPC Interception
         builder = builder.on_navigation(|nav_url| {
@@ -689,19 +710,43 @@ pub async fn browser_create_tab(
                         if let Some((k, v)) = pair.split_once('=') {
                             if k == "data" {
                                 if let Ok(decoded) = urlencoding::decode(v) {
-                                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&decoded) {
-                                        let tab_id = val.get("tab_id").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                                        let q = val.get("query").and_then(|x| x.as_str()).unwrap_or("").to_string();
-                                        let found = val.get("match_found").and_then(|x| x.as_bool()).unwrap_or(false);
-                                        let count = val.get("matches_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
-                                        let active = val.get("active_match_ordinal").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
+                                    if let Ok(val) =
+                                        serde_json::from_str::<serde_json::Value>(&decoded)
+                                    {
+                                        let tab_id = val
+                                            .get("tab_id")
+                                            .and_then(|x| x.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let q = val
+                                            .get("query")
+                                            .and_then(|x| x.as_str())
+                                            .unwrap_or("")
+                                            .to_string();
+                                        let found = val
+                                            .get("match_found")
+                                            .and_then(|x| x.as_bool())
+                                            .unwrap_or(false);
+                                        let count = val
+                                            .get("matches_count")
+                                            .and_then(|x| x.as_u64())
+                                            .unwrap_or(0)
+                                            as u32;
+                                        let active = val
+                                            .get("active_match_ordinal")
+                                            .and_then(|x| x.as_u64())
+                                            .unwrap_or(0)
+                                            as u32;
 
-                                        set_global_find_result(tab_id, FindResult {
-                                            query: q,
-                                            match_found: found,
-                                            matches_count: count,
-                                            active_match_ordinal: active,
-                                        });
+                                        set_global_find_result(
+                                            tab_id,
+                                            FindResult {
+                                                query: q,
+                                                match_found: found,
+                                                matches_count: count,
+                                                active_match_ordinal: active,
+                                            },
+                                        );
                                     }
                                 }
                             }
@@ -718,7 +763,9 @@ pub async fn browser_create_tab(
                         if let Some((k, v)) = pair.split_once('=') {
                             if k == "data" {
                                 if let Ok(decoded) = urlencoding::decode(v) {
-                                    if let Ok(doc) = serde_json::from_str::<ReaderDocument>(&decoded) {
+                                    if let Ok(doc) =
+                                        serde_json::from_str::<ReaderDocument>(&decoded)
+                                    {
                                         set_global_reader_doc(doc.tab_id.clone(), doc);
                                     }
                                 }
@@ -741,7 +788,8 @@ pub async fn browser_create_tab(
             true
         });
 
-        window.add_child(builder, pos, size)
+        window
+            .add_child(builder, pos, size)
             .map_err(|e| format!("Failed to attach child Webview {}: {}", label, e))?;
 
         if let Some(wv) = app.get_webview(&label) {
@@ -766,7 +814,8 @@ pub async fn browser_create_tab(
     };
 
     let favicon = get_favicon_url(&target_url_str);
-    let is_pdf = target_url_str.to_lowercase().ends_with(".pdf") || target_url_str.to_lowercase().contains("/pdf/");
+    let is_pdf = target_url_str.to_lowercase().ends_with(".pdf")
+        || target_url_str.to_lowercase().contains("/pdf/");
 
     let new_tab = BrowserTabInfo {
         id: tab_id.clone(),
@@ -799,10 +848,18 @@ pub async fn browser_create_tab(
     }
 
     // Phase 5.6A: Automatic History Recording on Navigation (Skip for New Tab pages)
-    if target_url_str != "edith://newtab" && target_url_str != "about:blank" && !target_url_str.is_empty() {
+    if target_url_str != "edith://newtab"
+        && target_url_str != "about:blank"
+        && !target_url_str.is_empty()
+    {
         if let Some(db_state) = app.try_state::<crate::db::DbState>() {
             if let Ok(conn) = db_state.conn.lock() {
-                let _ = crate::db::add_browser_history_entry(&conn, &new_tab.url, &new_tab.title, Some(&new_tab.id));
+                let _ = crate::db::add_browser_history_entry(
+                    &conn,
+                    &new_tab.url,
+                    &new_tab.title,
+                    Some(&new_tab.id),
+                );
             }
         }
     }
@@ -827,7 +884,8 @@ pub async fn browser_switch_tab(
         tabs.iter().find(|t| t.id == tab_id).cloned()
     };
 
-    let mut tab_info = target_tab.ok_or_else(|| format!("Tab '{}' not found in browser state.", tab_id))?;
+    let mut tab_info =
+        target_tab.ok_or_else(|| format!("Tab '{}' not found in browser state.", tab_id))?;
 
     let target_label = get_tab_label(&tab_id);
     let all_tabs = state.tabs.lock().unwrap().clone();
@@ -893,7 +951,7 @@ pub async fn browser_close_tab(
     {
         let mut tabs = state.tabs.lock().unwrap();
         let was_active = state.active_tab_id.lock().unwrap().as_deref() == Some(&tab_id);
-        
+
         if let Some(closed) = tabs.iter().find(|t| t.id == tab_id).cloned() {
             state.closed_tabs.lock().unwrap().push(closed);
         }
@@ -917,7 +975,8 @@ pub async fn browser_close_tab(
 
     if let Some(ref next) = next_active {
         let next_label = get_tab_label(&next.id);
-        let is_new_tab = next.url.starts_with("edith://") || next.url.is_empty() || next.url == "about:blank";
+        let is_new_tab =
+            next.url.starts_with("edith://") || next.url.is_empty() || next.url == "about:blank";
         if let Some(wv) = app.get_webview(&next_label) {
             if is_new_tab {
                 let _ = wv.hide();
@@ -948,7 +1007,15 @@ pub async fn browser_reopen_last_closed_tab(
 
     if let Some(tab) = last_closed {
         let restored_id = format!("tab_{}", current_timestamp());
-        let mut res = browser_create_tab(app, restored_id, Some(tab.url), bounds, Some(tab.profile_id), state.clone()).await?;
+        let mut res = browser_create_tab(
+            app,
+            restored_id,
+            Some(tab.url),
+            bounds,
+            Some(tab.profile_id),
+            state.clone(),
+        )
+        .await?;
         if let Some(gid) = tab.group_id {
             let mut tabs = state.tabs.lock().unwrap();
             if let Some(t) = tabs.iter_mut().find(|t| t.id == res.id) {
@@ -973,10 +1040,19 @@ pub async fn browser_duplicate_tab(
     let source_tab = {
         let tabs = state.tabs.lock().unwrap();
         tabs.iter().find(|t| t.id == tab_id).cloned()
-    }.ok_or_else(|| format!("Tab '{}' not found for duplication.", tab_id))?;
+    }
+    .ok_or_else(|| format!("Tab '{}' not found for duplication.", tab_id))?;
 
     let new_tab_id = format!("tab_{}", current_timestamp());
-    let mut new_tab = browser_create_tab(app, new_tab_id, Some(source_tab.url), bounds, Some(source_tab.profile_id), state.clone()).await?;
+    let mut new_tab = browser_create_tab(
+        app,
+        new_tab_id,
+        Some(source_tab.url),
+        bounds,
+        Some(source_tab.profile_id),
+        state.clone(),
+    )
+    .await?;
     if let Some(gid) = source_tab.group_id {
         let mut tabs = state.tabs.lock().unwrap();
         if let Some(t) = tabs.iter_mut().find(|t| t.id == new_tab.id) {
@@ -993,7 +1069,9 @@ pub async fn browser_toggle_pin_tab(
     state: tauri::State<'_, BrowserState>,
 ) -> Result<BrowserTabInfo, String> {
     let mut tabs = state.tabs.lock().unwrap();
-    let tab = tabs.iter_mut().find(|t| t.id == tab_id)
+    let tab = tabs
+        .iter_mut()
+        .find(|t| t.id == tab_id)
         .ok_or_else(|| format!("Tab '{}' not found.", tab_id))?;
     tab.is_pinned = !tab.is_pinned;
     if tab.is_pinned {
@@ -1059,8 +1137,10 @@ pub async fn browser_save_session(
     state: tauri::State<'_, BrowserState>,
 ) -> Result<bool, String> {
     let tabs = state.tabs.lock().unwrap().clone();
-    let records: Vec<crate::db::BrowserTabRecord> = tabs.iter().enumerate().map(|(i, t)| {
-        crate::db::BrowserTabRecord {
+    let records: Vec<crate::db::BrowserTabRecord> = tabs
+        .iter()
+        .enumerate()
+        .map(|(i, t)| crate::db::BrowserTabRecord {
             id: t.id.clone(),
             url: t.url.clone(),
             title: t.title.clone(),
@@ -1069,8 +1149,8 @@ pub async fn browser_save_session(
             is_active: t.is_active,
             position: i as i64,
             group_id: t.group_id.clone(),
-        }
-    }).collect();
+        })
+        .collect();
 
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
     crate::db::save_browser_tabs(&conn, &records).map_err(|e| e.to_string())?;
@@ -1104,7 +1184,16 @@ pub async fn browser_restore_session(
             Err(_) => "about:blank".to_string(),
         };
 
-        match browser_create_tab(app.clone(), tab_id.clone(), Some(safe_url), bounds.clone(), Some(profile_id), state.clone()).await {
+        match browser_create_tab(
+            app.clone(),
+            tab_id.clone(),
+            Some(safe_url),
+            bounds.clone(),
+            Some(profile_id),
+            state.clone(),
+        )
+        .await
+        {
             Ok(mut created) => {
                 if is_pinned {
                     let mut tabs = state.tabs.lock().unwrap();
@@ -1123,7 +1212,10 @@ pub async fn browser_restore_session(
                 restored.push(created);
             }
             Err(e) => {
-                eprintln!("Recovery notice: failed to restore individual tab '{}': {}", tab_id, e);
+                eprintln!(
+                    "Recovery notice: failed to restore individual tab '{}': {}",
+                    tab_id, e
+                );
             }
         }
     }
@@ -1163,11 +1255,11 @@ pub async fn browser_navigate_tab(
         return Ok(normalized);
     }
 
-    let target_url = Url::parse(&normalized)
-        .map_err(|e| format!("Invalid target URL: {}", e))?;
+    let target_url = Url::parse(&normalized).map_err(|e| format!("Invalid target URL: {}", e))?;
 
     if let Some(webview) = app.get_webview(&label) {
-        webview.navigate(target_url)
+        webview
+            .navigate(target_url)
             .map_err(|e| format!("Navigation failed for tab {}: {}", tab_id, e))?;
         let _ = webview.show();
         let _ = webview.set_focus();
@@ -1183,7 +1275,12 @@ pub async fn browser_navigate_tab(
         // Phase 5.6A: Automatic History Recording on Navigation
         if let Some(db_state) = app.try_state::<crate::db::DbState>() {
             if let Ok(conn) = db_state.conn.lock() {
-                let _ = crate::db::add_browser_history_entry(&conn, &normalized, &normalized, Some(&tab_id));
+                let _ = crate::db::add_browser_history_entry(
+                    &conn,
+                    &normalized,
+                    &normalized,
+                    Some(&tab_id),
+                );
             }
         }
 
@@ -1197,7 +1294,8 @@ pub async fn browser_navigate_tab(
 pub async fn browser_go_back_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
     let label = get_tab_label(&tab_id);
     if let Some(webview) = app.get_webview(&label) {
-        webview.eval("window.history.back();")
+        webview
+            .eval("window.history.back();")
             .map_err(|e| format!("Go back failed for tab {}: {}", tab_id, e))?;
         Ok(())
     } else {
@@ -1209,7 +1307,8 @@ pub async fn browser_go_back_tab(app: AppHandle, tab_id: String) -> Result<(), S
 pub async fn browser_go_forward_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
     let label = get_tab_label(&tab_id);
     if let Some(webview) = app.get_webview(&label) {
-        webview.eval("window.history.forward();")
+        webview
+            .eval("window.history.forward();")
             .map_err(|e| format!("Go forward failed for tab {}: {}", tab_id, e))?;
         Ok(())
     } else {
@@ -1221,7 +1320,8 @@ pub async fn browser_go_forward_tab(app: AppHandle, tab_id: String) -> Result<()
 pub async fn browser_reload_tab(app: AppHandle, tab_id: String) -> Result<(), String> {
     let label = get_tab_label(&tab_id);
     if let Some(webview) = app.get_webview(&label) {
-        webview.eval("window.location.reload();")
+        webview
+            .eval("window.location.reload();")
             .map_err(|e| format!("Reload failed for tab {}: {}", tab_id, e))?;
         Ok(())
     } else {
@@ -1270,11 +1370,15 @@ pub async fn browser_set_bounds_all(
     if let Some(ref active_id) = *state.active_tab_id.lock().unwrap() {
         let is_new_tab = {
             let tabs = state.tabs.lock().unwrap();
-            tabs.iter().find(|t| &t.id == active_id).map(|t| t.url.starts_with("edith://")).unwrap_or(false)
+            tabs.iter()
+                .find(|t| &t.id == active_id)
+                .map(|t| t.url.starts_with("edith://"))
+                .unwrap_or(false)
         };
         let label = get_tab_label(active_id);
         if let Some(webview) = app.get_webview(&label) {
-            let _ = webview.set_position(Position::Logical(LogicalPosition::new(bounds.x, bounds.y)));
+            let _ =
+                webview.set_position(Position::Logical(LogicalPosition::new(bounds.x, bounds.y)));
             let _ = webview.set_size(Size::Logical(LogicalSize::new(bounds.width, bounds.height)));
             if is_new_tab || !is_visible {
                 let _ = webview.hide();
@@ -1314,7 +1418,10 @@ pub async fn browser_show_active(
     if let Some(ref active_id) = *state.active_tab_id.lock().unwrap() {
         let is_new_tab = {
             let tabs = state.tabs.lock().unwrap();
-            tabs.iter().find(|t| &t.id == active_id).map(|t| t.url.starts_with("edith://")).unwrap_or(false)
+            tabs.iter()
+                .find(|t| &t.id == active_id)
+                .map(|t| t.url.starts_with("edith://"))
+                .unwrap_or(false)
         };
         let label = get_tab_label(active_id);
         if let Some(wv) = app.get_webview(&label) {
@@ -1346,14 +1453,20 @@ pub async fn browser_observe_tab(
     state: tauri::State<'_, BrowserState>,
 ) -> Result<PageObservationSnapshot, String> {
     let label = get_tab_label(&tab_id);
-    let webview = app.get_webview(&label)
+    let webview = app
+        .get_webview(&label)
         .ok_or_else(|| format!("Native child Webview '{}' not found.", label))?;
 
-    let live_url = webview.url()
-        .map(|u| u.to_string())
-        .unwrap_or_else(|_| {
-            state.tabs.lock().unwrap().iter().find(|t| t.id == tab_id).map(|t| t.url.clone()).unwrap_or_default()
-        });
+    let live_url = webview.url().map(|u| u.to_string()).unwrap_or_else(|_| {
+        state
+            .tabs
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|t| t.id == tab_id)
+            .map(|t| t.url.clone())
+            .unwrap_or_default()
+    });
 
     // Increment and retrieve tab observation generation number (Step 13)
     let generation = {
@@ -1420,10 +1533,14 @@ pub async fn browser_observe_tab(
                 }
 
                 // Parse Semantic Regions (Step 3)
-                if let Ok(r_sel) = scraper::Selector::parse("header, nav, main, article, section, aside, footer, form, dialog") {
+                if let Ok(r_sel) = scraper::Selector::parse(
+                    "header, nav, main, article, section, aside, footer, form, dialog",
+                ) {
                     for (ri, r_el) in doc.select(&r_sel).take(20).enumerate() {
                         let r_tag = r_el.value().name().to_string();
-                        let r_label = r_el.value().attr("aria-label")
+                        let r_label = r_el
+                            .value()
+                            .attr("aria-label")
                             .or_else(|| r_el.value().attr("title"))
                             .map(|s| s.to_string());
                         let r_id = r_el.value().attr("id").map(|s| format!("id_{}", s));
@@ -1448,22 +1565,54 @@ pub async fn browser_observe_tab(
                         let f_id = f_el.value().attr("id").map(|s| s.to_string());
                         let f_name = f_el.value().attr("name").map(|s| s.to_string());
                         let f_action = f_el.value().attr("action").map(|s| s.to_string());
-                        let f_method = f_el.value().attr("method").map(|s| s.to_uppercase()).unwrap_or_else(|| "GET".to_string());
+                        let f_method = f_el
+                            .value()
+                            .attr("method")
+                            .map(|s| s.to_uppercase())
+                            .unwrap_or_else(|| "GET".to_string());
                         let mut controls = Vec::new();
 
-                        if let Ok(c_sel) = scraper::Selector::parse("input, select, textarea, button") {
+                        if let Ok(c_sel) =
+                            scraper::Selector::parse("input, select, textarea, button")
+                        {
                             for (ci, c_el) in f_el.select(&c_sel).take(15).enumerate() {
                                 let c_tag = c_el.value().name().to_string();
-                                let c_type = c_el.value().attr("type").unwrap_or(if c_tag == "textarea" { "textarea" } else if c_tag == "select" { "select" } else { "button" }).to_string();
-                                let c_is_pw = c_tag == "input" && (c_type == "password" || c_el.value().attr("autocomplete") == Some("current-password"));
-                                let c_label = c_el.value().attr("aria-label").or_else(|| c_el.value().attr("placeholder")).map(|s| s.to_string());
-                                let c_eid = c_el.value().attr("id").map(|s| format!("id_{}", s)).unwrap_or_else(|| format!("el_{}_{:06x}", c_tag, ci * 256 + 11));
+                                let c_type = c_el
+                                    .value()
+                                    .attr("type")
+                                    .unwrap_or(if c_tag == "textarea" {
+                                        "textarea"
+                                    } else if c_tag == "select" {
+                                        "select"
+                                    } else {
+                                        "button"
+                                    })
+                                    .to_string();
+                                let c_is_pw = c_tag == "input"
+                                    && (c_type == "password"
+                                        || c_el.value().attr("autocomplete")
+                                            == Some("current-password"));
+                                let c_label = c_el
+                                    .value()
+                                    .attr("aria-label")
+                                    .or_else(|| c_el.value().attr("placeholder"))
+                                    .map(|s| s.to_string());
+                                let c_eid = c_el
+                                    .value()
+                                    .attr("id")
+                                    .map(|s| format!("id_{}", s))
+                                    .unwrap_or_else(|| {
+                                        format!("el_{}_{:06x}", c_tag, ci * 256 + 11)
+                                    });
 
                                 controls.push(FormControlInfo {
                                     element_id: c_eid,
                                     field_type: c_type,
                                     label: c_label,
-                                    placeholder: c_el.value().attr("placeholder").map(|s| s.to_string()),
+                                    placeholder: c_el
+                                        .value()
+                                        .attr("placeholder")
+                                        .map(|s| s.to_string()),
                                     required: c_el.value().attr("required").is_some(),
                                     disabled: c_el.value().attr("disabled").is_some(),
                                     is_password: c_is_pw,
@@ -1500,7 +1649,11 @@ pub async fn browser_observe_tab(
                 // Parse Clean Visible Text (Step 17)
                 if let Ok(b_sel) = scraper::Selector::parse("body") {
                     if let Some(b) = doc.select(&b_sel).next() {
-                        let parts = b.text().map(|s| s.trim()).filter(|s| !s.is_empty()).collect::<Vec<_>>();
+                        let parts = b
+                            .text()
+                            .map(|s| s.trim())
+                            .filter(|s| !s.is_empty())
+                            .collect::<Vec<_>>();
                         visible_text = parts.join(" ");
                     }
                 }
@@ -1567,7 +1720,8 @@ pub async fn browser_observe_tab(
     }
 
     // Step 11: Compute observation fingerprint for SPA change detection
-    let fingerprint = format!("fp_{:08x}_{:04x}_{}", 
+    let fingerprint = format!(
+        "fp_{:08x}_{:04x}_{}",
         live_url.len() * 31 + title.len() * 17 + visible_text.len(),
         interactive_elements.len() * 13 + headings.len() * 7,
         generation
@@ -1585,7 +1739,10 @@ pub async fn browser_observe_tab(
 
     let is_reader_mode = {
         let tabs = state.tabs.lock().unwrap();
-        tabs.iter().find(|t| t.id == tab_id).map(|t| t.is_reader_mode).unwrap_or(false)
+        tabs.iter()
+            .find(|t| t.id == tab_id)
+            .map(|t| t.is_reader_mode)
+            .unwrap_or(false)
     };
 
     Ok(PageObservationSnapshot {
@@ -1644,19 +1801,25 @@ pub async fn browser_screenshot_tab(
     state: tauri::State<'_, BrowserState>,
 ) -> Result<ScreenshotResult, String> {
     let current_bounds = bounds.or_else(|| state.bounds.lock().unwrap().clone());
-    
-    let screens = screenshots::Screen::all().map_err(|e| format!("Failed to get screens: {}", e))?;
-    let primary = screens.into_iter().next().ok_or_else(|| "No primary display found.".to_string())?;
+
+    let screens =
+        screenshots::Screen::all().map_err(|e| format!("Failed to get screens: {}", e))?;
+    let primary = screens
+        .into_iter()
+        .next()
+        .ok_or_else(|| "No primary display found.".to_string())?;
 
     let img = if let Some(b) = current_bounds {
         let x = b.x.max(0.0) as i32;
         let y = b.y.max(0.0) as i32;
         let width = b.width.max(10.0) as u32;
         let height = b.height.max(10.0) as u32;
-        primary.capture_area(x, y, width, height)
+        primary
+            .capture_area(x, y, width, height)
             .map_err(|e| format!("Failed to capture area: {}", e))?
     } else {
-        primary.capture()
+        primary
+            .capture()
             .map_err(|e| format!("Failed to capture full screen: {}", e))?
     };
 
@@ -1664,13 +1827,8 @@ pub async fn browser_screenshot_tab(
     let h = img.height();
     let mut png_bytes = Vec::new();
     let encoder = image::codecs::png::PngEncoder::new(&mut png_bytes);
-    image::ImageEncoder::write_image(
-        encoder,
-        &img,
-        w,
-        h,
-        image::ExtendedColorType::Rgba8,
-    ).map_err(|e| format!("Failed to encode PNG: {}", e))?;
+    image::ImageEncoder::write_image(encoder, &img, w, h, image::ExtendedColorType::Rgba8)
+        .map_err(|e| format!("Failed to encode PNG: {}", e))?;
     let base64_str = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &png_bytes);
     let data_url = format!("data:image/png;base64,{}", base64_str);
 
@@ -1695,14 +1853,16 @@ pub async fn browser_click_element(
     state: tauri::State<'_, BrowserState>,
 ) -> Result<BrowserActionResult, String> {
     let label = get_tab_label(&tab_id);
-    let webview = app.get_webview(&label)
+    let webview = app
+        .get_webview(&label)
         .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
 
     let initial_url = webview.url().map(|u| u.to_string()).unwrap_or_default();
 
     // Parameterized deterministic click script
     let escaped_eid = element_id.replace('"', "\\\"").replace('\\', "\\\\");
-    let click_script = format!(r#"
+    let click_script = format!(
+        r#"
     (function() {{
         try {{
             var target = document.querySelector('[data-edith-eid="{}"]') 
@@ -1745,14 +1905,22 @@ pub async fn browser_click_element(
             return {{ success: false, code: "ACTION_FAILED", msg: e.message || "Failed to execute click" }};
         }}
     }})();
-    "#, escaped_eid, escaped_eid.trim_start_matches("id_"), escaped_eid.trim_start_matches("id_"), escaped_eid);
+    "#,
+        escaped_eid,
+        escaped_eid.trim_start_matches("id_"),
+        escaped_eid.trim_start_matches("id_"),
+        escaped_eid
+    );
 
     let _ = webview.eval(&click_script);
 
     // Yield small tick for DOM mutation or navigation
     tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
 
-    let resulting_url = webview.url().map(|u| u.to_string()).unwrap_or_else(|_| initial_url.clone());
+    let resulting_url = webview
+        .url()
+        .map(|u| u.to_string())
+        .unwrap_or_else(|_| initial_url.clone());
     let url_changed = resulting_url != initial_url;
 
     // Update tab URL in state if navigation occurred
@@ -1787,14 +1955,20 @@ pub async fn browser_type_element(
     clear_first: Option<bool>,
 ) -> Result<BrowserActionResult, String> {
     let label = get_tab_label(&tab_id);
-    let webview = app.get_webview(&label)
+    let webview = app
+        .get_webview(&label)
         .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
 
     let do_clear = clear_first.unwrap_or(true);
     let escaped_eid = element_id.replace('"', "\\\"").replace('\\', "\\\\");
-    let escaped_text = text.replace('"', "\\\"").replace('\\', "\\\\").replace('\n', "\\n").replace('\r', "\\r");
+    let escaped_text = text
+        .replace('"', "\\\"")
+        .replace('\\', "\\\\")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r");
 
-    let type_script = format!(r#"
+    let type_script = format!(
+        r#"
     (function() {{
         try {{
             var target = document.querySelector('[data-edith-eid="{}"]') 
@@ -1839,7 +2013,13 @@ pub async fn browser_type_element(
             return {{ success: false, code: "ACTION_FAILED", msg: e.message || "Failed to execute type action" }};
         }}
     }})();
-    "#, escaped_eid, escaped_eid.trim_start_matches("id_"), escaped_eid.trim_start_matches("id_"), escaped_text, do_clear);
+    "#,
+        escaped_eid,
+        escaped_eid.trim_start_matches("id_"),
+        escaped_eid.trim_start_matches("id_"),
+        escaped_text,
+        do_clear
+    );
 
     let _ = webview.eval(&type_script);
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -1868,19 +2048,38 @@ pub async fn browser_scroll(
     amount: Option<i32>,
 ) -> Result<BrowserActionResult, String> {
     let label = get_tab_label(&tab_id);
-    let webview = app.get_webview(&label)
+    let webview = app
+        .get_webview(&label)
         .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
 
     let step = amount.unwrap_or(350).clamp(50, 1500);
 
     let scroll_script = match direction.to_lowercase().as_str() {
-        "up" => format!("window.scrollBy({{ top: -{}, left: 0, behavior: 'instant' }});", step),
-        "down" => format!("window.scrollBy({{ top: {}, left: 0, behavior: 'instant' }});", step),
-        "left" => format!("window.scrollBy({{ top: 0, left: -{}, behavior: 'instant' }});", step),
-        "right" => format!("window.scrollBy({{ top: 0, left: {}, behavior: 'instant' }});", step),
+        "up" => format!(
+            "window.scrollBy({{ top: -{}, left: 0, behavior: 'instant' }});",
+            step
+        ),
+        "down" => format!(
+            "window.scrollBy({{ top: {}, left: 0, behavior: 'instant' }});",
+            step
+        ),
+        "left" => format!(
+            "window.scrollBy({{ top: 0, left: -{}, behavior: 'instant' }});",
+            step
+        ),
+        "right" => format!(
+            "window.scrollBy({{ top: 0, left: {}, behavior: 'instant' }});",
+            step
+        ),
         "top" => "window.scrollTo({ top: 0, left: 0, behavior: 'instant' });".to_string(),
-        "bottom" => "window.scrollTo({ top: document.body.scrollHeight, left: 0, behavior: 'instant' });".to_string(),
-        _ => return Err(format!("INVALID_SCROLL_DIRECTION: '{}' is not supported. Use up/down/left/right/top/bottom.", direction)),
+        "bottom" => {
+            "window.scrollTo({ top: document.body.scrollHeight, left: 0, behavior: 'instant' });"
+                .to_string()
+        }
+        _ => return Err(format!(
+            "INVALID_SCROLL_DIRECTION: '{}' is not supported. Use up/down/left/right/top/bottom.",
+            direction
+        )),
     };
 
     let _ = webview.eval(&scroll_script);
@@ -1909,7 +2108,8 @@ pub async fn browser_press_key(
     key: String,
 ) -> Result<BrowserActionResult, String> {
     let label = get_tab_label(&tab_id);
-    let webview = app.get_webview(&label)
+    let webview = app
+        .get_webview(&label)
         .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
 
     let (key_name, key_code) = match key.to_lowercase().as_str() {
@@ -1927,10 +2127,16 @@ pub async fn browser_press_key(
         "pageup" => ("PageUp", 33),
         "pagedown" => ("PageDown", 34),
         "space" => (" ", 32),
-        _ => return Err(format!("UNSUPPORTED_KEY: Key '{}' is not in the allowed key press policy.", key)),
+        _ => {
+            return Err(format!(
+                "UNSUPPORTED_KEY: Key '{}' is not in the allowed key press policy.",
+                key
+            ))
+        }
     };
 
-    let key_script = format!(r#"
+    let key_script = format!(
+        r#"
     (function() {{
         try {{
             var active = document.activeElement || document.body;
@@ -1943,7 +2149,9 @@ pub async fn browser_press_key(
             }}
         }} catch(e) {{}}
     }})();
-    "#, key_name, key_code, key_code, key_name);
+    "#,
+        key_name, key_code, key_code, key_name
+    );
 
     let _ = webview.eval(&key_script);
     tokio::time::sleep(tokio::time::Duration::from_millis(80)).await;
@@ -1971,11 +2179,13 @@ pub async fn browser_focus_element(
     element_id: String,
 ) -> Result<BrowserActionResult, String> {
     let label = get_tab_label(&tab_id);
-    let webview = app.get_webview(&label)
+    let webview = app
+        .get_webview(&label)
         .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
 
     let escaped_eid = element_id.replace('"', "\\\"").replace('\\', "\\\\");
-    let focus_script = format!(r#"
+    let focus_script = format!(
+        r#"
     (function() {{
         var target = document.querySelector('[data-edith-eid="{}"]') 
                   || (document.getElementById("{}"))
@@ -1985,7 +2195,11 @@ pub async fn browser_focus_element(
             target.focus();
         }}
     }})();
-    "#, escaped_eid, escaped_eid.trim_start_matches("id_"), escaped_eid.trim_start_matches("id_"));
+    "#,
+        escaped_eid,
+        escaped_eid.trim_start_matches("id_"),
+        escaped_eid.trim_start_matches("id_")
+    );
 
     let _ = webview.eval(&focus_script);
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -2024,8 +2238,15 @@ pub async fn browser_wait(
         }
         "url_changed" => {
             let initial_url = target.clone().unwrap_or_default();
-            while SystemTime::now().duration_since(start).unwrap_or_default().as_millis() < max_timeout as u128 {
-                let current = browser_get_tab_url(app.clone(), tab_id.clone(), state.clone()).await.unwrap_or_default();
+            while SystemTime::now()
+                .duration_since(start)
+                .unwrap_or_default()
+                .as_millis()
+                < max_timeout as u128
+            {
+                let current = browser_get_tab_url(app.clone(), tab_id.clone(), state.clone())
+                    .await
+                    .unwrap_or_default();
                 if current != initial_url && !current.is_empty() {
                     break;
                 }
@@ -2036,7 +2257,10 @@ pub async fn browser_wait(
             tokio::time::sleep(tokio::time::Duration::from_millis(max_timeout.min(1000))).await;
         }
         _ => {
-            return Err(format!("UNSUPPORTED_WAIT_CONDITION: Condition '{}' not supported.", condition));
+            return Err(format!(
+                "UNSUPPORTED_WAIT_CONDITION: Condition '{}' not supported.",
+                condition
+            ));
         }
     }
 
@@ -2064,13 +2288,15 @@ pub async fn browser_select_option(
     value: String,
 ) -> Result<BrowserActionResult, String> {
     let label = get_tab_label(&tab_id);
-    let webview = app.get_webview(&label)
+    let webview = app
+        .get_webview(&label)
         .ok_or_else(|| "TAB_NOT_FOUND: Target browser tab does not exist.".to_string())?;
 
     let escaped_eid = element_id.replace('"', "\\\"").replace('\\', "\\\\");
     let escaped_val = value.replace('"', "\\\"").replace('\\', "\\\\");
 
-    let select_script = format!(r#"
+    let select_script = format!(
+        r#"
     (function() {{
         try {{
             var target = document.querySelector('[data-edith-eid="{}"]') 
@@ -2081,7 +2307,12 @@ pub async fn browser_select_option(
             target.dispatchEvent(new Event('change', {{ bubbles: true, cancelable: true }}));
         }} catch(e) {{}}
     }})();
-    "#, escaped_eid, escaped_eid.trim_start_matches("id_"), escaped_eid.trim_start_matches("id_"), escaped_val);
+    "#,
+        escaped_eid,
+        escaped_eid.trim_start_matches("id_"),
+        escaped_eid.trim_start_matches("id_"),
+        escaped_val
+    );
 
     let _ = webview.eval(&select_script);
     tokio::time::sleep(tokio::time::Duration::from_millis(50)).await;
@@ -2112,7 +2343,8 @@ pub async fn browser_create(
     bounds: Option<BrowserViewportBounds>,
     state: tauri::State<'_, BrowserState>,
 ) -> Result<BrowserInfo, String> {
-    let tab = browser_create_tab(app, "tab_a".to_string(), url, bounds.clone(), None, state).await?;
+    let tab =
+        browser_create_tab(app, "tab_a".to_string(), url, bounds.clone(), None, state).await?;
     Ok(BrowserInfo {
         is_created: true,
         is_visible: true,
@@ -2220,7 +2452,11 @@ pub async fn browser_get_url(
         }
     }
     let tabs = state.tabs.lock().unwrap();
-    Ok(tabs.iter().find(|x| x.id == active_id).map(|x| x.url.clone()).unwrap_or_default())
+    Ok(tabs
+        .iter()
+        .find(|x| x.id == active_id)
+        .map(|x| x.url.clone())
+        .unwrap_or_default())
 }
 
 #[tauri::command]
@@ -2262,7 +2498,8 @@ pub async fn browser_find_in_page(
     case_sensitive: Option<bool>,
 ) -> Result<FindResult, String> {
     let label = get_tab_label(&tab_id);
-    let wv = app.get_webview(&label)
+    let wv = app
+        .get_webview(&label)
         .ok_or_else(|| format!("Webview '{}' not found for tab '{}'", label, tab_id))?;
 
     let q = query.trim();
@@ -2382,7 +2619,8 @@ pub async fn browser_find_in_page(
         "#
     );
 
-    wv.eval(&script).map_err(|e| format!("Failed to execute find: {}", e))?;
+    wv.eval(&script)
+        .map_err(|e| format!("Failed to execute find: {}", e))?;
 
     // Await structured response from on_navigation
     for _ in 0..25 {
@@ -2402,10 +2640,7 @@ pub async fn browser_find_in_page(
 }
 
 #[tauri::command]
-pub async fn browser_clear_find(
-    app: AppHandle,
-    tab_id: String,
-) -> Result<bool, String> {
+pub async fn browser_clear_find(app: AppHandle, tab_id: String) -> Result<bool, String> {
     clear_global_find_result(&tab_id);
     let label = get_tab_label(&tab_id);
     if let Some(wv) = app.get_webview(&label) {
@@ -2449,7 +2684,10 @@ pub async fn browser_zoom_in(
 ) -> Result<f64, String> {
     let current = {
         let tabs = state.tabs.lock().unwrap();
-        tabs.iter().find(|t| t.id == tab_id).map(|t| t.zoom_level).unwrap_or(1.0)
+        tabs.iter()
+            .find(|t| t.id == tab_id)
+            .map(|t| t.zoom_level)
+            .unwrap_or(1.0)
     };
     let next = (current + 0.1).min(2.0);
     browser_zoom_set(app, tab_id, next, state).await
@@ -2463,7 +2701,10 @@ pub async fn browser_zoom_out(
 ) -> Result<f64, String> {
     let current = {
         let tabs = state.tabs.lock().unwrap();
-        tabs.iter().find(|t| t.id == tab_id).map(|t| t.zoom_level).unwrap_or(1.0)
+        tabs.iter()
+            .find(|t| t.id == tab_id)
+            .map(|t| t.zoom_level)
+            .unwrap_or(1.0)
     };
     let next = (current - 0.1).max(0.5);
     browser_zoom_set(app, tab_id, next, state).await
@@ -2479,15 +2720,14 @@ pub async fn browser_zoom_reset(
 }
 
 #[tauri::command]
-pub async fn browser_print_tab(
-    app: AppHandle,
-    tab_id: String,
-) -> Result<bool, String> {
+pub async fn browser_print_tab(app: AppHandle, tab_id: String) -> Result<bool, String> {
     let label = get_tab_label(&tab_id);
-    let wv = app.get_webview(&label)
+    let wv = app
+        .get_webview(&label)
         .ok_or_else(|| format!("Webview '{}' not found for tab '{}'", label, tab_id))?;
 
-    wv.eval("window.print();").map_err(|e| format!("Failed to initiate print: {}", e))?;
+    wv.eval("window.print();")
+        .map_err(|e| format!("Failed to initiate print: {}", e))?;
     Ok(true)
 }
 
@@ -2501,19 +2741,32 @@ pub async fn browser_open_link_tab(
 ) -> Result<BrowserTabInfo, String> {
     let clean = url.trim();
     let lower = clean.to_lowercase();
-    if lower.starts_with("javascript:") || lower.starts_with("file:") || lower.starts_with("data:text/html") {
+    if lower.starts_with("javascript:")
+        || lower.starts_with("file:")
+        || lower.starts_with("data:text/html")
+    {
         return Err(format!("Unsafe link scheme blocked: '{}'", clean));
     }
 
     let profile_id = if let Some(sid) = source_tab_id {
         let tabs = state.tabs.lock().unwrap();
-        tabs.iter().find(|t| t.id == sid).map(|t| t.profile_id.clone())
+        tabs.iter()
+            .find(|t| t.id == sid)
+            .map(|t| t.profile_id.clone())
     } else {
         None
     };
 
     let new_tab_id = format!("tab_{}", current_timestamp());
-    browser_create_tab(app, new_tab_id, Some(clean.to_string()), bounds, profile_id, state).await
+    browser_create_tab(
+        app,
+        new_tab_id,
+        Some(clean.to_string()),
+        bounds,
+        profile_id,
+        state,
+    )
+    .await
 }
 
 // ============================================================================
@@ -2529,7 +2782,9 @@ pub async fn browser_save_page_html(
 ) -> Result<String, String> {
     let (url, title, _profile_id) = {
         let tabs = state.tabs.lock().unwrap();
-        let tab = tabs.iter().find(|t| t.id == tab_id)
+        let tab = tabs
+            .iter()
+            .find(|t| t.id == tab_id)
             .ok_or_else(|| format!("Tab '{}' not found", tab_id))?;
         (tab.url.clone(), tab.title.clone(), tab.profile_id.clone())
     };
@@ -2540,7 +2795,15 @@ pub async fn browser_save_page_html(
     // Formulate safe destination filename
     let clean_title = title.replace(|c: char| !c.is_alphanumeric() && c != '_' && c != '-', "_");
     let fname = custom_filename.unwrap_or_else(|| {
-        format!("{}_{}.html", if clean_title.is_empty() { "page" } else { &clean_title }, current_timestamp())
+        format!(
+            "{}_{}.html",
+            if clean_title.is_empty() {
+                "page"
+            } else {
+                &clean_title
+            },
+            current_timestamp()
+        )
     });
 
     let downloads_dir = std::env::var("USERPROFILE")
@@ -2552,7 +2815,10 @@ pub async fn browser_save_page_html(
     // Fetch sanitized page HTML
     let mut html_content = format!("<!DOCTYPE html>\n<html><head><title>{}</title></head><body><h1>{}</h1><p>Source URL: <a href=\"{}\">{}</a></p></body></html>", title, title, url, url);
     if url.starts_with("http") {
-        if let Ok(client) = reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build() {
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+        {
             if let Ok(res) = client.get(&url).send().await {
                 if let Ok(text) = res.text().await {
                     html_content = text;
@@ -2567,21 +2833,24 @@ pub async fn browser_save_page_html(
     // Record in database for downloads list integration
     if let Ok(app_dir) = app.path().app_data_dir() {
         if let Ok(conn) = crate::db::init_db_at(&app_dir.join("edith.db")) {
-            let _ = crate::db::upsert_browser_download(&conn, &crate::db::BrowserDownloadRecord {
-                id: format!("dl_{}", current_timestamp()),
-                url: url.clone(),
-                filename: fname.clone(),
-                suggested_filename: fname.clone(),
-                destination: file_path.clone(),
-                total_bytes: Some(html_content.len() as u64),
-                received_bytes: html_content.len() as u64,
-                progress: 100.0,
-                status: "completed".to_string(),
-                started_at: current_timestamp(),
-                completed_at: Some(current_timestamp()),
-                error: None,
-                tab_id: Some(tab_id.clone()),
-            });
+            let _ = crate::db::upsert_browser_download(
+                &conn,
+                &crate::db::BrowserDownloadRecord {
+                    id: format!("dl_{}", current_timestamp()),
+                    url: url.clone(),
+                    filename: fname.clone(),
+                    suggested_filename: fname.clone(),
+                    destination: file_path.clone(),
+                    total_bytes: Some(html_content.len() as u64),
+                    received_bytes: html_content.len() as u64,
+                    progress: 100.0,
+                    status: "completed".to_string(),
+                    started_at: current_timestamp(),
+                    completed_at: Some(current_timestamp()),
+                    error: None,
+                    tab_id: Some(tab_id.clone()),
+                },
+            );
         }
     }
 
@@ -2598,14 +2867,17 @@ pub async fn browser_reader_extract(
 
     let (url, fallback_title) = {
         let tabs = state.tabs.lock().unwrap();
-        let tab = tabs.iter().find(|t| t.id == tab_id)
+        let tab = tabs
+            .iter()
+            .find(|t| t.id == tab_id)
             .ok_or_else(|| format!("Tab '{}' not found", tab_id))?;
         (tab.url.clone(), tab.title.clone())
     };
 
     let label = get_tab_label(&tab_id);
     if let Some(wv) = app.get_webview(&label) {
-        let escaped_tab = serde_json::to_string(&tab_id).unwrap_or_else(|_| format!("\"{}\"", tab_id));
+        let escaped_tab =
+            serde_json::to_string(&tab_id).unwrap_or_else(|_| format!("\"{}\"", tab_id));
         let script = format!(
             r#"
             (function() {{
@@ -2785,9 +3057,7 @@ pub async fn browser_reader_mode_exit(
 }
 
 #[tauri::command]
-pub async fn browser_reader_mode_get(
-    tab_id: String,
-) -> Result<Option<ReaderDocument>, String> {
+pub async fn browser_reader_mode_get(tab_id: String) -> Result<Option<ReaderDocument>, String> {
     Ok(get_global_reader_doc(&tab_id))
 }
 
@@ -2795,7 +3065,8 @@ pub async fn browser_reader_mode_get(
 // Phase 5.6F-C: Tab Groups & Advanced Tab Management Commands
 // ============================================================================
 
-const ALLOWED_GROUP_COLORS: &[&str] = &["blue", "purple", "green", "yellow", "orange", "red", "gray"];
+const ALLOWED_GROUP_COLORS: &[&str] =
+    &["blue", "purple", "green", "yellow", "orange", "red", "gray"];
 
 fn validate_group_color(color: Option<&str>) -> String {
     if let Some(c) = color {
@@ -2824,7 +3095,9 @@ pub async fn browser_tab_group_create(
         Some(pid) if !pid.trim().is_empty() => pid.trim().to_string(),
         _ => {
             let tabs = state.tabs.lock().unwrap();
-            tabs.first().map(|t| t.profile_id.clone()).unwrap_or_else(|| "profile_default".to_string())
+            tabs.first()
+                .map(|t| t.profile_id.clone())
+                .unwrap_or_else(|| "profile_default".to_string())
         }
     };
 
@@ -2833,7 +3106,8 @@ pub async fn browser_tab_group_create(
     let group_id = format!("group_{}_{}", now, now % 1000);
 
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    let existing = crate::db::list_browser_tab_groups(&conn, Some(&target_profile)).map_err(|e| e.to_string())?;
+    let existing = crate::db::list_browser_tab_groups(&conn, Some(&target_profile))
+        .map_err(|e| e.to_string())?;
     let next_pos = existing.len() as i64;
 
     let record = crate::db::BrowserTabGroupRecord {
@@ -2926,17 +3200,21 @@ pub async fn browser_tab_group_list(
     db_state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<Vec<BrowserTabGroup>, String> {
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    let records = crate::db::list_browser_tab_groups(&conn, profile_id.as_deref()).map_err(|e| e.to_string())?;
-    Ok(records.into_iter().map(|r| BrowserTabGroup {
-        id: r.id,
-        profile_id: r.profile_id,
-        name: r.name,
-        color: r.color,
-        is_collapsed: r.is_collapsed,
-        position: r.position,
-        created_at: r.created_at,
-        updated_at: r.updated_at,
-    }).collect())
+    let records = crate::db::list_browser_tab_groups(&conn, profile_id.as_deref())
+        .map_err(|e| e.to_string())?;
+    Ok(records
+        .into_iter()
+        .map(|r| BrowserTabGroup {
+            id: r.id,
+            profile_id: r.profile_id,
+            name: r.name,
+            color: r.color,
+            is_collapsed: r.is_collapsed,
+            position: r.position,
+            created_at: r.created_at,
+            updated_at: r.updated_at,
+        })
+        .collect())
 }
 
 #[tauri::command]
@@ -2946,7 +3224,8 @@ pub async fn browser_tab_group_set_collapsed(
     db_state: tauri::State<'_, crate::db::DbState>,
 ) -> Result<bool, String> {
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    crate::db::set_browser_tab_group_collapsed(&conn, &group_id, is_collapsed).map_err(|e| e.to_string())
+    crate::db::set_browser_tab_group_collapsed(&conn, &group_id, is_collapsed)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -2966,7 +3245,9 @@ pub async fn browser_tab_group_move_tab(
 
     // 2. Locate tab and enforce profile boundary & pinned restrictions (Step 3 & 12)
     let mut tabs = state.tabs.lock().unwrap();
-    let tab = tabs.iter_mut().find(|t| t.id == tab_id)
+    let tab = tabs
+        .iter_mut()
+        .find(|t| t.id == tab_id)
         .ok_or_else(|| format!("Tab '{}' not found.", tab_id))?;
 
     if tab.is_pinned {
@@ -2990,7 +3271,9 @@ pub async fn browser_tab_group_remove_tab(
     state: tauri::State<'_, BrowserState>,
 ) -> Result<BrowserTabInfo, String> {
     let mut tabs = state.tabs.lock().unwrap();
-    let tab = tabs.iter_mut().find(|t| t.id == tab_id)
+    let tab = tabs
+        .iter_mut()
+        .find(|t| t.id == tab_id)
         .ok_or_else(|| format!("Tab '{}' not found.", tab_id))?;
 
     tab.group_id = None;

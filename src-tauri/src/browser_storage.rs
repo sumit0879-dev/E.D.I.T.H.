@@ -1,9 +1,7 @@
-use tauri::{AppHandle, Emitter, State};
 use serde_json::json;
+use tauri::{AppHandle, Emitter, State};
 
-use crate::db::{
-    self, DbState, BrowserHistoryEntry, BrowserBookmark, BrowserBookmarkFolder
-};
+use crate::db::{self, BrowserBookmark, BrowserBookmarkFolder, BrowserHistoryEntry, DbState};
 
 // ============================================================================
 // PHASE 5.6A BROWSER HISTORY TAURI COMMANDS
@@ -21,10 +19,13 @@ pub fn browser_history_add(
     let entry = db::add_browser_history_entry(&conn, &url, &title, tab_id.as_deref())
         .map_err(|e| format!("DB_ERROR: Failed to add history entry: {}", e))?;
 
-    let _ = app.emit("browser-history-updated", json!({
-        "action": "added",
-        "entry": &entry
-    }));
+    let _ = app.emit(
+        "browser-history-updated",
+        json!({
+            "action": "added",
+            "entry": &entry
+        }),
+    );
 
     Ok(entry)
 }
@@ -61,10 +62,13 @@ pub fn browser_history_delete(
         .map_err(|e| format!("DB_ERROR: Failed to delete history item: {}", e))?;
 
     if deleted {
-        let _ = app.emit("browser-history-updated", json!({
-            "action": "deleted",
-            "id": id
-        }));
+        let _ = app.emit(
+            "browser-history-updated",
+            json!({
+                "action": "deleted",
+                "id": id
+            }),
+        );
     }
 
     Ok(deleted)
@@ -79,10 +83,13 @@ pub fn browser_history_clear(
     let count = db::clear_browser_history(&conn)
         .map_err(|e| format!("DB_ERROR: Failed to clear history: {}", e))?;
 
-    let _ = app.emit("browser-history-updated", json!({
-        "action": "cleared",
-        "count": count
-    }));
+    let _ = app.emit(
+        "browser-history-updated",
+        json!({
+            "action": "cleared",
+            "count": count
+        }),
+    );
 
     Ok(count)
 }
@@ -103,17 +110,28 @@ pub fn browser_bookmark_add(
     // Step H: URL Scheme Policy Validation
     let url_trimmed = url.trim();
     if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
-        return Err("INVALID_URL: Only standard http:// and https:// URLs can be bookmarked.".to_string());
+        return Err(
+            "INVALID_URL: Only standard http:// and https:// URLs can be bookmarked.".to_string(),
+        );
     }
 
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    let bookmark = db::add_browser_bookmark(&conn, &title, url_trimmed, folder_id.as_deref(), favicon.as_deref())
-        .map_err(|e| format!("DB_ERROR: Failed to add bookmark: {}", e))?;
+    let bookmark = db::add_browser_bookmark(
+        &conn,
+        &title,
+        url_trimmed,
+        folder_id.as_deref(),
+        favicon.as_deref(),
+    )
+    .map_err(|e| format!("DB_ERROR: Failed to add bookmark: {}", e))?;
 
-    let _ = app.emit("browser-bookmarks-updated", json!({
-        "action": "added",
-        "bookmark": &bookmark
-    }));
+    let _ = app.emit(
+        "browser-bookmarks-updated",
+        json!({
+            "action": "added",
+            "bookmark": &bookmark
+        }),
+    );
 
     Ok(bookmark)
 }
@@ -129,18 +147,24 @@ pub fn browser_bookmark_update(
 ) -> Result<bool, String> {
     let url_trimmed = url.trim();
     if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
-        return Err("INVALID_URL: Only standard http:// and https:// URLs can be bookmarked.".to_string());
+        return Err(
+            "INVALID_URL: Only standard http:// and https:// URLs can be bookmarked.".to_string(),
+        );
     }
 
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    let updated = db::update_browser_bookmark(&conn, &id, &title, url_trimmed, folder_id.as_deref())
-        .map_err(|e| format!("DB_ERROR: Failed to update bookmark: {}", e))?;
+    let updated =
+        db::update_browser_bookmark(&conn, &id, &title, url_trimmed, folder_id.as_deref())
+            .map_err(|e| format!("DB_ERROR: Failed to update bookmark: {}", e))?;
 
     if updated {
-        let _ = app.emit("browser-bookmarks-updated", json!({
-            "action": "updated",
-            "id": id
-        }));
+        let _ = app.emit(
+            "browser-bookmarks-updated",
+            json!({
+                "action": "updated",
+                "id": id
+            }),
+        );
     }
 
     Ok(updated)
@@ -157,10 +181,13 @@ pub fn browser_bookmark_delete(
         .map_err(|e| format!("DB_ERROR: Failed to delete bookmark: {}", e))?;
 
     if deleted {
-        let _ = app.emit("browser-bookmarks-updated", json!({
-            "action": "deleted",
-            "id": id
-        }));
+        let _ = app.emit(
+            "browser-bookmarks-updated",
+            json!({
+                "action": "deleted",
+                "id": id
+            }),
+        );
     }
 
     Ok(deleted)
@@ -206,10 +233,13 @@ pub fn browser_bookmark_create_folder(
     let folder = db::create_bookmark_folder(&conn, &name, parent_id.as_deref())
         .map_err(|e| format!("DB_ERROR: Failed to create folder: {}", e))?;
 
-    let _ = app.emit("browser-bookmarks-updated", json!({
-        "action": "folder_created",
-        "folder": &folder
-    }));
+    let _ = app.emit(
+        "browser-bookmarks-updated",
+        json!({
+            "action": "folder_created",
+            "folder": &folder
+        }),
+    );
 
     Ok(folder)
 }
@@ -225,10 +255,13 @@ pub fn browser_bookmark_delete_folder(
         .map_err(|e| format!("DB_ERROR: Failed to delete folder: {}", e))?;
 
     if deleted {
-        let _ = app.emit("browser-bookmarks-updated", json!({
-            "action": "folder_deleted",
-            "folder_id": folder_id
-        }));
+        let _ = app.emit(
+            "browser-bookmarks-updated",
+            json!({
+                "action": "folder_deleted",
+                "folder_id": folder_id
+            }),
+        );
     }
 
     Ok(deleted)

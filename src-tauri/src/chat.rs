@@ -60,8 +60,6 @@ fn plugin_disabled_response(plugin_id: &str) -> ChatResponse {
     )
 }
 
-
-
 #[command]
 pub async fn chat_command(
     app: tauri::AppHandle,
@@ -72,7 +70,10 @@ pub async fn chat_command(
     db_state: State<'_, DbState>,
     turn_id: Option<String>,
 ) -> Result<ChatResponse, String> {
-    println!("RUST: chat_command invoked! message: {}, session_id: {}", message, session_id);
+    println!(
+        "RUST: chat_command invoked! message: {}, session_id: {}",
+        message, session_id
+    );
     let effective_turn_id = turn_id.unwrap_or_else(|| crate::events::TurnId::new().to_string());
     let stream_id = crate::events::StreamId::new().to_string();
     let emitter = crate::events::EventEmitter::from_app(&app);
@@ -93,14 +94,22 @@ pub async fn chat_command(
         let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
         let launch_path = plugins::resolve_launch_path(&conn, app_name);
         drop(conn);
-        return Ok(ChatResponse::new(plugins::plugin_app_launcher(&launch_path), "plugin".to_string()).with_turn(&effective_turn_id));
+        return Ok(ChatResponse::new(
+            plugins::plugin_app_launcher(&launch_path),
+            "plugin".to_string(),
+        )
+        .with_turn(&effective_turn_id));
     }
 
     if msg_lower.starts_with("play ") {
         if !plugin_enabled(&db_state, "media_player")? {
             return Ok(plugin_disabled_response("media_player").with_turn(&effective_turn_id));
         }
-        return Ok(ChatResponse::new(plugins::plugin_media_player(message[5..].trim().to_string()).await, "plugin".to_string()).with_turn(&effective_turn_id));
+        return Ok(ChatResponse::new(
+            plugins::plugin_media_player(message[5..].trim().to_string()).await,
+            "plugin".to_string(),
+        )
+        .with_turn(&effective_turn_id));
     }
 
     if msg_lower.starts_with("whatsapp ") {
@@ -111,9 +120,18 @@ pub async fn chat_command(
         // naive split: first word is number, rest is message
         let parts: Vec<&str> = payload.splitn(2, ' ').collect();
         if parts.len() == 2 {
-            return Ok(ChatResponse::new(plugins::plugin_whatsapp(parts[0], parts[1]), "plugin".to_string()).with_turn(&effective_turn_id));
+            return Ok(ChatResponse::new(
+                plugins::plugin_whatsapp(parts[0], parts[1]),
+                "plugin".to_string(),
+            )
+            .with_turn(&effective_turn_id));
         } else {
-             return Ok(ChatResponse::new("Please provide both number and message. Example: whatsapp 1234567890 hello".to_string(), "error".to_string()).with_turn(&effective_turn_id));
+            return Ok(ChatResponse::new(
+                "Please provide both number and message. Example: whatsapp 1234567890 hello"
+                    .to_string(),
+                "error".to_string(),
+            )
+            .with_turn(&effective_turn_id));
         }
     }
     if msg_lower.starts_with("email ") {
@@ -123,9 +141,18 @@ pub async fn chat_command(
         let payload = message[6..].trim();
         let parts: Vec<&str> = payload.splitn(2, ' ').collect();
         if parts.len() == 2 {
-            return Ok(ChatResponse::new(plugins::plugin_gmail(parts[0], parts[1]), "plugin".to_string()).with_turn(&effective_turn_id));
+            return Ok(ChatResponse::new(
+                plugins::plugin_gmail(parts[0], parts[1]),
+                "plugin".to_string(),
+            )
+            .with_turn(&effective_turn_id));
         } else {
-             return Ok(ChatResponse::new("Please provide both email and message. Example: email test@test.com hello".to_string(), "error".to_string()).with_turn(&effective_turn_id));
+            return Ok(ChatResponse::new(
+                "Please provide both email and message. Example: email test@test.com hello"
+                    .to_string(),
+                "error".to_string(),
+            )
+            .with_turn(&effective_turn_id));
         }
     }
 
@@ -133,25 +160,53 @@ pub async fn chat_command(
         if !plugin_enabled(&db_state, "terminal")? {
             return Ok(plugin_disabled_response("terminal").with_turn(&effective_turn_id));
         }
-        let q = if msg_lower.starts_with("cmd ") { message[4..].trim() } else { message[9..].trim() };
-        return Ok(ChatResponse::new(plugins::plugin_system_terminal(q), "plugin".to_string()).with_turn(&effective_turn_id));
+        let q = if msg_lower.starts_with("cmd ") {
+            message[4..].trim()
+        } else {
+            message[9..].trim()
+        };
+        return Ok(
+            ChatResponse::new(plugins::plugin_system_terminal(q), "plugin".to_string())
+                .with_turn(&effective_turn_id),
+        );
     }
 
-
-    if msg_lower.contains("volume up") || msg_lower.contains("volume down") || msg_lower.contains("mute") {
+    if msg_lower.contains("volume up")
+        || msg_lower.contains("volume down")
+        || msg_lower.contains("mute")
+    {
         if !plugin_enabled(&db_state, "system_control")? {
             return Ok(plugin_disabled_response("system_control").with_turn(&effective_turn_id));
         }
-        let action = if msg_lower.contains("volume up") { "volume_up" }
-                     else if msg_lower.contains("volume down") { "volume_down" }
-                     else { "mute" };
-        return Ok(ChatResponse::new(plugins::plugin_system_control(action), "plugin".to_string()).with_turn(&effective_turn_id));
+        let action = if msg_lower.contains("volume up") {
+            "volume_up"
+        } else if msg_lower.contains("volume down") {
+            "volume_down"
+        } else {
+            "mute"
+        };
+        return Ok(
+            ChatResponse::new(plugins::plugin_system_control(action), "plugin".to_string())
+                .with_turn(&effective_turn_id),
+        );
     }
 
-    let custom_instr   = app_settings.get("customInstructions").and_then(|v| v.as_str()).unwrap_or("");
-    let nickname       = app_settings.get("nickname").and_then(|v| v.as_str()).unwrap_or("");
-    let occupation     = app_settings.get("occupation").and_then(|v| v.as_str()).unwrap_or("");
-    let more_about_you = app_settings.get("moreAboutYou").and_then(|v| v.as_str()).unwrap_or("");
+    let custom_instr = app_settings
+        .get("customInstructions")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let nickname = app_settings
+        .get("nickname")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let occupation = app_settings
+        .get("occupation")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
+    let more_about_you = app_settings
+        .get("moreAboutYou")
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
 
     let mut sys = if custom_instr.is_empty() {
         "You are E.D.I.T.H. (Even Dead, I'm The Hero), an advanced Stark-grade AI PC assistant. Keep responses clear, helpful, intelligent, and friendly. Always wrap code in Markdown triple backticks.".to_string()
@@ -161,9 +216,15 @@ pub async fn chat_command(
 
     if !nickname.is_empty() || !occupation.is_empty() || !more_about_you.is_empty() {
         sys.push_str("\n\nUser Information:\n");
-        if !nickname.is_empty()       { sys.push_str(&format!("- Name: {}\n", nickname)); }
-        if !occupation.is_empty()     { sys.push_str(&format!("- Occupation: {}\n", occupation)); }
-        if !more_about_you.is_empty() { sys.push_str(&format!("- About user: {}\n", more_about_you)); }
+        if !nickname.is_empty() {
+            sys.push_str(&format!("- Name: {}\n", nickname));
+        }
+        if !occupation.is_empty() {
+            sys.push_str(&format!("- Occupation: {}\n", occupation));
+        }
+        if !more_about_you.is_empty() {
+            sys.push_str(&format!("- About user: {}\n", more_about_you));
+        }
     }
 
     let is_search = msg_lower.starts_with("search ") || msg_lower.starts_with("research ");
@@ -172,8 +233,15 @@ pub async fn chat_command(
         if !plugin_enabled(&db_state, "web_search")? {
             return Ok(plugin_disabled_response("web_search"));
         }
-        let q = if msg_lower.starts_with("search ") { message[7..].trim() } else { message[9..].trim() };
-        let tavily_key = app_settings.get("tavilyApiKey").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let q = if msg_lower.starts_with("search ") {
+            message[7..].trim()
+        } else {
+            message[9..].trim()
+        };
+        let tavily_key = app_settings
+            .get("tavilyApiKey")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
         let context = plugins::plugin_web_search(q.to_string(), tavily_key).await;
 
         let app2 = app.clone();
@@ -199,21 +267,35 @@ pub async fn chat_command(
         }
     }
 
-    let temp: f64 = app_settings.get("temperature")
+    let temp: f64 = app_settings
+        .get("temperature")
         .and_then(|v| v.as_str())
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.7);
 
-    let mut messages = vec![ChatMessage { role: "system".to_string(), content: sys }];
+    let mut messages = vec![ChatMessage {
+        role: "system".to_string(),
+        content: sys,
+    }];
     for h in history {
         messages.push(ChatMessage {
-            role: if h.role == "user" { "user".to_string() } else { "assistant".to_string() },
+            role: if h.role == "user" {
+                "user".to_string()
+            } else {
+                "assistant".to_string()
+            },
             content: h.text,
         });
     }
-    messages.push(ChatMessage { role: "user".to_string(), content: message.clone() });
+    messages.push(ChatMessage {
+        role: "user".to_string(),
+        content: message.clone(),
+    });
 
-    let ai_mode = app_settings.get("aiMode").and_then(|v| v.as_str()).unwrap_or("api");
+    let ai_mode = app_settings
+        .get("aiMode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("api");
     let provider_id = if ai_mode == "local" && !is_search {
         "local".to_string()
     } else {
@@ -235,7 +317,8 @@ pub async fn chat_command(
     };
 
     let mut registry = crate::ai::ProviderRegistry::standard_builtins();
-    if let Some(custom_providers_raw) = app_settings.get("customProviders").and_then(|v| v.as_str()) {
+    if let Some(custom_providers_raw) = app_settings.get("customProviders").and_then(|v| v.as_str())
+    {
         registry.load_custom_providers(custom_providers_raw);
     }
 
@@ -244,12 +327,19 @@ pub async fn chat_command(
 
     let adapter = match registry.resolve_provider(&provider_id) {
         Ok(a) => a,
-        Err(e) => return Ok(ChatResponse::new(e.to_string(), "error".to_string()).with_turn(&effective_turn_id)),
+        Err(e) => {
+            return Ok(
+                ChatResponse::new(e.to_string(), "error".to_string()).with_turn(&effective_turn_id)
+            )
+        }
     };
 
     let ai_messages: Vec<crate::ai::ChatMessage> = messages
         .into_iter()
-        .map(|m| crate::ai::ChatMessage { role: m.role, content: m.content })
+        .map(|m| crate::ai::ChatMessage {
+            role: m.role,
+            content: m.content,
+        })
         .collect();
 
     let req = crate::ai::GenerateRequest {
@@ -260,24 +350,27 @@ pub async fn chat_command(
         stream: true,
     };
 
-    let (effective_turn_id, cancel_token) = if let Some(core) = app.try_state::<crate::conversation::ConversationCore>() {
-        let sub_req = crate::conversation::TurnSubmissionRequest {
-            session_id: session_id.clone(),
-            message: message.clone(),
-            provider_id: Some(provider_id.clone()),
-            model_id: Some(model.clone()),
-            temperature: Some(temp),
-            client_turn_id: Some(effective_turn_id.clone()),
-        };
-        if let Ok(sub_res) = core.submit_turn(sub_req).await {
-            let ct = core.get_cancellation_token(&crate::events::TurnId::from_string(&sub_res.turn_id)).await;
-            (sub_res.turn_id, ct)
+    let (effective_turn_id, cancel_token) =
+        if let Some(core) = app.try_state::<crate::conversation::ConversationCore>() {
+            let sub_req = crate::conversation::TurnSubmissionRequest {
+                session_id: session_id.clone(),
+                message: message.clone(),
+                provider_id: Some(provider_id.clone()),
+                model_id: Some(model.clone()),
+                temperature: Some(temp),
+                client_turn_id: Some(effective_turn_id.clone()),
+            };
+            if let Ok(sub_res) = core.submit_turn(sub_req).await {
+                let ct = core
+                    .get_cancellation_token(&crate::events::TurnId::from_string(&sub_res.turn_id))
+                    .await;
+                (sub_res.turn_id, ct)
+            } else {
+                (effective_turn_id, None)
+            }
         } else {
             (effective_turn_id, None)
-        }
-    } else {
-        (effective_turn_id, None)
-    };
+        };
     let cancel_token_clone = cancel_token.clone();
 
     let stream_cap = adapter.as_streaming_text();
@@ -287,22 +380,40 @@ pub async fn chat_command(
         let correlation_clone = correlation.clone();
         let seq = std::sync::atomic::AtomicU64::new(0);
 
-        let res = streamer.stream(&req, &creds, Box::new(move |chunk| {
-            if let Some(ref ct) = cancel_token_clone {
-                if ct.is_cancelled() {
-                    return;
-                }
-            }
-            if !chunk.text.is_empty() {
-                let n = seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                let _ = emitter_clone.emit_stream_chunk(&correlation_clone, chunk.text, n, false);
-            }
-        })).await;
+        let res = streamer
+            .stream(
+                &req,
+                &creds,
+                Box::new(move |chunk| {
+                    if let Some(ref ct) = cancel_token_clone {
+                        if ct.is_cancelled() {
+                            return;
+                        }
+                    }
+                    if !chunk.text.is_empty() {
+                        let n = seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        let _ = emitter_clone.emit_stream_chunk(
+                            &correlation_clone,
+                            chunk.text,
+                            n,
+                            false,
+                        );
+                    }
+                }),
+            )
+            .await;
 
         if let Some(ref ct) = cancel_token {
             if ct.is_cancelled() {
-                let _ = emitter.emit_stream_cancelled(&correlation, Some("Turn cancelled by user".to_string()));
-                return Ok(ChatResponse::new("Turn cancelled by user".to_string(), "error".to_string()).with_stream(&stream_id, &effective_turn_id));
+                let _ = emitter.emit_stream_cancelled(
+                    &correlation,
+                    Some("Turn cancelled by user".to_string()),
+                );
+                return Ok(ChatResponse::new(
+                    "Turn cancelled by user".to_string(),
+                    "error".to_string(),
+                )
+                .with_stream(&stream_id, &effective_turn_id));
             }
         }
 
@@ -330,9 +441,13 @@ pub async fn chat_command(
         res
     } else {
         return Ok(ChatResponse::new(
-            format!("Provider '{}' does not support text generation", provider_id),
+            format!(
+                "Provider '{}' does not support text generation",
+                provider_id
+            ),
             "error".to_string(),
-        ).with_turn(&effective_turn_id));
+        )
+        .with_turn(&effective_turn_id));
     };
 
     match reply_result {
@@ -343,10 +458,13 @@ pub async fn chat_command(
             let msg = message.clone();
             tokio::spawn(async move {
                 let combined = format!("User: {}\nAssistant: {}", msg, r);
-                let _ = crate::memory::save_to_memory_cmd(app3, combined, format!("chat:{}", sid)).await;
+                let _ = crate::memory::save_to_memory_cmd(app3, combined, format!("chat:{}", sid))
+                    .await;
             });
-            Ok(ChatResponse::new(reply.text, "ai".to_string()).with_stream(&stream_id, &effective_turn_id))
+            Ok(ChatResponse::new(reply.text, "ai".to_string())
+                .with_stream(&stream_id, &effective_turn_id))
         }
-        Err(e) => Ok(ChatResponse::new(e.to_string(), "error".to_string()).with_stream(&stream_id, &effective_turn_id)),
+        Err(e) => Ok(ChatResponse::new(e.to_string(), "error".to_string())
+            .with_stream(&stream_id, &effective_turn_id)),
     }
 }

@@ -1,40 +1,40 @@
+use crate::ai::CredentialStore;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 use tauri::Manager;
-use crate::ai::CredentialStore;
-pub mod security;
-pub mod ai;
-pub mod events;
-pub mod conversation;
-pub mod task;
-pub mod policy;
-pub mod tools;
 mod agent;
-mod chat;
-pub mod db;
-mod llm;
-mod plugins;
-mod providers;
-mod tts;
-mod memory;
-pub mod embedding;
-pub mod screen;
-pub mod windows;
+pub mod ai;
 pub mod browser;
-pub mod browser_tools;
 pub mod browser_agent;
-pub mod browser_risk;
-pub mod browser_orchestrator;
 pub mod browser_control;
-pub mod computer_control;
-pub mod browser_storage;
 pub mod browser_download;
-pub mod browser_profile;
+pub mod browser_orchestrator;
 pub mod browser_privacy;
+pub mod browser_profile;
 pub mod browser_recovery;
-pub mod weather;
+pub mod browser_risk;
+pub mod browser_storage;
+pub mod browser_tools;
+mod chat;
+pub mod computer_control;
+pub mod conversation;
+pub mod db;
+pub mod embedding;
+pub mod events;
+mod llm;
+mod memory;
+mod plugins;
+pub mod policy;
+mod providers;
 pub mod runtime;
+pub mod screen;
+pub mod security;
+pub mod task;
+pub mod tools;
+mod tts;
 pub mod voice;
+pub mod weather;
+pub mod windows;
 
 use db::DbState;
 use std::collections::HashMap;
@@ -49,7 +49,6 @@ fn agent_resolve_proposal(
     let sess = session_id.unwrap_or_default();
     security::ProposalEngine::resolve_proposal(&proposal_id, &sess, &action)
 }
-
 
 #[tauri::command]
 fn get_base_dir() -> Result<String, String> {
@@ -205,7 +204,10 @@ fn ai_list_providers(db_state: State<'_, DbState>) -> Result<Vec<ai::ProviderSum
 }
 
 #[tauri::command]
-fn ai_list_models(provider_id: String, db_state: State<'_, DbState>) -> Result<Vec<ai::ModelMetadata>, String> {
+fn ai_list_models(
+    provider_id: String,
+    db_state: State<'_, DbState>,
+) -> Result<Vec<ai::ModelMetadata>, String> {
     let mut registry = ai::ProviderRegistry::standard_builtins();
     if let Ok(conn) = db_state.conn.lock() {
         if let Ok(settings) = db::get_all_settings(&conn) {
@@ -214,7 +216,9 @@ fn ai_list_models(provider_id: String, db_state: State<'_, DbState>) -> Result<V
             }
         }
     }
-    registry.list_models(&provider_id).map_err(|e| e.to_string())
+    registry
+        .list_models(&provider_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -269,13 +273,17 @@ async fn conversation_execute_turn(
     let creds = if let Some(ref settings) = app_settings {
         let cred_store = ai::SettingsCredentialStore::from_json_value(settings);
         let status = core.get_turn_status(&tid).await;
-        let prov_id = status.map(|s| s.model_selection.provider_id).unwrap_or_else(|| "groq".to_string());
+        let prov_id = status
+            .map(|s| s.model_selection.provider_id)
+            .unwrap_or_else(|| "groq".to_string());
         cred_store.get_credential(&prov_id).ok().flatten()
     } else {
         None
     };
 
-    core.execute_turn(&tid, creds).await.map_err(|e| e.to_string())
+    core.execute_turn(&tid, creds)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -285,7 +293,9 @@ async fn conversation_cancel_turn(
     core: State<'_, conversation::ConversationCore>,
 ) -> Result<(), String> {
     let tid = events::TurnId::from_string(turn_id);
-    core.cancel_turn(&tid, reason).await.map_err(|e| e.to_string())
+    core.cancel_turn(&tid, reason)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -315,7 +325,9 @@ async fn task_create(
     let mut correlation = events::EventCorrelation::default();
     correlation.conversation_id = session_id;
     correlation.turn_id = turn_id;
-    let id = task_runtime.create_task(t_type, goal, correlation, task::TaskOwner::User).await;
+    let id = task_runtime
+        .create_task(t_type, goal, correlation, task::TaskOwner::User)
+        .await;
     Ok(id.to_string())
 }
 
@@ -326,7 +338,10 @@ async fn task_cancel(
     task_runtime: State<'_, task::TaskRuntime>,
 ) -> Result<(), String> {
     let tid = events::TaskId::from_string(task_id);
-    task_runtime.cancel_task(&tid, reason).await.map_err(|e| e.to_string())
+    task_runtime
+        .cancel_task(&tid, reason)
+        .await
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -424,7 +439,6 @@ async fn runtime_get_capabilities(
 ) -> Result<runtime::CapabilitiesSummary, String> {
     Ok(runtime_state.get_capabilities(domain.as_deref()).await)
 }
-
 
 #[tauri::command]
 async fn voice_session_start(
@@ -542,7 +556,9 @@ async fn voice_set_input_device(
     device_id: Option<String>,
     controller: State<'_, std::sync::Arc<voice::VoiceController>>,
 ) -> Result<(), String> {
-    controller.set_input_device(device_id).map_err(|e| e.to_string())
+    controller
+        .set_input_device(device_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -550,7 +566,9 @@ async fn voice_set_output_device(
     device_id: Option<String>,
     controller: State<'_, std::sync::Arc<voice::VoiceController>>,
 ) -> Result<(), String> {
-    controller.set_output_device(device_id).map_err(|e| e.to_string())
+    controller
+        .set_output_device(device_id)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -606,8 +624,12 @@ pub fn run() {
             for def in tools::get_edith_definitions() {
                 let _ = tool_registry.register(def);
             }
-            let browser_executor = std::sync::Arc::new(tools::BrowserDomainExecutor::new(Some(app.handle().clone())));
-            let computer_executor = std::sync::Arc::new(tools::ComputerDomainExecutor::new(Some(app.handle().clone())));
+            let browser_executor = std::sync::Arc::new(tools::BrowserDomainExecutor::new(Some(
+                app.handle().clone(),
+            )));
+            let computer_executor = std::sync::Arc::new(tools::ComputerDomainExecutor::new(Some(
+                app.handle().clone(),
+            )));
             let domain_executors = tools::DomainExecutorRegistry::new();
             domain_executors.register(browser_executor);
             domain_executors.register(computer_executor);
@@ -654,8 +676,11 @@ pub fn run() {
                 policy_engine_arc,
                 Some(app.handle().clone()),
                 Some(conn2_arc),
-            ).with_voice_controller(voice_controller.clone());
-            let edith_executor = std::sync::Arc::new(tools::EdithDomainExecutor::new(std::sync::Arc::new(runtime_state.clone())));
+            )
+            .with_voice_controller(voice_controller.clone());
+            let edith_executor = std::sync::Arc::new(tools::EdithDomainExecutor::new(
+                std::sync::Arc::new(runtime_state.clone()),
+            ));
             domain_executors_arc.register(edith_executor);
 
             app.manage(task_runtime);
@@ -670,13 +695,16 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|_window, event| match event {
-              tauri::WindowEvent::CloseRequested { .. } => {
-                  #[cfg(target_os = "windows")]
-                  let _ = std::process::Command::new("taskkill").args(["/F", "/IM", "llama-server.exe"]).creation_flags(0x08000000).output();
-              }
-              _ => {}
-          })
-          .plugin(tauri_plugin_fs::init())
+            tauri::WindowEvent::CloseRequested { .. } => {
+                #[cfg(target_os = "windows")]
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/IM", "llama-server.exe"])
+                    .creation_flags(0x08000000)
+                    .output();
+            }
+            _ => {}
+        })
+        .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![
@@ -893,7 +921,3 @@ pub fn run() {
 
     app.run(|_app_handle, _event| {});
 }
-
-
-
-

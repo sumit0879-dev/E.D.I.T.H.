@@ -32,7 +32,10 @@ pub use capture::{
     AudioCaptureDriver, BrowserCaptureBridge, CaptureOwner, CaptureState, MockAudioCaptureDriver,
     NativeCpalCaptureDriver,
 };
-pub use devices::{compute_opaque_device_id, AudioDeviceInfo, AudioDeviceManager, AudioDevicesSummary};
+pub use devices::{
+    compute_opaque_device_id, AudioDeviceInfo, AudioDeviceManager, AudioDeviceProvider,
+    AudioDevicesSummary, CpalAudioDeviceProvider, MockAudioDeviceProvider,
+};
 pub use dsp::{
     AudioNormalizer, AudioPreprocessor, EchoCanceller, EnergyVad, SoftwareDuckingEchoCanceller,
     VadConfig, VoiceActivityDetector,
@@ -46,6 +49,10 @@ pub use realtime::{
     TransportEvent, TransportState,
 };
 pub use session::{VoiceController, VoiceSession, VoiceSessionState, VoiceStatusSummary};
-pub use stt::{CloudSTTAdapter, MockSTTAdapter, STTAdapter, STTOptions, Transcript, WebSpeechSTTBridge};
+pub use stt::{
+    CloudSTTAdapter, MockSTTAdapter, STTAdapter, STTOptions, Transcript, WebSpeechSTTBridge,
+};
 pub use telemetry::{VoiceTelemetryCollector, VoiceTelemetryReport};
-pub use tts::{EdgeTtsAdapter, LocalTtsAdapter, MockTtsAdapter, TTSAdapter, TTSOptions, VoiceDescriptor};
+pub use tts::{
+    EdgeTtsAdapter, LocalTtsAdapter, MockTtsAdapter, TTSAdapter, TTSOptions, VoiceDescriptor,
+};

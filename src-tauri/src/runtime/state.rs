@@ -63,7 +63,10 @@ impl EdithRuntimeState {
     }
 
     /// Attaches the authoritative VoiceController coordination layer.
-    pub fn with_voice_controller(mut self, voice_controller: Arc<crate::voice::VoiceController>) -> Self {
+    pub fn with_voice_controller(
+        mut self,
+        voice_controller: Arc<crate::voice::VoiceController>,
+    ) -> Self {
         self.voice_controller = Some(voice_controller);
         self
     }
@@ -225,10 +228,7 @@ impl EdithRuntimeState {
     }
 
     /// Projects all registered tools and active provider capabilities into a structured catalog.
-    pub async fn get_capabilities(
-        &self,
-        domain_filter: Option<&str>,
-    ) -> CapabilitiesSummary {
+    pub async fn get_capabilities(&self, domain_filter: Option<&str>) -> CapabilitiesSummary {
         let all_tools = self.tool_registry.list();
         let mut grouped: HashMap<String, Vec<ToolSummaryItem>> = HashMap::new();
 

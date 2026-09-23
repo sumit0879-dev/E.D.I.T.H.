@@ -15,9 +15,9 @@ pub mod session;
 pub mod transport;
 
 #[cfg(test)]
-pub mod tests;
-#[cfg(test)]
 pub mod production_tests;
+#[cfg(test)]
+pub mod tests;
 
 pub use adapter::{MockRealtimeSessionAdapter, RealtimeProviderEvent, RealtimeSessionAdapter};
 pub use engine::{RealtimeEngineConfig, RealtimeVoiceEngine};

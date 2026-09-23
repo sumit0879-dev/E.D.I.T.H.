@@ -1,5 +1,7 @@
 use crate::policy::context::{PolicyContext, SecurityMode};
-use crate::policy::types::{ActionRequest, ActionTarget, PolicyConstraints, PolicyOutcome, RiskLevel};
+use crate::policy::types::{
+    ActionRequest, ActionTarget, PolicyConstraints, PolicyOutcome, RiskLevel,
+};
 use crate::security::CommandPolicy;
 use std::path::PathBuf;
 
@@ -37,7 +39,8 @@ impl CommandAdapter {
                             );
                         }
                     }
-                } else if let Some(prog_val) = req.arguments.get("program").and_then(|v| v.as_str()) {
+                } else if let Some(prog_val) = req.arguments.get("program").and_then(|v| v.as_str())
+                {
                     let parsed_args = req
                         .arguments
                         .get("args")
@@ -94,7 +97,15 @@ impl CommandAdapter {
         // 5. Destructive commands detection
         let is_destructive = matches!(
             lower_prog.as_str(),
-            "rm" | "del" | "rmdir" | "format" | "fdisk" | "kill" | "pkill" | "shutdown" | "reboot" | "sudo"
+            "rm" | "del"
+                | "rmdir"
+                | "format"
+                | "fdisk"
+                | "kill"
+                | "pkill"
+                | "shutdown"
+                | "reboot"
+                | "sudo"
         );
 
         if is_destructive {
@@ -113,7 +124,8 @@ impl CommandAdapter {
             let path_buf = PathBuf::from(work_dir);
             if !ctx.workspace_roots.is_empty() {
                 let inside_workspace = ctx.workspace_roots.iter().any(|root| {
-                    if let (Ok(c_path), Ok(c_root)) = (path_buf.canonicalize(), root.canonicalize()) {
+                    if let (Ok(c_path), Ok(c_root)) = (path_buf.canonicalize(), root.canonicalize())
+                    {
                         c_path.starts_with(c_root)
                     } else {
                         false
@@ -147,7 +159,10 @@ impl CommandAdapter {
                     (
                         risk,
                         PolicyOutcome::ConfirmationRequired,
-                        format!("Command '{}' requires operator confirmation by policy rule.", lower_prog),
+                        format!(
+                            "Command '{}' requires operator confirmation by policy rule.",
+                            lower_prog
+                        ),
                     )
                 } else {
                     match ctx.security_mode {

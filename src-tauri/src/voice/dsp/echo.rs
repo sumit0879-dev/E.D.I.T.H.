@@ -41,7 +41,7 @@ impl SoftwareDuckingEchoCanceller {
 impl Default for SoftwareDuckingEchoCanceller {
     fn default() -> Self {
         Self {
-            ducking_factor: 0.85, // Mild mic attenuation during playback
+            ducking_factor: 0.85,                // Mild mic attenuation during playback
             threshold_elevation_multiplier: 2.2, // Barge-in requires deliberate, louder voice
         }
     }

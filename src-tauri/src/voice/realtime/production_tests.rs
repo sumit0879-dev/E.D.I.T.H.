@@ -20,7 +20,9 @@ mod tests {
         DuplexVoiceState, InputChannelState, OutputChannelState, ProcessingState,
         SessionLifecycleState,
     };
-    use crate::voice::devices::{compute_opaque_device_id, AudioDeviceManager};
+    use crate::voice::devices::{
+        compute_opaque_device_id, AudioDeviceManager, MockAudioDeviceProvider,
+    };
     use crate::voice::dsp::echo::{EchoCanceller, SoftwareDuckingEchoCanceller};
     use crate::voice::dsp::vad::{EnergyVad, VadConfig, VoiceActivityDetector};
     use crate::voice::output::{AudioOutputDriver, MockAudioOutputDriver};
@@ -57,14 +59,62 @@ mod tests {
     }
 
     /// 2. Verify dynamic audio device manager enumerates devices and computes stable opaque IDs.
+    /// Uses MockAudioDeviceProvider for deterministic, zero-hardware isolation (no native CPAL / WASAPI calls).
     #[test]
     fn test_audio_device_enumeration() {
-        let manager = AudioDeviceManager::new();
+        let manager = AudioDeviceManager::mock();
         let summary_res = manager.list_devices();
         assert!(summary_res.is_ok());
         let summary = summary_res.unwrap();
 
-        // Opaque device ID hashing invariants
+        // 1. Verify multiple realistic microphones and output devices
+        assert!(
+            summary.input_devices.len() >= 3,
+            "Expected at least 3 realistic input devices"
+        );
+        assert!(
+            summary.output_devices.len() >= 3,
+            "Expected at least 3 realistic output devices"
+        );
+
+        // 2. Verify default input and output detection
+        let default_in = manager
+            .default_input_device()
+            .unwrap()
+            .expect("Default input device must be present");
+        assert!(default_in.is_default);
+        assert_eq!(default_in.name, "Built-in Microphone");
+        assert_eq!(default_in.channels, 1);
+        assert!(default_in.sample_rates.contains(&16000));
+        assert!(default_in.sample_rates.contains(&48000));
+
+        let default_out = manager
+            .default_output_device()
+            .unwrap()
+            .expect("Default output device must be present");
+        assert!(default_out.is_default);
+        assert!(default_out.name.contains("Realtek"));
+        assert_eq!(default_out.channels, 2);
+        assert!(default_out.sample_rates.contains(&44100));
+        assert!(default_out.sample_rates.contains(&48000));
+
+        // 3. Verify supported sample rates and channel counts across devices
+        let usb_mic = manager
+            .find_input_device("USB Studio Condenser Mic")
+            .unwrap()
+            .expect("USB Studio Condenser Mic should be found");
+        assert_eq!(usb_mic.channels, 2);
+        assert!(usb_mic.sample_rates.contains(&96000));
+        assert!(!usb_mic.is_default);
+
+        let dac_out = manager
+            .find_output_device("USB DAC Audio Interface")
+            .unwrap()
+            .expect("USB DAC Audio Interface should be found");
+        assert_eq!(dac_out.channels, 2);
+        assert!(dac_out.sample_rates.contains(&192000));
+
+        // 4. Opaque device ID hashing invariants and determinism
         let opaque_in = compute_opaque_device_id("Built-in Microphone", true);
         let opaque_out = compute_opaque_device_id("Realtek Speakers", false);
 
@@ -72,12 +122,13 @@ mod tests {
         assert!(opaque_out.starts_with("out_"));
         assert_eq!(opaque_in.len(), 19); // "in_" (3) + 16 hex chars
         assert_eq!(opaque_out.len(), 20); // "out_" (4) + 16 hex chars
+        assert_eq!(default_in.opaque_id, opaque_in);
 
         // Deterministic hashing for same name
         let opaque_in_again = compute_opaque_device_id("Built-in Microphone", true);
         assert_eq!(opaque_in, opaque_in_again);
 
-        // Inputs and outputs summaries have valid structure
+        // Inputs and outputs summaries have valid opaque structure
         for in_dev in &summary.input_devices {
             assert!(in_dev.opaque_id.starts_with("in_"));
             assert!(!in_dev.name.is_empty());
@@ -86,6 +137,38 @@ mod tests {
             assert!(out_dev.opaque_id.starts_with("out_"));
             assert!(!out_dev.name.is_empty());
         }
+
+        // 5. Active-device tracking and switching
+        assert_eq!(manager.active_input_id(), None);
+        assert_eq!(manager.active_output_id(), None);
+
+        // Switch to USB mic
+        manager.set_active_input_id(Some(usb_mic.opaque_id.clone()));
+        assert_eq!(manager.active_input_id(), Some(usb_mic.opaque_id.clone()));
+
+        // Switch to DAC output
+        manager.set_active_output_id(Some(dac_out.opaque_id.clone()));
+        assert_eq!(manager.active_output_id(), Some(dac_out.opaque_id.clone()));
+
+        // Re-check summary reflects active IDs
+        let updated_summary = manager.list_devices().unwrap();
+        assert_eq!(updated_summary.active_input_id, Some(usb_mic.opaque_id));
+        assert_eq!(updated_summary.active_output_id, Some(dac_out.opaque_id));
+
+        // Switch back to None (system default)
+        manager.set_active_input_id(None);
+        manager.set_active_output_id(None);
+        assert_eq!(manager.active_input_id(), None);
+        assert_eq!(manager.active_output_id(), None);
+
+        // 6. Device lookup by name and opaque ID
+        let found_by_name = manager.find_input_device("Built-in Microphone").unwrap();
+        assert!(found_by_name.is_some());
+        let found_by_id = manager.find_input_device(&default_in.opaque_id).unwrap();
+        assert_eq!(found_by_id, found_by_name);
+
+        let not_found = manager.find_input_device("in_nonexistent_xyz").unwrap();
+        assert!(not_found.is_none());
     }
 
     /// 3. Verify clean output device handover without crashes or audio leaks.
@@ -97,7 +180,10 @@ mod tests {
 
         let res = driver.set_device(Some("out_test_sink_42".to_string()));
         assert!(res.is_ok());
-        assert_eq!(driver.current_device_id(), Some("out_test_sink_42".to_string()));
+        assert_eq!(
+            driver.current_device_id(),
+            Some("out_test_sink_42".to_string())
+        );
         assert_eq!(
             driver.current_device_name(),
             Some("Mock Output Device (out_test_sink_42)".to_string())
@@ -113,7 +199,9 @@ mod tests {
     /// 4. Verify nonexistent device ID gracefully falls back to default without failing session.
     #[test]
     fn test_device_disappearance_and_default_fallback() {
-        let manager = AudioDeviceManager::new();
+        let mock_provider = Arc::new(MockAudioDeviceProvider::with_realistic_devices());
+        let manager = AudioDeviceManager::with_provider(mock_provider.clone());
+
         let res_in = manager.find_input_device("in_nonexistent_xyz_999");
         assert!(res_in.is_ok());
         assert!(res_in.unwrap().is_none());
@@ -122,8 +210,29 @@ mod tests {
         assert!(res_out.is_ok());
         assert!(res_out.unwrap().is_none());
 
-        manager.set_active_input_id(Some("in_nonexistent_xyz_999".to_string()));
-        assert_eq!(manager.active_input_id(), Some("in_nonexistent_xyz_999".to_string()));
+        // Set active device to USB mic
+        let usb_mic = manager
+            .find_input_device("USB Studio Condenser Mic")
+            .unwrap()
+            .unwrap();
+        manager.set_active_input_id(Some(usb_mic.opaque_id.clone()));
+        assert_eq!(manager.active_input_id(), Some(usb_mic.opaque_id.clone()));
+
+        // Simulate device disconnection: only default built-in mic remains
+        let default_in = manager.default_input_device().unwrap().unwrap();
+        mock_provider.set_inputs(vec![default_in.clone()]);
+
+        // Previously selected device is no longer found in hardware list
+        let lookup_disconnected = manager.find_input_device(&usb_mic.opaque_id).unwrap();
+        assert!(lookup_disconnected.is_none());
+
+        // Graceful fallback to default device
+        let effective_device = lookup_disconnected
+            .or_else(|| manager.default_input_device().unwrap())
+            .expect("Must fall back to default input device");
+        assert_eq!(effective_device.id, default_in.id);
+        assert_eq!(effective_device.name, "Built-in Microphone");
+        assert!(effective_device.is_default);
     }
 
     /// 5. Verify exponential backoff delay calculation and retry budget exhaustion.
@@ -203,7 +312,10 @@ mod tests {
         // Invariant C: Inbound audio with stale Generation 1 is rejected
         let stale_frame_gen: u64 = 1;
         let is_valid = stale_frame_gen == current_gen.load(Ordering::SeqCst);
-        assert!(!is_valid, "Stale audio from gen 1 must be rejected after barge-in to gen 2");
+        assert!(
+            !is_valid,
+            "Stale audio from gen 1 must be rejected after barge-in to gen 2"
+        );
     }
 
     /// 7. Verify continuous audio streaming preserves silence frames for provider VAD.
@@ -214,7 +326,10 @@ mod tests {
 
         // Process frame through VAD
         let is_speech = vad.is_speech(&silence_samples, 16000);
-        assert!(!is_speech, "Silence frames must evaluate to is_speech=false");
+        assert!(
+            !is_speech,
+            "Silence frames must evaluate to is_speech=false"
+        );
 
         // Critical Phase 11 invariant: frames must NOT be dropped or zeroed out
         assert_eq!(silence_samples.len(), 480);

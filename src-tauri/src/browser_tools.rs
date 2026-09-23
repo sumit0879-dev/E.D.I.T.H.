@@ -1,22 +1,20 @@
+use crate::browser::{
+    browser_click_element, browser_close_tab, browser_create_tab, browser_focus_element,
+    browser_get_multi_state, browser_go_back_tab, browser_go_forward_tab, browser_navigate_tab,
+    browser_observe_tab, browser_press_key, browser_reload_tab, browser_screenshot_tab,
+    browser_scroll, browser_switch_tab, browser_type_element, browser_wait, BrowserState,
+};
+use crate::browser_risk::{BrowserActionContext, BrowserRiskDecision, BrowserRiskEngine};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::Instant;
 use tauri::{AppHandle, Manager};
-use crate::browser::{
-    BrowserState,
-    browser_observe_tab, browser_screenshot_tab, browser_click_element,
-    browser_type_element, browser_scroll, browser_press_key, browser_focus_element,
-    browser_wait, browser_create_tab, browser_switch_tab,
-    browser_close_tab, browser_go_back_tab, browser_go_forward_tab, browser_reload_tab,
-    browser_get_multi_state, browser_navigate_tab,
-};
-use crate::browser_risk::{BrowserRiskEngine, BrowserActionContext, BrowserRiskDecision};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolDefinition {
     pub name: String,
     pub description: String,
-    pub category: String,  // "observation", "navigation", "interaction"
+    pub category: String,   // "observation", "navigation", "interaction"
     pub risk_level: String, // "OBSERVE", "LOW_RISK_ACTION", "BLOCKED_FOR_AI"
     pub parameters: serde_json::Value,
 }
@@ -980,11 +978,17 @@ async fn execute_browser_tool_internal(
     let start = Instant::now();
 
     // Phase 5.3: Centralized Host-Enforced Risk & Safety Assessment
-    let target_tab_id = args.get("tab_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+    let target_tab_id = args
+        .get("tab_id")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
 
     // Phase 5.5: Human <-> AI Control Ownership & Takeover Verification (Step 9)
     if !target_tab_id.is_empty() {
-        if let Err(ctrl_err) = crate::browser_control::GLOBAL_CONTROL_MGR.verify_ai_action_permitted(&target_tab_id, tool_name) {
+        if let Err(ctrl_err) = crate::browser_control::GLOBAL_CONTROL_MGR
+            .verify_ai_action_permitted(&target_tab_id, tool_name)
+        {
             return Ok(BrowserToolExecutionResult {
                 success: false,
                 tool_name: tool_name.to_string(),
@@ -999,9 +1003,18 @@ async fn execute_browser_tool_internal(
 
     // Evaluate standalone risk check only when not pre-authorized by PolicyEngine
     if !pre_authorized {
-        let action_url = args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let action_element_id = args.get("element_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let action_text = args.get("text").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let action_url = args
+            .get("url")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let action_element_id = args
+            .get("element_id")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let action_text = args
+            .get("text")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         let risk_ctx = BrowserActionContext {
             tool_name: tool_name.to_string(),
@@ -1024,13 +1037,22 @@ async fn execute_browser_tool_internal(
         };
 
         let assessment = BrowserRiskEngine::assess_risk(&risk_ctx);
-        BrowserRiskEngine::record_audit_log(None, tool_name.to_string(), target_tab_id.clone(), &assessment);
+        BrowserRiskEngine::record_audit_log(
+            None,
+            tool_name.to_string(),
+            target_tab_id.clone(),
+            &assessment,
+        );
 
         if assessment.decision == BrowserRiskDecision::Block {
             return Ok(BrowserToolExecutionResult {
                 success: false,
                 tool_name: tool_name.to_string(),
-                tab_id: if target_tab_id.is_empty() { None } else { Some(target_tab_id) },
+                tab_id: if target_tab_id.is_empty() {
+                    None
+                } else {
+                    Some(target_tab_id)
+                },
                 data: None,
                 error: Some(assessment.user_explanation),
                 error_code: Some(assessment.policy_code),
@@ -1039,11 +1061,16 @@ async fn execute_browser_tool_internal(
         }
 
         if assessment.decision == BrowserRiskDecision::RequireApproval {
-            let approval_id = BrowserRiskEngine::create_pending_approval(None, risk_ctx, assessment.clone());
+            let approval_id =
+                BrowserRiskEngine::create_pending_approval(None, risk_ctx, assessment.clone());
             return Ok(BrowserToolExecutionResult {
                 success: false,
                 tool_name: tool_name.to_string(),
-                tab_id: if target_tab_id.is_empty() { None } else { Some(target_tab_id) },
+                tab_id: if target_tab_id.is_empty() {
+                    None
+                } else {
+                    Some(target_tab_id)
+                },
                 data: Some(json!({
                     "approval_required": true,
                     "approval_id": approval_id,
@@ -1077,7 +1104,10 @@ async fn execute_browser_tool_internal(
 
         "browser_get_active_tab" => {
             let multi = browser_get_multi_state(app, state).await?;
-            let active = multi.tabs.iter().find(|t| Some(&t.id) == multi.active_tab_id.as_ref());
+            let active = multi
+                .tabs
+                .iter()
+                .find(|t| Some(&t.id) == multi.active_tab_id.as_ref());
             if let Some(tab) = active {
                 Ok(BrowserToolExecutionResult {
                     success: true,
@@ -1102,9 +1132,14 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_observe" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let scope = args.get("scope").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let scope = args
+                .get("scope")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
             match browser_observe_tab(app, tab_id.to_string(), scope, state).await {
                 Ok(obs) => {
@@ -1148,7 +1183,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_screenshot" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match browser_screenshot_tab(tab_id.to_string(), None, state).await {
@@ -1179,12 +1216,25 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_open_url" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let url = args.get("url").and_then(|v| v.as_str())
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'url'.".to_string())?;
 
-            match browser_create_tab(app, tab_id.to_string(), Some(url.to_string()), None, None, state).await {
+            match browser_create_tab(
+                app,
+                tab_id.to_string(),
+                Some(url.to_string()),
+                None,
+                None,
+                state,
+            )
+            .await
+            {
                 Ok(tab) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -1211,7 +1261,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_switch_tab" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match browser_switch_tab(app, tab_id.to_string(), None, state).await {
@@ -1237,7 +1289,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_close_tab" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match browser_close_tab(app, tab_id.to_string(), state).await {
@@ -1266,7 +1320,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_back" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match browser_go_back_tab(app, tab_id.to_string()).await {
@@ -1292,7 +1348,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_forward" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match browser_go_forward_tab(app, tab_id.to_string()).await {
@@ -1318,7 +1376,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_reload" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match browser_reload_tab(app, tab_id.to_string()).await {
@@ -1344,12 +1404,18 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_click" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let element_id = args.get("element_id").and_then(|v| v.as_str())
+            let element_id = args
+                .get("element_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'element_id'.".to_string())?;
 
-            match browser_click_element(app, tab_id.to_string(), element_id.to_string(), state).await {
+            match browser_click_element(app, tab_id.to_string(), element_id.to_string(), state)
+                .await
+            {
                 Ok(res) => Ok(BrowserToolExecutionResult {
                     success: res.success,
                     tool_name: tool_name.to_string(),
@@ -1377,20 +1443,40 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_type" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let element_id = args.get("element_id").and_then(|v| v.as_str())
+            let element_id = args
+                .get("element_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'element_id'.".to_string())?;
-            let text = args.get("text").and_then(|v| v.as_str())
+            let text = args
+                .get("text")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'text'.".to_string())?;
-            let clear_first = args.get("clear_first").and_then(|v| v.as_bool()).unwrap_or(true);
+            let clear_first = args
+                .get("clear_first")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(true);
 
             // Bounded input validation
             if text.len() > 5000 {
-                return Err("INPUT_TOO_LARGE: Type text exceeds maximum bounded length (5000 characters).".to_string());
+                return Err(
+                    "INPUT_TOO_LARGE: Type text exceeds maximum bounded length (5000 characters)."
+                        .to_string(),
+                );
             }
 
-            match browser_type_element(app, tab_id.to_string(), element_id.to_string(), text.to_string(), Some(clear_first)).await {
+            match browser_type_element(
+                app,
+                tab_id.to_string(),
+                element_id.to_string(),
+                text.to_string(),
+                Some(clear_first),
+            )
+            .await
+            {
                 Ok(res) => Ok(BrowserToolExecutionResult {
                     success: res.success,
                     tool_name: tool_name.to_string(),
@@ -1417,11 +1503,18 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_scroll" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let direction = args.get("direction").and_then(|v| v.as_str())
+            let direction = args
+                .get("direction")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'direction'.".to_string())?;
-            let amount = args.get("amount").and_then(|v| v.as_i64()).map(|n| n as i32);
+            let amount = args
+                .get("amount")
+                .and_then(|v| v.as_i64())
+                .map(|n| n as i32);
 
             match browser_scroll(app, tab_id.to_string(), direction.to_string(), amount).await {
                 Ok(res) => Ok(BrowserToolExecutionResult {
@@ -1446,9 +1539,13 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_press_key" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let key = args.get("key").and_then(|v| v.as_str())
+            let key = args
+                .get("key")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'key'.".to_string())?;
 
             match browser_press_key(app, tab_id.to_string(), key.to_string()).await {
@@ -1474,9 +1571,13 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_focus" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let element_id = args.get("element_id").and_then(|v| v.as_str())
+            let element_id = args
+                .get("element_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'element_id'.".to_string())?;
 
             match browser_focus_element(app, tab_id.to_string(), element_id.to_string()).await {
@@ -1502,19 +1603,37 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_wait" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let condition = args.get("condition").and_then(|v| v.as_str())
+            let condition = args
+                .get("condition")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'condition'.".to_string())?;
-            let target = args.get("target").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let target = args
+                .get("target")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
             let timeout_ms = args.get("timeout_ms").and_then(|v| v.as_u64());
 
-            match browser_wait(app, tab_id.to_string(), condition.to_string(), target, timeout_ms, state).await {
+            match browser_wait(
+                app,
+                tab_id.to_string(),
+                condition.to_string(),
+                target,
+                timeout_ms,
+                state,
+            )
+            .await
+            {
                 Ok(res) => Ok(BrowserToolExecutionResult {
                     success: res.success,
                     tool_name: tool_name.to_string(),
                     tab_id: Some(tab_id.to_string()),
-                    data: Some(json!({ "condition": condition, "resulting_url": res.resulting_url })),
+                    data: Some(
+                        json!({ "condition": condition, "resulting_url": res.resulting_url }),
+                    ),
                     error: res.error,
                     error_code: res.error_code,
                     duration_ms: start.elapsed().as_millis() as u64,
@@ -1534,7 +1653,8 @@ async fn execute_browser_tool_internal(
         // --- Phase 5.6A: Browser History & Bookmarks Tool Execution ---
         "browser_history_recent" => {
             let limit = args.get("limit").and_then(|v| v.as_u64()).map(|u| u as u32);
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::get_recent_browser_history(&conn, limit) {
@@ -1560,10 +1680,13 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_history_search" => {
-            let query = args.get("query").and_then(|v| v.as_str())
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'query'.".to_string())?;
             let limit = args.get("limit").and_then(|v| v.as_u64()).map(|u| u as u32);
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::search_browser_history(&conn, query, limit) {
@@ -1571,7 +1694,9 @@ async fn execute_browser_tool_internal(
                     success: true,
                     tool_name: tool_name.to_string(),
                     tab_id: None,
-                    data: Some(json!({ "query": query, "count": entries.len(), "entries": entries })),
+                    data: Some(
+                        json!({ "query": query, "count": entries.len(), "entries": entries }),
+                    ),
                     error: None,
                     error_code: None,
                     duration_ms: start.elapsed().as_millis() as u64,
@@ -1589,9 +1714,12 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_history_delete" => {
-            let id = args.get("id").and_then(|v| v.as_str())
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'id'.".to_string())?;
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::delete_browser_history_entry(&conn, id) {
@@ -1600,7 +1728,11 @@ async fn execute_browser_tool_internal(
                     tool_name: tool_name.to_string(),
                     tab_id: None,
                     data: Some(json!({ "id": id, "deleted": deleted })),
-                    error: if deleted { None } else { Some("Record not found".to_string()) },
+                    error: if deleted {
+                        None
+                    } else {
+                        Some("Record not found".to_string())
+                    },
                     error_code: None,
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
@@ -1617,7 +1749,8 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_history_clear" => {
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::clear_browser_history(&conn) {
@@ -1643,7 +1776,8 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_bookmarks_list" => {
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::get_all_browser_bookmarks(&conn) {
@@ -1669,9 +1803,12 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_bookmarks_search" => {
-            let query = args.get("query").and_then(|v| v.as_str())
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'query'.".to_string())?;
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::search_browser_bookmarks(&conn, query) {
@@ -1679,7 +1816,9 @@ async fn execute_browser_tool_internal(
                     success: true,
                     tool_name: tool_name.to_string(),
                     tab_id: None,
-                    data: Some(json!({ "query": query, "count": bookmarks.len(), "bookmarks": bookmarks })),
+                    data: Some(
+                        json!({ "query": query, "count": bookmarks.len(), "bookmarks": bookmarks }),
+                    ),
                     error: None,
                     error_code: None,
                     duration_ms: start.elapsed().as_millis() as u64,
@@ -1697,9 +1836,13 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_bookmark_add" => {
-            let title = args.get("title").and_then(|v| v.as_str())
+            let title = args
+                .get("title")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'title'.".to_string())?;
-            let url = args.get("url").and_then(|v| v.as_str())
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'url'.".to_string())?;
             let folder_id = args.get("folder_id").and_then(|v| v.as_str());
 
@@ -1710,13 +1853,17 @@ async fn execute_browser_tool_internal(
                     tool_name: tool_name.to_string(),
                     tab_id: None,
                     data: None,
-                    error: Some("INVALID_URL: Only standard http:// and https:// URLs can be bookmarked.".to_string()),
+                    error: Some(
+                        "INVALID_URL: Only standard http:// and https:// URLs can be bookmarked."
+                            .to_string(),
+                    ),
                     error_code: Some("INVALID_URL_SCHEME".to_string()),
                     duration_ms: start.elapsed().as_millis() as u64,
                 });
             }
 
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::add_browser_bookmark(&conn, title, url_trimmed, folder_id, None) {
@@ -1742,9 +1889,12 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_bookmark_remove" => {
-            let id = args.get("id").and_then(|v| v.as_str())
+            let id = args
+                .get("id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'id'.".to_string())?;
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::delete_browser_bookmark(&conn, id) {
@@ -1753,7 +1903,11 @@ async fn execute_browser_tool_internal(
                     tool_name: tool_name.to_string(),
                     tab_id: None,
                     data: Some(json!({ "id": id, "deleted": deleted })),
-                    error: if deleted { None } else { Some("Bookmark not found".to_string()) },
+                    error: if deleted {
+                        None
+                    } else {
+                        Some("Bookmark not found".to_string())
+                    },
                     error_code: None,
                     duration_ms: start.elapsed().as_millis() as u64,
                 }),
@@ -1770,9 +1924,13 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_bookmark_open" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let url = args.get("url").and_then(|v| v.as_str())
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'url'.".to_string())?;
 
             match browser_navigate_tab(app, tab_id.to_string(), url.to_string(), state).await {
@@ -1799,12 +1957,17 @@ async fn execute_browser_tool_internal(
 
         // --- Phase 5.6B: Download Manager Tools (Step 16) ---
         "browser_downloads_recent" => {
-            let limit = args.get("limit").and_then(|v| v.as_u64()).map(|n| n as u32).unwrap_or(20);
-            let db_state = app.try_state::<crate::db::DbState>()
+            let limit = args
+                .get("limit")
+                .and_then(|v| v.as_u64())
+                .map(|n| n as u32)
+                .unwrap_or(20);
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "Database state not initialized.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-            let res = crate::db::list_browser_downloads(&conn, Some(limit))
-                .map_err(|e| e.to_string())?;
+            let res =
+                crate::db::list_browser_downloads(&conn, Some(limit)).map_err(|e| e.to_string())?;
 
             Ok(BrowserToolExecutionResult {
                 success: true,
@@ -1818,29 +1981,43 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_download_get" => {
-            let download_id = args.get("download_id").and_then(|v| v.as_str())
+            let download_id = args
+                .get("download_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'download_id'.".to_string())?;
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "Database state not initialized.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-            let res = crate::db::get_browser_download(&conn, download_id)
-                .map_err(|e| e.to_string())?;
+            let res =
+                crate::db::get_browser_download(&conn, download_id).map_err(|e| e.to_string())?;
 
             Ok(BrowserToolExecutionResult {
                 success: res.is_some(),
                 tool_name: tool_name.to_string(),
                 tab_id: None,
                 data: Some(json!({ "download": res })),
-                error: if res.is_none() { Some("Download record not found.".to_string()) } else { None },
-                error_code: if res.is_none() { Some("DOWNLOAD_NOT_FOUND".to_string()) } else { None },
+                error: if res.is_none() {
+                    Some("Download record not found.".to_string())
+                } else {
+                    None
+                },
+                error_code: if res.is_none() {
+                    Some("DOWNLOAD_NOT_FOUND".to_string())
+                } else {
+                    None
+                },
                 duration_ms: start.elapsed().as_millis() as u64,
             })
         }
 
         "browser_download_cancel" => {
-            let download_id = args.get("download_id").and_then(|v| v.as_str())
+            let download_id = args
+                .get("download_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'download_id'.".to_string())?;
-            let cancelled = crate::browser_download::GLOBAL_DOWNLOAD_MGR.cancel_download(download_id);
+            let cancelled =
+                crate::browser_download::GLOBAL_DOWNLOAD_MGR.cancel_download(download_id);
 
             Ok(BrowserToolExecutionResult {
                 success: true,
@@ -1854,12 +2031,25 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_download_start" => {
-            let url = args.get("url").and_then(|v| v.as_str())
+            let url = args
+                .get("url")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'url'.".to_string())?;
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let suggested_filename = args.get("suggested_filename").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let suggested_filename = args
+                .get("suggested_filename")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
-            match crate::browser_download::GLOBAL_DOWNLOAD_MGR.start_download(app, url.to_string(), tab_id.clone(), suggested_filename) {
+            match crate::browser_download::GLOBAL_DOWNLOAD_MGR.start_download(
+                app,
+                url.to_string(),
+                tab_id.clone(),
+                suggested_filename,
+            ) {
                 Ok(rec) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -1882,7 +2072,8 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_profiles_list" => {
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::list_browser_profiles(&conn) {
@@ -1908,9 +2099,12 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_profile_get" => {
-            let profile_id = args.get("profile_id").and_then(|v| v.as_str())
+            let profile_id = args
+                .get("profile_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'profile_id'.".to_string())?;
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             match crate::db::get_browser_profile(&conn, profile_id) {
@@ -1936,10 +2130,20 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_profile_create" => {
-            let name = args.get("name").and_then(|v| v.as_str())
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'name'.".to_string())?;
-            let profile_type = args.get("profile_type").and_then(|v| v.as_str()).unwrap_or("USER");
-            match crate::browser_profile::GLOBAL_PROFILE_MGR.create_profile(&app, name, profile_type, None) {
+            let profile_type = args
+                .get("profile_type")
+                .and_then(|v| v.as_str())
+                .unwrap_or("USER");
+            match crate::browser_profile::GLOBAL_PROFILE_MGR.create_profile(
+                &app,
+                name,
+                profile_type,
+                None,
+            ) {
                 Ok(profile) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -1962,7 +2166,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_profile_switch" => {
-            let profile_id = args.get("profile_id").and_then(|v| v.as_str())
+            let profile_id = args
+                .get("profile_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'profile_id'.".to_string())?;
             match crate::browser_profile::GLOBAL_PROFILE_MGR.switch_profile(&app, profile_id) {
                 Ok(profile) => Ok(BrowserToolExecutionResult {
@@ -1989,13 +2195,18 @@ async fn execute_browser_tool_internal(
         // Phase 5.6E: Privacy & Content Blocking Tool Execution
         "browser_protection_status" => {
             let tab_id = args.get("tab_id").and_then(|v| v.as_str());
-            let stats = tab_id.map(|tid| crate::browser_privacy::GLOBAL_POLICY_ENGINE.get_tab_stats(tid));
+            let stats =
+                tab_id.map(|tid| crate::browser_privacy::GLOBAL_POLICY_ENGINE.get_tab_stats(tid));
             let db_state = app.try_state::<crate::db::DbState>();
             let settings = if let Some(dbs) = db_state {
                 if let Ok(conn) = dbs.conn.lock() {
                     crate::db::get_browser_privacy_settings(&conn, "global").ok()
-                } else { None }
-            } else { None };
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
 
             Ok(BrowserToolExecutionResult {
                 success: true,
@@ -2014,7 +2225,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_site_protection_status" => {
-            let domain = args.get("domain").and_then(|v| v.as_str())
+            let domain = args
+                .get("domain")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'domain'.".to_string())?;
             let clean = domain.trim().to_lowercase();
             let db_state = app.try_state::<crate::db::DbState>();
@@ -2043,10 +2256,13 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_site_allow" => {
-            let domain = args.get("domain").and_then(|v| v.as_str())
+            let domain = args
+                .get("domain")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'domain'.".to_string())?;
             let clean = domain.trim().to_lowercase();
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "Database state not available".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             crate::db::add_browser_privacy_allowlist(&conn, &clean, "global")
@@ -2068,10 +2284,13 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_site_disallow" => {
-            let domain = args.get("domain").and_then(|v| v.as_str())
+            let domain = args
+                .get("domain")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'domain'.".to_string())?;
             let clean = domain.trim().to_lowercase();
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "Database state not available".to_string())?;
             let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
             let removed = crate::db::remove_browser_privacy_allowlist(&conn, &clean, None)
@@ -2095,14 +2314,26 @@ async fn execute_browser_tool_internal(
 
         // Phase 5.6F-A: Advanced Utilities Execution
         "browser_find" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let query = args.get("query").and_then(|v| v.as_str())
+            let query = args
+                .get("query")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'query'.".to_string())?;
             let forward = args.get("forward").and_then(|v| v.as_bool());
             let case_sensitive = args.get("case_sensitive").and_then(|v| v.as_bool());
 
-            match crate::browser::browser_find_in_page(app, tab_id.to_string(), query.to_string(), forward, case_sensitive).await {
+            match crate::browser::browser_find_in_page(
+                app,
+                tab_id.to_string(),
+                query.to_string(),
+                forward,
+                case_sensitive,
+            )
+            .await
+            {
                 Ok(res) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -2125,9 +2356,13 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_zoom" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let level = args.get("level").and_then(|v| v.as_f64())
+            let level = args
+                .get("level")
+                .and_then(|v| v.as_f64())
                 .ok_or_else(|| "Missing required parameter 'level'.".to_string())?;
 
             match crate::browser::browser_zoom_set(app, tab_id.to_string(), level, state).await {
@@ -2153,7 +2388,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_print" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match crate::browser::browser_print_tab(app, tab_id.to_string()).await {
@@ -2180,7 +2417,9 @@ async fn execute_browser_tool_internal(
 
         // Phase 5.6F-B: Save Page & Reader Mode Execution
         "browser_reader_mode_enter" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match crate::browser::browser_reader_mode_enter(app, tab_id.to_string(), state).await {
@@ -2206,7 +2445,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_reader_mode_exit" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match crate::browser::browser_reader_mode_exit(app, tab_id.to_string(), state).await {
@@ -2232,7 +2473,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_reader_mode_get" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match crate::browser::browser_reader_mode_get(tab_id.to_string()).await {
@@ -2258,11 +2501,23 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_save_page" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let custom_filename = args.get("custom_filename").and_then(|v| v.as_str()).map(|s| s.to_string());
+            let custom_filename = args
+                .get("custom_filename")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
 
-            match crate::browser::browser_save_page_html(app, tab_id.to_string(), custom_filename, state).await {
+            match crate::browser::browser_save_page_html(
+                app,
+                tab_id.to_string(),
+                custom_filename,
+                state,
+            )
+            .await
+            {
                 Ok(path) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -2286,8 +2541,12 @@ async fn execute_browser_tool_internal(
 
         // --- Phase 5.6F-C: Tab Groups Tool Execution ---
         "browser_tab_groups_list" => {
-            let profile_id = args.get("profile_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let db_state = app.try_state::<crate::db::DbState>()
+            let profile_id = args
+                .get("profile_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
 
             match crate::browser::browser_tab_group_list(profile_id, db_state).await {
@@ -2313,14 +2572,31 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_tab_group_create" => {
-            let name = args.get("name").and_then(|v| v.as_str())
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'name'.".to_string())?;
-            let color = args.get("color").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let profile_id = args.get("profile_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let db_state = app.try_state::<crate::db::DbState>()
+            let color = args
+                .get("color")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let profile_id = args
+                .get("profile_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
 
-            match crate::browser::browser_tab_group_create(name.to_string(), profile_id, color, db_state, state).await {
+            match crate::browser::browser_tab_group_create(
+                name.to_string(),
+                profile_id,
+                color,
+                db_state,
+                state,
+            )
+            .await
+            {
                 Ok(group) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -2343,15 +2619,30 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_tab_group_rename" => {
-            let group_id = args.get("group_id").and_then(|v| v.as_str())
+            let group_id = args
+                .get("group_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'group_id'.".to_string())?;
-            let name = args.get("name").and_then(|v| v.as_str())
+            let name = args
+                .get("name")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'name'.".to_string())?;
-            let color = args.get("color").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let db_state = app.try_state::<crate::db::DbState>()
+            let color = args
+                .get("color")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
 
-            match crate::browser::browser_tab_group_rename(group_id.to_string(), name.to_string(), color, db_state).await {
+            match crate::browser::browser_tab_group_rename(
+                group_id.to_string(),
+                name.to_string(),
+                color,
+                db_state,
+            )
+            .await
+            {
                 Ok(group) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -2374,12 +2665,17 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_tab_group_delete" => {
-            let group_id = args.get("group_id").and_then(|v| v.as_str())
+            let group_id = args
+                .get("group_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'group_id'.".to_string())?;
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
 
-            match crate::browser::browser_tab_group_delete(group_id.to_string(), db_state, state).await {
+            match crate::browser::browser_tab_group_delete(group_id.to_string(), db_state, state)
+                .await
+            {
                 Ok(ok) => Ok(BrowserToolExecutionResult {
                     success: ok,
                     tool_name: tool_name.to_string(),
@@ -2402,14 +2698,26 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_tab_group_move_tab" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let group_id = args.get("group_id").and_then(|v| v.as_str())
+            let group_id = args
+                .get("group_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'group_id'.".to_string())?;
-            let db_state = app.try_state::<crate::db::DbState>()
+            let db_state = app
+                .try_state::<crate::db::DbState>()
                 .ok_or_else(|| "DB_UNAVAILABLE: Database state is not loaded.".to_string())?;
 
-            match crate::browser::browser_tab_group_move_tab(tab_id.to_string(), group_id.to_string(), db_state, state).await {
+            match crate::browser::browser_tab_group_move_tab(
+                tab_id.to_string(),
+                group_id.to_string(),
+                db_state,
+                state,
+            )
+            .await
+            {
                 Ok(tab) => Ok(BrowserToolExecutionResult {
                     success: true,
                     tool_name: tool_name.to_string(),
@@ -2432,7 +2740,9 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_tab_group_remove_tab" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
 
             match crate::browser::browser_tab_group_remove_tab(tab_id.to_string(), state).await {
@@ -2458,9 +2768,23 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_new_tab" => {
-            let initial_url = args.get("url").and_then(|v| v.as_str()).map(|s| s.to_string());
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str()).map(|s| s.to_string())
-                .unwrap_or_else(|| format!("tab_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_millis()));
+            let initial_url = args
+                .get("url")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| {
+                    format!(
+                        "tab_{}",
+                        std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .unwrap_or_default()
+                            .as_millis()
+                    )
+                });
 
             match browser_create_tab(app, tab_id.clone(), initial_url, None, None, state).await {
                 Ok(tab) => Ok(BrowserToolExecutionResult {
@@ -2489,14 +2813,27 @@ async fn execute_browser_tool_internal(
         }
 
         "browser_select_option" => {
-            let tab_id = args.get("tab_id").and_then(|v| v.as_str())
+            let tab_id = args
+                .get("tab_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'tab_id'.".to_string())?;
-            let element_id = args.get("element_id").and_then(|v| v.as_str())
+            let element_id = args
+                .get("element_id")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'element_id'.".to_string())?;
-            let value = args.get("value").and_then(|v| v.as_str())
+            let value = args
+                .get("value")
+                .and_then(|v| v.as_str())
                 .ok_or_else(|| "Missing required parameter 'value'.".to_string())?;
 
-            match crate::browser::browser_select_option(app, tab_id.to_string(), element_id.to_string(), value.to_string()).await {
+            match crate::browser::browser_select_option(
+                app,
+                tab_id.to_string(),
+                element_id.to_string(),
+                value.to_string(),
+            )
+            .await
+            {
                 Ok(res) => Ok(BrowserToolExecutionResult {
                     success: res.success,
                     tool_name: tool_name.to_string(),
@@ -2522,7 +2859,10 @@ async fn execute_browser_tool_internal(
             }
         }
 
-        _ => Err(format!("UNKNOWN_BROWSER_TOOL: Tool '{}' is not registered in the Browser Tool Layer.", tool_name)),
+        _ => Err(format!(
+            "UNKNOWN_BROWSER_TOOL: Tool '{}' is not registered in the Browser Tool Layer.",
+            tool_name
+        )),
     }
 }
 

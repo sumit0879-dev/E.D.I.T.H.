@@ -223,7 +223,8 @@ impl DomainExecutor for EdithDomainExecutor {
         request: &'a ToolRequest,
         _definition: &'a ToolDefinition,
         cancel_token: ScopedCancellationToken,
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ToolExecutionError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ToolExecutionError>> + Send + 'a>>
+    {
         let state = self.runtime_state.clone();
         let tool_name = request.tool_name.clone();
         let args = request.arguments.clone();
@@ -277,14 +278,14 @@ impl DomainExecutor for EdithDomainExecutor {
                 }
 
                 "edith.get_task_details" => {
-                    let task_id = args
-                        .get("task_id")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
-                            ToolExecutionError::InvalidArguments(
-                                "Missing required argument 'task_id'.".to_string(),
-                            )
-                        })?;
+                    let task_id =
+                        args.get("task_id")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ToolExecutionError::InvalidArguments(
+                                    "Missing required argument 'task_id'.".to_string(),
+                                )
+                            })?;
 
                     match state.get_task_details(task_id).await {
                         Some(details) => serde_json::to_value(details).map_err(|e| {
@@ -354,14 +355,14 @@ impl DomainExecutor for EdithDomainExecutor {
                 // 2. SELF-CONTROL TOOLS (Guardrail 1: Ownership Enforced)
                 // ============================================================
                 "edith.cancel_task" => {
-                    let task_id_str = args
-                        .get("task_id")
-                        .and_then(|v| v.as_str())
-                        .ok_or_else(|| {
-                            ToolExecutionError::InvalidArguments(
-                                "Missing required argument 'task_id'.".to_string(),
-                            )
-                        })?;
+                    let task_id_str =
+                        args.get("task_id")
+                            .and_then(|v| v.as_str())
+                            .ok_or_else(|| {
+                                ToolExecutionError::InvalidArguments(
+                                    "Missing required argument 'task_id'.".to_string(),
+                                )
+                            })?;
                     let reason = args
                         .get("reason")
                         .and_then(|v| v.as_str())
@@ -370,16 +371,17 @@ impl DomainExecutor for EdithDomainExecutor {
                     let task_id = TaskId::from(task_id_str);
 
                     // Ownership Verification: Inspect target task in TaskRuntime
-                    let target_task = state
-                        .task_runtime()
-                        .get_task(&task_id)
-                        .await
-                        .ok_or_else(|| {
-                            ToolExecutionError::DomainError(format!(
-                                "Task '{}' not found for cancellation.",
-                                task_id_str
-                            ))
-                        })?;
+                    let target_task =
+                        state
+                            .task_runtime()
+                            .get_task(&task_id)
+                            .await
+                            .ok_or_else(|| {
+                                ToolExecutionError::DomainError(format!(
+                                    "Task '{}' not found for cancellation.",
+                                    task_id_str
+                                ))
+                            })?;
 
                     // Check caller scope authorization
                     let mut authorized = false;
@@ -396,13 +398,17 @@ impl DomainExecutor for EdithDomainExecutor {
 
                     // B: Task belongs to the same active session
                     if let Some(ref caller_session) = correlation.conversation_id {
-                        if target_task.correlation.conversation_id.as_deref() == Some(caller_session) {
+                        if target_task.correlation.conversation_id.as_deref()
+                            == Some(caller_session)
+                        {
                             authorized = true;
                         }
                     }
 
                     // C: System-owned or protected tasks require operator confirmation
-                    if target_task.owner == TaskOwner::System || target_task.owner == TaskOwner::User {
+                    if target_task.owner == TaskOwner::System
+                        || target_task.owner == TaskOwner::User
+                    {
                         // If not within caller turn/session, reject unauthorized mutation
                         if !authorized {
                             return Err(ToolExecutionError::DomainError(format!(
@@ -457,10 +463,7 @@ impl DomainExecutor for EdithDomainExecutor {
                         )));
                     }
 
-                    let cancelled = state
-                        .tool_router()
-                        .cancel_execution(exec_id)
-                        .await;
+                    let cancelled = state.tool_router().cancel_execution(exec_id).await;
 
                     Ok(json!({
                         "cancelled": cancelled,

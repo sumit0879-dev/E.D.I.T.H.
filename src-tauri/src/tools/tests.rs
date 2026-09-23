@@ -230,7 +230,8 @@ async fn test_10_policy_allow_dispatches_to_executor() {
     domain_executors.register(mock_executor.clone());
 
     let policy_engine = Arc::new(PolicyEngine::new(None));
-    let router = ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
+    let router =
+        ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
 
     let req = ToolRequest::simple("test.read", json!({ "url": "https://example.com" }));
     let res = router.execute(req).await;
@@ -265,7 +266,8 @@ async fn test_11_policy_confirmation_required_pauses_with_approval_id() {
     domain_executors.register(mock_executor.clone());
 
     let policy_engine = Arc::new(PolicyEngine::new(None));
-    let router = ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
+    let router =
+        ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
 
     // Target password field triggers confirmation
     let req = ToolRequest::simple(
@@ -352,7 +354,8 @@ async fn test_13_policy_blocked_fails_closed_no_executor_invocation() {
     let mut constraints = PolicyConstraints::default();
     constraints.allow_external_services = false;
     let policy_engine = Arc::new(PolicyEngine::with_constraints(None, constraints));
-    let router = ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
+    let router =
+        ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
 
     let req = ToolRequest::simple("test.blocked", json!({ "url": "https://example.com" }));
     let res = router.execute(req).await;
@@ -373,7 +376,8 @@ async fn test_14_policy_restricted_preserves_constraints() {
     domain_executors.register(mock_executor.clone());
 
     let policy_engine = Arc::new(PolicyEngine::new(None));
-    let router = ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
+    let router =
+        ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
 
     let req = ToolRequest::simple("test.restricted", json!({ "url": "https://example.com" }));
     let res = router.execute(req).await;
@@ -487,9 +491,7 @@ async fn test_18_scoped_cancellation_cancels_in_flight() {
     let exec_id = req.execution_id.to_string();
 
     let router_clone = router.clone();
-    let join_handle = tokio::spawn(async move {
-        router_clone.execute(req).await
-    });
+    let join_handle = tokio::spawn(async move { router_clone.execute(req).await });
 
     // Wait 50ms then trigger cancellation
     tokio::time::sleep(Duration::from_millis(50)).await;
@@ -515,7 +517,8 @@ async fn test_19_execution_timeout_returns_timeout_error() {
     domain_executors.register(mock_executor);
 
     let policy_engine = Arc::new(PolicyEngine::new(None));
-    let router = ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
+    let router =
+        ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
 
     let req = ToolRequest::simple("test.hang", json!({ "url": "https://example.com" }));
     let result = router.execute(req).await;
@@ -538,7 +541,8 @@ async fn test_20_error_normalization_typed_tool_execution_error() {
     domain_executors.register(mock_executor);
 
     let policy_engine = Arc::new(PolicyEngine::new(None));
-    let router = ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
+    let router =
+        ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
 
     let req = ToolRequest::simple("test.err", json!({ "url": "https://example.com" }));
     let res = router.execute(req).await;
@@ -562,12 +566,17 @@ async fn test_21_correlated_events_emitted_lifecycle() {
     domain_executors.register(mock_executor);
 
     let policy_engine = Arc::new(PolicyEngine::new(None));
-    let router = ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
+    let router =
+        ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
 
     let mut correlation = EventCorrelation::default();
     correlation.conversation_id = Some("conv-123".to_string());
     correlation.turn_id = Some("turn-456".to_string());
-    let req = ToolRequest::new("test.event", json!({ "url": "https://example.com" }), correlation);
+    let req = ToolRequest::new(
+        "test.event",
+        json!({ "url": "https://example.com" }),
+        correlation,
+    );
 
     let res = router.execute(req).await;
     assert!(res.is_success());
@@ -576,10 +585,13 @@ async fn test_21_correlated_events_emitted_lifecycle() {
 #[tokio::test]
 async fn test_22_browser_domain_adapter_handles_navigation() {
     let browser_executor = BrowserDomainExecutor::new(None);
-    let req = ToolRequest::simple("browser.navigate", json!({
-        "url": "https://example.com",
-        "tab_id": "test_tab"
-    }));
+    let req = ToolRequest::simple(
+        "browser.navigate",
+        json!({
+            "url": "https://example.com",
+            "tab_id": "test_tab"
+        }),
+    );
     let def = get_browser_definitions()
         .into_iter()
         .find(|d| d.name == "browser.navigate")
@@ -608,7 +620,10 @@ async fn test_23_browser_domain_adapter_validates_safety_constraints() {
     let res = ArgumentValidator::validate(&invalid_args, &def.parameters_schema);
 
     assert!(res.is_err());
-    assert!(matches!(res.unwrap_err(), ToolExecutionError::InvalidArguments(_)));
+    assert!(matches!(
+        res.unwrap_err(),
+        ToolExecutionError::InvalidArguments(_)
+    ));
 }
 
 #[tokio::test]
@@ -622,14 +637,19 @@ async fn test_24_tool_execution_under_task_turn_propagates_correlation() {
     domain_executors.register(mock_executor);
 
     let policy_engine = Arc::new(PolicyEngine::new(None));
-    let router = ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
+    let router =
+        ToolRouter::with_defaults(registry, Arc::new(domain_executors), policy_engine, None);
 
     let mut correlation = EventCorrelation::default();
     correlation.conversation_id = Some("sess-999".to_string());
     correlation.turn_id = Some("turn-888".to_string());
     correlation.task_id = Some("task-777".to_string());
 
-    let req = ToolRequest::new("test.task_tool", json!({ "url": "https://edith.internal" }), correlation);
+    let req = ToolRequest::new(
+        "test.task_tool",
+        json!({ "url": "https://edith.internal" }),
+        correlation,
+    );
     let res = router.execute(req).await;
     assert!(res.is_success());
 }

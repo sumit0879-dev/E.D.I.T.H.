@@ -23,8 +23,19 @@ pub fn scrub_url(raw_url: &str) -> String {
 
     if let Some((base, query)) = raw_url.split_once('?') {
         let sensitive_keys = [
-            "token", "key", "password", "pwd", "auth", "api_key", "apikey",
-            "code", "secret", "sig", "signature", "access_token", "refresh_token",
+            "token",
+            "key",
+            "password",
+            "pwd",
+            "auth",
+            "api_key",
+            "apikey",
+            "code",
+            "secret",
+            "sig",
+            "signature",
+            "access_token",
+            "refresh_token",
         ];
 
         let mut cleaned_params = Vec::new();

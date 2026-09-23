@@ -110,9 +110,18 @@ impl ToolRouter {
                     ActionTarget::Url(url.to_string())
                 } else if args.get("element_id").is_some() || args.get("selector").is_some() {
                     ActionTarget::BrowserElement {
-                        selector: args.get("selector").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                        element_id: args.get("element_id").and_then(|v| v.as_str()).map(|s| s.to_string()),
-                        text: args.get("text").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                        selector: args
+                            .get("selector")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        element_id: args
+                            .get("element_id")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
+                        text: args
+                            .get("text")
+                            .and_then(|v| v.as_str())
+                            .map(|s| s.to_string()),
                     }
                 } else {
                     ActionTarget::None
@@ -184,7 +193,10 @@ impl ToolRouter {
             Some(d) => d,
             None => {
                 let duration = start.elapsed().as_millis() as u64;
-                let err_msg = format!("Tool '{}' not registered in Universal Tool Registry.", tool_name);
+                let err_msg = format!(
+                    "Tool '{}' not registered in Universal Tool Registry.",
+                    tool_name
+                );
                 self.emit_tool_event(
                     request.correlation.clone(),
                     ToolPayload::Failed {
@@ -204,7 +216,9 @@ impl ToolRouter {
         };
 
         // 2. Validate arguments against JSON Schema
-        if let Err(val_err) = ArgumentValidator::validate(&request.arguments, &tool_def.parameters_schema) {
+        if let Err(val_err) =
+            ArgumentValidator::validate(&request.arguments, &tool_def.parameters_schema)
+        {
             let duration = start.elapsed().as_millis() as u64;
             self.emit_tool_event(
                 request.correlation.clone(),
@@ -236,7 +250,9 @@ impl ToolRouter {
 
         if cancel_token.is_cancelled() {
             let duration = start.elapsed().as_millis() as u64;
-            self.cancellation.cleanup_execution(execution_id.as_str()).await;
+            self.cancellation
+                .cleanup_execution(execution_id.as_str())
+                .await;
             self.emit_tool_event(
                 request.correlation.clone(),
                 ToolPayload::Cancelled {
@@ -256,11 +272,12 @@ impl ToolRouter {
         // 4. Formulate ActionRequest & PolicyContext for Host-Enforced PolicyEngine
         let target = Self::resolve_action_target(&tool_def, &request.arguments);
         let domain_str = tool_def.domain.as_str();
-        let operation = if let Some(suffix) = tool_def.name.strip_prefix(&format!("{}.", domain_str)) {
-            suffix.to_string()
-        } else {
-            tool_def.name.clone()
-        };
+        let operation =
+            if let Some(suffix) = tool_def.name.strip_prefix(&format!("{}.", domain_str)) {
+                suffix.to_string()
+            } else {
+                tool_def.name.clone()
+            };
         let action_req = ActionRequest::new(
             domain_str,
             operation,
@@ -287,7 +304,9 @@ impl ToolRouter {
         match decision.outcome {
             PolicyOutcome::Blocked => {
                 let duration = start.elapsed().as_millis() as u64;
-                self.cancellation.cleanup_execution(execution_id.as_str()).await;
+                self.cancellation
+                    .cleanup_execution(execution_id.as_str())
+                    .await;
                 self.emit_tool_event(
                     request.correlation.clone(),
                     ToolPayload::Failed {
@@ -306,7 +325,9 @@ impl ToolRouter {
             }
             PolicyOutcome::ConfirmationRequired => {
                 let duration = start.elapsed().as_millis() as u64;
-                self.cancellation.cleanup_execution(execution_id.as_str()).await;
+                self.cancellation
+                    .cleanup_execution(execution_id.as_str())
+                    .await;
                 let approval_id = decision.approval_id.unwrap_or_default();
                 self.emit_tool_event(
                     request.correlation.clone(),
@@ -330,7 +351,9 @@ impl ToolRouter {
                 if let Some(ref c) = decision.constraints {
                     if c.read_only && !tool_def.is_read_only {
                         let duration = start.elapsed().as_millis() as u64;
-                        self.cancellation.cleanup_execution(execution_id.as_str()).await;
+                        self.cancellation
+                            .cleanup_execution(execution_id.as_str())
+                            .await;
                         self.emit_tool_event(
                             request.correlation.clone(),
                             ToolPayload::Failed {
@@ -342,7 +365,8 @@ impl ToolRouter {
                         return ToolExecutionResult::blocked(
                             execution_id,
                             tool_name,
-                            "Restricted read-only policy constraint prevents mutating action.".to_string(),
+                            "Restricted read-only policy constraint prevents mutating action."
+                                .to_string(),
                             "RESTRICTED_VIOLATION".to_string(),
                             duration,
                         );
@@ -368,7 +392,9 @@ impl ToolRouter {
             Some(e) => e,
             None => {
                 let duration = start.elapsed().as_millis() as u64;
-                self.cancellation.cleanup_execution(execution_id.as_str()).await;
+                self.cancellation
+                    .cleanup_execution(execution_id.as_str())
+                    .await;
                 let err_msg = format!("No executor registered for domain '{}'.", tool_def.domain);
                 self.emit_tool_event(
                     request.correlation.clone(),
@@ -404,7 +430,9 @@ impl ToolRouter {
         };
 
         // 9. Cleanup Cancellation Token
-        self.cancellation.cleanup_execution(execution_id.as_str()).await;
+        self.cancellation
+            .cleanup_execution(execution_id.as_str())
+            .await;
         let duration = start.elapsed().as_millis() as u64;
 
         // 10. Process Result & Emit Terminal Events

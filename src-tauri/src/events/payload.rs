@@ -165,10 +165,7 @@ pub enum VoicePayload {
     SessionStarted { session_id: String },
 
     #[serde(rename = "state_changed")]
-    StateChanged {
-        state: String,
-        decibel: Option<u32>,
-    },
+    StateChanged { state: String, decibel: Option<u32> },
 
     #[serde(rename = "barge_in")]
     BargeInTriggered { interrupted_source: String },
@@ -180,48 +177,28 @@ pub enum VoicePayload {
     },
 
     #[serde(rename = "realtime_connected")]
-    RealtimeConnected {
-        provider: String,
-        transport: String,
-    },
+    RealtimeConnected { provider: String, transport: String },
 
     #[serde(rename = "transcript_delta")]
-    TranscriptDelta {
-        text: String,
-        is_final: bool,
-    },
+    TranscriptDelta { text: String, is_final: bool },
 
     #[serde(rename = "assistant_audio_delta")]
-    AssistantAudioDelta {
-        sequence: u64,
-        duration_ms: u64,
-    },
+    AssistantAudioDelta { sequence: u64, duration_ms: u64 },
 
     #[serde(rename = "realtime_interrupted")]
-    RealtimeInterrupted {
-        reason: String,
-    },
+    RealtimeInterrupted { reason: String },
 
     #[serde(rename = "realtime_reconnecting")]
-    RealtimeReconnecting {
-        attempt: u32,
-        max_attempts: u32,
-    },
+    RealtimeReconnecting { attempt: u32, max_attempts: u32 },
 
     #[serde(rename = "realtime_fallback_triggered")]
-    RealtimeFallbackTriggered {
-        reason: String,
-    },
+    RealtimeFallbackTriggered { reason: String },
 
     #[serde(rename = "realtime_error")]
-    RealtimeError {
-        error: String,
-    },
+    RealtimeError { error: String },
 
     #[serde(rename = "duplex_state_changed")]
-    DuplexStateChanged {
-        state: DuplexVoiceState,
-    },
+    DuplexStateChanged { state: DuplexVoiceState },
 
     #[serde(rename = "visualizer_energy")]
     VisualizerEnergy {
@@ -367,4 +344,3 @@ pub enum SecurityPolicyPayload {
         notes: Option<String>,
     },
 }
-

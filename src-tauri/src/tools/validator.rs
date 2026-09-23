@@ -8,7 +8,9 @@ impl ArgumentValidator {
     pub fn validate(args: &Value, schema: &Value) -> Result<(), ToolExecutionError> {
         // 1. Arguments payload must be a JSON Object
         let obj = args.as_object().ok_or_else(|| {
-            ToolExecutionError::InvalidArguments("Arguments payload must be a JSON object.".to_string())
+            ToolExecutionError::InvalidArguments(
+                "Arguments payload must be a JSON object.".to_string(),
+            )
         })?;
 
         // 2. Validate required properties

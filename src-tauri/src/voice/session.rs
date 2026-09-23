@@ -152,6 +152,15 @@ impl VoiceController {
         self
     }
 
+    /// Associates an explicit AudioDeviceManager (e.g. for testing with mock provider).
+    pub fn with_device_manager(
+        mut self,
+        device_manager: Arc<super::devices::AudioDeviceManager>,
+    ) -> Self {
+        self.device_manager = device_manager;
+        self
+    }
+
     /// Sets the realtime engine on an existing Arc/shared controller.
     pub async fn set_realtime_engine(&self, engine: Arc<super::realtime::RealtimeVoiceEngine>) {
         let mut lock = self.realtime_engine.write().await;
@@ -177,11 +186,7 @@ impl VoiceController {
     }
 
     /// Helper to emit correlated voice events via EventEmitter if configured.
-    fn emit_voice_event(
-        &self,
-        session: &VoiceSession,
-        payload: VoicePayload,
-    ) {
+    fn emit_voice_event(&self, session: &VoiceSession, payload: VoicePayload) {
         if let Some(ref emitter) = self.event_emitter {
             let mut correlation = EventCorrelation::for_voice(
                 session.id.to_string(),
@@ -278,16 +283,23 @@ impl VoiceController {
         credentials: Option<String>,
     ) -> Result<String, VoiceError> {
         // 1. Normalize without fabricating dummy audio buffers
-        let transcript = WebSpeechSTTBridge::normalize_transcript(raw_text, confidence, language, true)?;
+        let transcript =
+            WebSpeechSTTBridge::normalize_transcript(raw_text, confidence, language, true)?;
 
         let mut lock = self.active_session.write().await;
         let session = match *lock {
             Some(ref mut s) if &s.id == session_id => s,
-            _ => return Err(VoiceError::Internal("Voice session not found or expired".to_string())),
+            _ => {
+                return Err(VoiceError::Internal(
+                    "Voice session not found or expired".to_string(),
+                ))
+            }
         };
 
         if session.cancellation_token.is_cancelled() {
-            return Err(VoiceError::Cancelled("Session cancelled prior to execution".to_string()));
+            return Err(VoiceError::Cancelled(
+                "Session cancelled prior to execution".to_string(),
+            ));
         }
 
         let _ = self.capture_driver.stop_capture();
@@ -312,7 +324,9 @@ impl VoiceController {
                 client_turn_id: None,
             })
             .await
-            .map_err(|e| VoiceError::Internal(format!("Failed to submit conversation turn: {}", e)))?;
+            .map_err(|e| {
+                VoiceError::Internal(format!("Failed to submit conversation turn: {}", e))
+            })?;
 
         let authoritative_turn_id = TurnId::from_string(turn_submission.turn_id);
 
@@ -331,7 +345,9 @@ impl VoiceController {
 
         // Check cancellation
         if session_clone.cancellation_token.is_cancelled() {
-            return Err(VoiceError::Cancelled("Session cancelled after turn execution".to_string()));
+            return Err(VoiceError::Cancelled(
+                "Session cancelled after turn execution".to_string(),
+            ));
         }
 
         // 5. Synthesize Assistant Response via TTSAdapter
@@ -356,7 +372,9 @@ impl VoiceController {
             .await?;
 
         if session_clone.cancellation_token.is_cancelled() {
-            return Err(VoiceError::Cancelled("Session cancelled after synthesis".to_string()));
+            return Err(VoiceError::Cancelled(
+                "Session cancelled after synthesis".to_string(),
+            ));
         }
 
         // 6. Play via single authoritative AudioOutputDriver
@@ -392,11 +410,17 @@ impl VoiceController {
         let mut lock = self.active_session.write().await;
         let session = match *lock {
             Some(ref mut s) if &s.id == session_id => s,
-            _ => return Err(VoiceError::Internal("Voice session not found or expired".to_string())),
+            _ => {
+                return Err(VoiceError::Internal(
+                    "Voice session not found or expired".to_string(),
+                ))
+            }
         };
 
         if session.cancellation_token.is_cancelled() {
-            return Err(VoiceError::Cancelled("Session cancelled before STT".to_string()));
+            return Err(VoiceError::Cancelled(
+                "Session cancelled before STT".to_string(),
+            ));
         }
 
         let _ = self.capture_driver.stop_capture();
@@ -464,7 +488,10 @@ impl VoiceController {
                 let _ = self.audio_output.stop();
 
                 if let Some(ref tid) = session.turn_id {
-                    let _ = self.conversation_core.cancel_turn(tid, reason.clone()).await;
+                    let _ = self
+                        .conversation_core
+                        .cancel_turn(tid, reason.clone())
+                        .await;
                 }
 
                 session.state = VoiceSessionState::Cancelled;
@@ -497,7 +524,12 @@ impl VoiceController {
                         | super::realtime::RealtimeSessionState::Interrupted
                         | super::realtime::RealtimeSessionState::Reconnecting
                 );
-                let active_turn = rt_session.active_turn_id.read().await.as_ref().map(|t| t.to_string());
+                let active_turn = rt_session
+                    .active_turn_id
+                    .read()
+                    .await
+                    .as_ref()
+                    .map(|t| t.to_string());
                 return VoiceStatusSummary {
                     is_active,
                     mode: "realtime".to_string(),
@@ -516,19 +548,38 @@ impl VoiceController {
                     },
                     duplex_state: Some(crate::events::DuplexVoiceState {
                         session: match &rt_session.state {
-                            super::realtime::RealtimeSessionState::Connecting => crate::events::SessionLifecycleState::Connecting,
-                            super::realtime::RealtimeSessionState::Connected | super::realtime::RealtimeSessionState::Listening => crate::events::SessionLifecycleState::Connected,
-                            super::realtime::RealtimeSessionState::Reconnecting => crate::events::SessionLifecycleState::Reconnecting,
-                            super::realtime::RealtimeSessionState::Failed(_) => crate::events::SessionLifecycleState::Error,
+                            super::realtime::RealtimeSessionState::Connecting => {
+                                crate::events::SessionLifecycleState::Connecting
+                            }
+                            super::realtime::RealtimeSessionState::Connected
+                            | super::realtime::RealtimeSessionState::Listening => {
+                                crate::events::SessionLifecycleState::Connected
+                            }
+                            super::realtime::RealtimeSessionState::Reconnecting => {
+                                crate::events::SessionLifecycleState::Reconnecting
+                            }
+                            super::realtime::RealtimeSessionState::Failed(_) => {
+                                crate::events::SessionLifecycleState::Error
+                            }
                             _ => crate::events::SessionLifecycleState::Connected,
                         },
-                        input: if is_active { crate::events::InputChannelState::ListeningAmbient } else { crate::events::InputChannelState::Inactive },
-                        output: if matches!(rt_session.state, super::realtime::RealtimeSessionState::Speaking) {
+                        input: if is_active {
+                            crate::events::InputChannelState::ListeningAmbient
+                        } else {
+                            crate::events::InputChannelState::Inactive
+                        },
+                        output: if matches!(
+                            rt_session.state,
+                            super::realtime::RealtimeSessionState::Speaking
+                        ) {
                             crate::events::OutputChannelState::AssistantSpeaking
                         } else {
                             crate::events::OutputChannelState::Silent
                         },
-                        processing: if matches!(rt_session.state, super::realtime::RealtimeSessionState::Processing) {
+                        processing: if matches!(
+                            rt_session.state,
+                            super::realtime::RealtimeSessionState::Processing
+                        ) {
                             crate::events::ProcessingState::ModelInferring
                         } else {
                             crate::events::ProcessingState::Idle
@@ -612,7 +663,8 @@ impl VoiceController {
         drop(rt_lock);
 
         // 2. Start fallback session
-        self.start_session(conversation_id, CaptureOwner::BrowserWebSpeech).await
+        self.start_session(conversation_id, CaptureOwner::BrowserWebSpeech)
+            .await
     }
 
     pub fn audio_output(&self) -> &Arc<dyn AudioOutputDriver> {
@@ -627,7 +679,9 @@ impl VoiceController {
         &self.stt_adapter
     }
 
-    pub fn realtime_engine(&self) -> Arc<RwLock<Option<Arc<super::realtime::RealtimeVoiceEngine>>>> {
+    pub fn realtime_engine(
+        &self,
+    ) -> Arc<RwLock<Option<Arc<super::realtime::RealtimeVoiceEngine>>>> {
         Arc::clone(&self.realtime_engine)
     }
 }

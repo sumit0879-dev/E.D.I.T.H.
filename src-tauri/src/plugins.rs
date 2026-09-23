@@ -1,5 +1,4 @@
 /// plugins.rs — E.D.I.T.H. Plugin System (Rust)
-
 use std::process::Command;
 
 #[cfg(target_os = "windows")]
@@ -7,8 +6,8 @@ use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
-use tauri::command;
 use crate::db::{self, DbState};
+use tauri::command;
 use tauri::State;
 
 // ── Plugin definitions (compile-time) ─────────────────────────────────────────
@@ -82,15 +81,69 @@ pub struct BuiltinApp {
 }
 
 pub const BUILTIN_APPS: &[BuiltinApp] = &[
-    BuiltinApp { id: "bi_notepad",  name: "notepad",         path: "notepad.exe",  keywords: "notepad,text,editor",          builtin: true },
-    BuiltinApp { id: "bi_calc",     name: "calculator",      path: "calc.exe",     keywords: "calculator,calc,math",         builtin: true },
-    BuiltinApp { id: "bi_chrome",   name: "chrome",          path: "chrome",       keywords: "chrome,browser,google",        builtin: true },
-    BuiltinApp { id: "bi_explorer", name: "file explorer",   path: "explorer.exe", keywords: "explorer,files,folder",        builtin: true },
-    BuiltinApp { id: "bi_cmd",      name: "command prompt",  path: "cmd.exe",      keywords: "cmd,command,prompt,terminal",  builtin: true },
-    BuiltinApp { id: "bi_taskmgr",  name: "task manager",    path: "taskmgr.exe",  keywords: "task,manager,process",         builtin: true },
-    BuiltinApp { id: "bi_settings", name: "settings",        path: "ms-settings:", keywords: "settings,control",            builtin: true },
-    BuiltinApp { id: "bi_paint",    name: "paint",           path: "mspaint.exe",  keywords: "paint,draw,art",              builtin: true },
-    BuiltinApp { id: "bi_vscode",   name: "vs code",         path: "code",         keywords: "vscode,code,editor,ide",      builtin: true },
+    BuiltinApp {
+        id: "bi_notepad",
+        name: "notepad",
+        path: "notepad.exe",
+        keywords: "notepad,text,editor",
+        builtin: true,
+    },
+    BuiltinApp {
+        id: "bi_calc",
+        name: "calculator",
+        path: "calc.exe",
+        keywords: "calculator,calc,math",
+        builtin: true,
+    },
+    BuiltinApp {
+        id: "bi_chrome",
+        name: "chrome",
+        path: "chrome",
+        keywords: "chrome,browser,google",
+        builtin: true,
+    },
+    BuiltinApp {
+        id: "bi_explorer",
+        name: "file explorer",
+        path: "explorer.exe",
+        keywords: "explorer,files,folder",
+        builtin: true,
+    },
+    BuiltinApp {
+        id: "bi_cmd",
+        name: "command prompt",
+        path: "cmd.exe",
+        keywords: "cmd,command,prompt,terminal",
+        builtin: true,
+    },
+    BuiltinApp {
+        id: "bi_taskmgr",
+        name: "task manager",
+        path: "taskmgr.exe",
+        keywords: "task,manager,process",
+        builtin: true,
+    },
+    BuiltinApp {
+        id: "bi_settings",
+        name: "settings",
+        path: "ms-settings:",
+        keywords: "settings,control",
+        builtin: true,
+    },
+    BuiltinApp {
+        id: "bi_paint",
+        name: "paint",
+        path: "mspaint.exe",
+        keywords: "paint,draw,art",
+        builtin: true,
+    },
+    BuiltinApp {
+        id: "bi_vscode",
+        name: "vs code",
+        path: "code",
+        keywords: "vscode,code,editor,ide",
+        builtin: true,
+    },
 ];
 
 // ── Plugin state commands (SQLite persistent) ─────────────────────────────────
@@ -146,22 +199,21 @@ pub fn get_builtin_apps() -> Vec<BuiltinApp> {
 #[command]
 pub fn plugin_system_terminal(cmd: &str) -> String {
     match crate::security::CommandPolicy::parse_and_validate(cmd) {
-        Ok((prog, args)) => {
-            match crate::security::CommandPolicy::evaluate_risk(&prog, &args) {
-                Ok((_risk, requires_approval)) => {
-                    if requires_approval {
-                        format!("Security Policy Notice: Command '{0} {1}' is a high-risk operation and requires human approval via the Dev Agent proposal workflow.", prog, args.join(" "))
-                    } else {
-                        let work_dir = std::env::current_dir().ok();
-                        match crate::security::CommandPolicy::execute(&prog, &args, work_dir.as_deref()) {
-                            Ok(res) => res.output,
-                            Err(e) => format!("Execution Error: {}", e),
-                        }
+        Ok((prog, args)) => match crate::security::CommandPolicy::evaluate_risk(&prog, &args) {
+            Ok((_risk, requires_approval)) => {
+                if requires_approval {
+                    format!("Security Policy Notice: Command '{0} {1}' is a high-risk operation and requires human approval via the Dev Agent proposal workflow.", prog, args.join(" "))
+                } else {
+                    let work_dir = std::env::current_dir().ok();
+                    match crate::security::CommandPolicy::execute(&prog, &args, work_dir.as_deref())
+                    {
+                        Ok(res) => res.output,
+                        Err(e) => format!("Execution Error: {}", e),
                     }
                 }
-                Err(policy_err) => format!("Security Policy Violation: {}", policy_err),
             }
-        }
+            Err(policy_err) => format!("Security Policy Violation: {}", policy_err),
+        },
         Err(validation_err) => validation_err,
     }
 }
@@ -169,15 +221,18 @@ pub fn plugin_system_terminal(cmd: &str) -> String {
 #[command]
 pub fn plugin_system_control(action: &str) -> String {
     let script = match action {
-        "volume_up"   => "$obj = new-object -com wscript.shell; $obj.SendKeys([char]175)",
+        "volume_up" => "$obj = new-object -com wscript.shell; $obj.SendKeys([char]175)",
         "volume_down" => "$obj = new-object -com wscript.shell; $obj.SendKeys([char]174)",
-        "mute"        => "$obj = new-object -com wscript.shell; $obj.SendKeys([char]173)",
+        "mute" => "$obj = new-object -com wscript.shell; $obj.SendKeys([char]173)",
         _ => return format!("Unknown action: {}", action),
     };
 
     #[cfg(target_os = "windows")]
     {
-        let _ = Command::new("powershell").args(["-Command", script]).creation_flags(CREATE_NO_WINDOW).spawn();
+        let _ = Command::new("powershell")
+            .args(["-Command", script])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
         format!("System control '{}' executed.", action)
     }
     #[cfg(not(target_os = "windows"))]
@@ -241,7 +296,8 @@ pub async fn plugin_web_search(query: String, api_key: Option<String>) -> String
         "max_results": 5
     });
 
-    match client.post("https://api.tavily.com/search")
+    match client
+        .post("https://api.tavily.com/search")
         .json(&body)
         .send()
         .await
@@ -252,8 +308,16 @@ pub async fn plugin_web_search(query: String, api_key: Option<String>) -> String
                     let mut results = format!("Tavily Answer: {}\n\nSources:\n", answer);
                     if let Some(results_arr) = json.get("results").and_then(|r| r.as_array()) {
                         for res in results_arr {
-                            if let (Some(title), Some(url)) = (res.get("title").and_then(|t| t.as_str()), res.get("url").and_then(|u| u.as_str())) {
-                                results.push_str(&format!("- [{}]({}): {}\n", title, url, res.get("content").and_then(|c| c.as_str()).unwrap_or("")));
+                            if let (Some(title), Some(url)) = (
+                                res.get("title").and_then(|t| t.as_str()),
+                                res.get("url").and_then(|u| u.as_str()),
+                            ) {
+                                results.push_str(&format!(
+                                    "- [{}]({}): {}\n",
+                                    title,
+                                    url,
+                                    res.get("content").and_then(|c| c.as_str()).unwrap_or("")
+                                ));
                             }
                         }
                     }
@@ -262,8 +326,8 @@ pub async fn plugin_web_search(query: String, api_key: Option<String>) -> String
                 return "No answer from Tavily.".to_string();
             }
             "Failed to parse Tavily response".to_string()
-        },
-        Err(e) => format!("Tavily API request failed: {}", e)
+        }
+        Err(e) => format!("Tavily API request failed: {}", e),
     }
 }
 
@@ -274,7 +338,10 @@ pub async fn plugin_media_player(query: String) -> String {
         urlencoding::encode(&query)
     );
 
-    let client = reqwest::Client::builder().timeout(std::time::Duration::from_secs(30)).build().unwrap_or_else(|_| reqwest::Client::new());
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(30))
+        .build()
+        .unwrap_or_else(|_| reqwest::Client::new());
     if let Ok(resp) = client.get(&url).send().await {
         if let Ok(html) = resp.text().await {
             let re = regex::Regex::new(r"watch\?v=([a-zA-Z0-9_-]{11})").unwrap();
@@ -289,34 +356,33 @@ pub async fn plugin_media_player(query: String) -> String {
     }
 
     match open::that(&url) {
-        Ok(_)  => format!("YouTube opened for: {}", query),
+        Ok(_) => format!("YouTube opened for: {}", query),
         Err(e) => format!("Failed to open YouTube: {}", e),
     }
 }
 
-
-
-
+use base64::{engine::general_purpose, Engine as _};
 use screenshots::Screen;
 use std::io::Cursor;
-use base64::{Engine as _, engine::general_purpose};
 
 #[tauri::command]
 pub async fn take_screenshot() -> Result<String, String> {
     let screens = Screen::all().map_err(|e| e.to_string())?;
     let screen = screens.first().ok_or("No screen found")?;
-    
+
     let image = screen.capture().map_err(|e| e.to_string())?;
     let mut buffer = Cursor::new(Vec::new());
-    
+
     let img = image::RgbaImage::from_raw(image.width(), image.height(), image.into_raw())
         .ok_or("Failed to create image")?;
-    
+
     let dyn_img = image::DynamicImage::ImageRgba8(img);
-    dyn_img.write_to(&mut buffer, image::ImageFormat::Jpeg).map_err(|e| e.to_string())?;
-    
+    dyn_img
+        .write_to(&mut buffer, image::ImageFormat::Jpeg)
+        .map_err(|e| e.to_string())?;
+
     let b64 = general_purpose::STANDARD.encode(buffer.into_inner());
-    
+
     Ok(format!("data:image/jpeg;base64,{}", b64))
 }
 
@@ -327,23 +393,31 @@ pub fn plugin_whatsapp(number: &str, message: &str) -> String {
         // Assume India by default if 10 digits
         num = format!("91{}", num);
     }
-    
-    let url = format!("https://wa.me/{}?text={}", num, urlencoding::encode(message));
-    
+
+    let url = format!(
+        "https://wa.me/{}?text={}",
+        num,
+        urlencoding::encode(message)
+    );
+
     if let Err(e) = open::that(&url) {
         return format!("Failed to open WhatsApp: {}", e);
     }
-    
+
     format!("Opening WhatsApp to send message to {}", num)
 }
 
 #[command]
 pub fn plugin_gmail(email: &str, message: &str) -> String {
-    let url = format!("mailto:{}?subject=Message from E.D.I.T.H. AI&body={}", email, urlencoding::encode(message));
-    
+    let url = format!(
+        "mailto:{}?subject=Message from E.D.I.T.H. AI&body={}",
+        email,
+        urlencoding::encode(message)
+    );
+
     if let Err(e) = open::that(&url) {
         return format!("Failed to open Mail client: {}", e);
     }
-    
+
     format!("Opening default Mail client to email {}", email)
 }

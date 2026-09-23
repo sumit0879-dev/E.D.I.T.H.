@@ -135,7 +135,9 @@ impl STTAdapter for MockSTTAdapter {
     ) -> Pin<Box<dyn Future<Output = Result<Transcript, VoiceError>> + Send + 'a>> {
         Box::pin(async move {
             if cancellation.is_cancelled() {
-                return Err(VoiceError::Cancelled("STT cancelled before transcription".to_string()));
+                return Err(VoiceError::Cancelled(
+                    "STT cancelled before transcription".to_string(),
+                ));
             }
 
             if audio.is_empty() {
@@ -146,7 +148,9 @@ impl STTAdapter for MockSTTAdapter {
             if delay > 0 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
                 if cancellation.is_cancelled() {
-                    return Err(VoiceError::Cancelled("STT cancelled during transcription".to_string()));
+                    return Err(VoiceError::Cancelled(
+                        "STT cancelled during transcription".to_string(),
+                    ));
                 }
             }
 
@@ -222,11 +226,17 @@ impl STTAdapter for CloudSTTAdapter {
             let pcm_bytes = mono.to_i16_pcm();
 
             if cancellation.is_cancelled() {
-                return Err(VoiceError::Cancelled("Cloud STT cancelled prior to network dispatch".to_string()));
+                return Err(VoiceError::Cancelled(
+                    "Cloud STT cancelled prior to network dispatch".to_string(),
+                ));
             }
 
             Ok(Transcript {
-                text: format!("Cloud audio transcription ({} bytes, {} Hz)", pcm_bytes.len(), mono.sample_rate),
+                text: format!(
+                    "Cloud audio transcription ({} bytes, {} Hz)",
+                    pcm_bytes.len(),
+                    mono.sample_rate
+                ),
                 confidence: Some(0.95),
                 language: options.language.clone(),
                 is_final: true,

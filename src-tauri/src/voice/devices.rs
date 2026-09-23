@@ -1,19 +1,21 @@
 //! devices.rs — Audio device enumeration, selection, and opaque identifier hashing.
 //!
 //! Enforces:
-//! - Telemetry privacy: Opaque hashed identifiers (`id`) used for logging, metrics, and storage.
+//! - Telemetry privacy: Opaque hashed identifiers (`id`, `opaque_id`) used for logging, metrics, and storage.
 //! - Human-readable device names (`name`) restricted to local UI display only.
-//! - Safe querying through rodio's underlying `cpal` host.
+//! - Provider abstraction: `AudioDeviceProvider` trait decoupling native CPAL / WASAPI hardware
+//!   interactions from deterministic test environments.
+//! - Deterministic unit tests: `MockAudioDeviceProvider` for zero-hardware CI testing.
+//! - Safe querying through rodio's underlying `cpal` host for production.
 //! - Fault-tolerant device resolution with graceful fallback to system default.
 
 #![allow(deprecated)]
 
 use super::errors::VoiceError;
 use rodio::cpal::traits::{DeviceTrait, HostTrait};
-use rodio::cpal::Device;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::sync::RwLock;
+use std::sync::{Arc, RwLock};
 
 /// Opaque descriptor of an audio hardware device.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -58,54 +60,71 @@ mod hex {
     }
 }
 
-/// Central manager orchestrating audio hardware device enumeration and selection.
-pub struct AudioDeviceManager {
-    active_input_id: RwLock<Option<String>>,
-    active_output_id: RwLock<Option<String>>,
+/// Abstract provider boundary for enumerating and resolving audio hardware devices.
+/// Isolates native host (CPAL / Windows WASAPI) interactions from unit test runners.
+pub trait AudioDeviceProvider: Send + Sync {
+    /// Enumerate all available audio input (microphone) devices.
+    fn list_input_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError>;
+
+    /// Enumerate all available audio output (speaker / headphone) devices.
+    fn list_output_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError>;
+
+    /// Return the system default input device, if available.
+    fn default_input_device(&self) -> Result<Option<AudioDeviceInfo>, VoiceError>;
+
+    /// Return the system default output device, if available.
+    fn default_output_device(&self) -> Result<Option<AudioDeviceInfo>, VoiceError>;
+
+    /// Resolve an input device by opaque ID or human-readable name.
+    fn find_input_device(&self, id_or_name: &str) -> Result<Option<AudioDeviceInfo>, VoiceError> {
+        let devices = self.list_input_devices()?;
+        Ok(devices
+            .into_iter()
+            .find(|d| d.id == id_or_name || d.opaque_id == id_or_name || d.name == id_or_name))
+    }
+
+    /// Resolve an output device by opaque ID or human-readable name.
+    fn find_output_device(&self, id_or_name: &str) -> Result<Option<AudioDeviceInfo>, VoiceError> {
+        let devices = self.list_output_devices()?;
+        Ok(devices
+            .into_iter()
+            .find(|d| d.id == id_or_name || d.opaque_id == id_or_name || d.name == id_or_name))
+    }
 }
 
-impl AudioDeviceManager {
+/// Production audio device provider querying native host audio endpoints via CPAL.
+pub struct CpalAudioDeviceProvider;
+
+impl CpalAudioDeviceProvider {
     pub fn new() -> Self {
-        Self {
-            active_input_id: RwLock::new(None),
-            active_output_id: RwLock::new(None),
-        }
+        Self
     }
+}
 
-    /// Lists all available input and output devices with current active selections.
-    pub fn list_devices(&self) -> Result<AudioDevicesSummary, VoiceError> {
-        let input_devices = self.list_input_devices()?;
-        let output_devices = self.list_output_devices()?;
-
-        let active_in = self.active_input_id.read().unwrap().clone();
-        let active_out = self.active_output_id.read().unwrap().clone();
-
-        Ok(AudioDevicesSummary {
-            input_devices,
-            output_devices,
-            active_input_id: active_in,
-            active_output_id: active_out,
-        })
+impl Default for CpalAudioDeviceProvider {
+    fn default() -> Self {
+        Self::new()
     }
+}
 
-    /// Enumerates all active physical input (microphone) devices.
-    pub fn list_input_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError> {
+impl AudioDeviceProvider for CpalAudioDeviceProvider {
+    fn list_input_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError> {
         let host = rodio::cpal::default_host();
-        let default_name = host
-            .default_input_device()
-            .and_then(|d| d.name().ok());
+        let default_name = host.default_input_device().and_then(|d| d.name().ok());
 
-        let devices = host
-            .input_devices()
-            .map_err(|e| VoiceError::AudioDeviceUnavailable(format!("Failed to query input devices: {}", e)))?;
+        let devices = match host.input_devices() {
+            Ok(devs) => devs,
+            Err(e) => {
+                eprintln!("[AudioDeviceManager] Warning querying input devices: {}", e);
+                return Ok(Vec::new());
+            }
+        };
 
         let mut list = Vec::new();
         for dev in devices {
             if let Ok(name) = dev.name() {
                 let is_default = default_name.as_deref() == Some(&name);
                 let id = compute_opaque_device_id(&name, true);
-                
-                // Sample rates detection (common targets)
                 let sample_rates = vec![16000, 24000, 44100, 48000];
                 let channels = dev
                     .default_input_config()
@@ -125,23 +144,26 @@ impl AudioDeviceManager {
         Ok(list)
     }
 
-    /// Enumerates all active physical output (speaker / headphone) devices.
-    pub fn list_output_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError> {
+    fn list_output_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError> {
         let host = rodio::cpal::default_host();
-        let default_name = host
-            .default_output_device()
-            .and_then(|d| d.name().ok());
+        let default_name = host.default_output_device().and_then(|d| d.name().ok());
 
-        let devices = host
-            .output_devices()
-            .map_err(|e| VoiceError::AudioDeviceUnavailable(format!("Failed to query output devices: {}", e)))?;
+        let devices = match host.output_devices() {
+            Ok(devs) => devs,
+            Err(e) => {
+                eprintln!(
+                    "[AudioDeviceManager] Warning querying output devices: {}",
+                    e
+                );
+                return Ok(Vec::new());
+            }
+        };
 
         let mut list = Vec::new();
         for dev in devices {
             if let Ok(name) = dev.name() {
                 let is_default = default_name.as_deref() == Some(&name);
                 let id = compute_opaque_device_id(&name, false);
-
                 let sample_rates = vec![24000, 44100, 48000];
                 let channels = dev
                     .default_output_config()
@@ -161,58 +183,291 @@ impl AudioDeviceManager {
         Ok(list)
     }
 
-    /// Resolves an input `cpal::Device` by either its opaque ID or human-readable name.
-    pub fn find_input_device(&self, id_or_name: &str) -> Result<Option<Device>, VoiceError> {
+    fn default_input_device(&self) -> Result<Option<AudioDeviceInfo>, VoiceError> {
         let host = rodio::cpal::default_host();
-        let devices = host
-            .input_devices()
-            .map_err(|e| VoiceError::AudioDeviceUnavailable(format!("Failed to query input devices: {}", e)))?;
-
-        for dev in devices {
-            if let Ok(name) = dev.name() {
-                let opaque_id = compute_opaque_device_id(&name, true);
-                if opaque_id == id_or_name || name == id_or_name {
-                    return Ok(Some(dev));
-                }
-            }
-        }
-        Ok(None)
+        let dev = match host.default_input_device() {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        let name = match dev.name() {
+            Ok(n) => n,
+            Err(_) => return Ok(None),
+        };
+        let id = compute_opaque_device_id(&name, true);
+        let channels = dev
+            .default_input_config()
+            .map(|c| c.channels())
+            .unwrap_or(1);
+        Ok(Some(AudioDeviceInfo {
+            opaque_id: id.clone(),
+            id,
+            name,
+            is_default: true,
+            sample_rates: vec![16000, 24000, 44100, 48000],
+            channels,
+        }))
     }
 
-    /// Resolves an output `cpal::Device` by either its opaque ID or human-readable name.
-    pub fn find_output_device(&self, id_or_name: &str) -> Result<Option<Device>, VoiceError> {
+    fn default_output_device(&self) -> Result<Option<AudioDeviceInfo>, VoiceError> {
         let host = rodio::cpal::default_host();
-        let devices = host
-            .output_devices()
-            .map_err(|e| VoiceError::AudioDeviceUnavailable(format!("Failed to query output devices: {}", e)))?;
+        let dev = match host.default_output_device() {
+            Some(d) => d,
+            None => return Ok(None),
+        };
+        let name = match dev.name() {
+            Ok(n) => n,
+            Err(_) => return Ok(None),
+        };
+        let id = compute_opaque_device_id(&name, false);
+        let channels = dev
+            .default_output_config()
+            .map(|c| c.channels())
+            .unwrap_or(2);
+        Ok(Some(AudioDeviceInfo {
+            opaque_id: id.clone(),
+            id,
+            name,
+            is_default: true,
+            sample_rates: vec![24000, 44100, 48000],
+            channels,
+        }))
+    }
+}
 
-        for dev in devices {
-            if let Ok(name) = dev.name() {
-                let opaque_id = compute_opaque_device_id(&name, false);
-                if opaque_id == id_or_name || name == id_or_name {
-                    return Ok(Some(dev));
-                }
-            }
+/// Deterministic mock audio device provider for unit and integration testing.
+/// Does NOT touch native Windows WASAPI / CPAL audio subsystems.
+pub struct MockAudioDeviceProvider {
+    input_devices: RwLock<Vec<AudioDeviceInfo>>,
+    output_devices: RwLock<Vec<AudioDeviceInfo>>,
+}
+
+impl MockAudioDeviceProvider {
+    pub fn new() -> Self {
+        Self {
+            input_devices: RwLock::new(Vec::new()),
+            output_devices: RwLock::new(Vec::new()),
         }
-        Ok(None)
     }
 
-    /// Currently active input device opaque ID.
+    /// Creates a mock provider pre-populated with realistic desktop audio devices.
+    pub fn with_realistic_devices() -> Self {
+        let mic_default_name = "Built-in Microphone";
+        let mic_default_id = compute_opaque_device_id(mic_default_name, true);
+        let mic_usb_name = "USB Studio Condenser Mic";
+        let mic_usb_id = compute_opaque_device_id(mic_usb_name, true);
+        let mic_bt_name = "Bluetooth Headset Microphone";
+        let mic_bt_id = compute_opaque_device_id(mic_bt_name, true);
+
+        let inputs = vec![
+            AudioDeviceInfo {
+                id: mic_default_id.clone(),
+                opaque_id: mic_default_id,
+                name: mic_default_name.to_string(),
+                is_default: true,
+                sample_rates: vec![16000, 24000, 44100, 48000],
+                channels: 1,
+            },
+            AudioDeviceInfo {
+                id: mic_usb_id.clone(),
+                opaque_id: mic_usb_id,
+                name: mic_usb_name.to_string(),
+                is_default: false,
+                sample_rates: vec![44100, 48000, 96000],
+                channels: 2,
+            },
+            AudioDeviceInfo {
+                id: mic_bt_id.clone(),
+                opaque_id: mic_bt_id,
+                name: mic_bt_name.to_string(),
+                is_default: false,
+                sample_rates: vec![16000],
+                channels: 1,
+            },
+        ];
+
+        let out_default_name = "Realtek High Definition Audio (Speakers)";
+        let out_default_id = compute_opaque_device_id(out_default_name, false);
+        let out_dac_name = "USB DAC Audio Interface";
+        let out_dac_id = compute_opaque_device_id(out_dac_name, false);
+        let out_bt_name = "Wireless Noise-Cancelling Headphones";
+        let out_bt_id = compute_opaque_device_id(out_bt_name, false);
+
+        let outputs = vec![
+            AudioDeviceInfo {
+                id: out_default_id.clone(),
+                opaque_id: out_default_id,
+                name: out_default_name.to_string(),
+                is_default: true,
+                sample_rates: vec![24000, 44100, 48000],
+                channels: 2,
+            },
+            AudioDeviceInfo {
+                id: out_dac_id.clone(),
+                opaque_id: out_dac_id,
+                name: out_dac_name.to_string(),
+                is_default: false,
+                sample_rates: vec![44100, 48000, 96000, 192000],
+                channels: 2,
+            },
+            AudioDeviceInfo {
+                id: out_bt_id.clone(),
+                opaque_id: out_bt_id,
+                name: out_bt_name.to_string(),
+                is_default: false,
+                sample_rates: vec![44100, 48000],
+                channels: 2,
+            },
+        ];
+
+        Self {
+            input_devices: RwLock::new(inputs),
+            output_devices: RwLock::new(outputs),
+        }
+    }
+
+    pub fn add_input_device(&self, info: AudioDeviceInfo) {
+        self.input_devices.write().unwrap().push(info);
+    }
+
+    pub fn add_output_device(&self, info: AudioDeviceInfo) {
+        self.output_devices.write().unwrap().push(info);
+    }
+
+    pub fn set_inputs(&self, inputs: Vec<AudioDeviceInfo>) {
+        *self.input_devices.write().unwrap() = inputs;
+    }
+
+    pub fn set_outputs(&self, outputs: Vec<AudioDeviceInfo>) {
+        *self.output_devices.write().unwrap() = outputs;
+    }
+}
+
+impl Default for MockAudioDeviceProvider {
+    fn default() -> Self {
+        Self::with_realistic_devices()
+    }
+}
+
+impl AudioDeviceProvider for MockAudioDeviceProvider {
+    fn list_input_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError> {
+        Ok(self.input_devices.read().unwrap().clone())
+    }
+
+    fn list_output_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError> {
+        Ok(self.output_devices.read().unwrap().clone())
+    }
+
+    fn default_input_device(&self) -> Result<Option<AudioDeviceInfo>, VoiceError> {
+        Ok(self
+            .input_devices
+            .read()
+            .unwrap()
+            .iter()
+            .find(|d| d.is_default)
+            .cloned())
+    }
+
+    fn default_output_device(&self) -> Result<Option<AudioDeviceInfo>, VoiceError> {
+        Ok(self
+            .output_devices
+            .read()
+            .unwrap()
+            .iter()
+            .find(|d| d.is_default)
+            .cloned())
+    }
+}
+
+/// Central manager orchestrating audio hardware device enumeration, selection, and tracking.
+pub struct AudioDeviceManager {
+    provider: Arc<dyn AudioDeviceProvider>,
+    active_input_id: RwLock<Option<String>>,
+    active_output_id: RwLock<Option<String>>,
+}
+
+impl AudioDeviceManager {
+    /// Production constructor using CpalAudioDeviceProvider.
+    pub fn new() -> Self {
+        Self::with_provider(Arc::new(CpalAudioDeviceProvider::new()))
+    }
+
+    /// Injects an explicit AudioDeviceProvider (e.g. MockAudioDeviceProvider).
+    pub fn with_provider(provider: Arc<dyn AudioDeviceProvider>) -> Self {
+        Self {
+            provider,
+            active_input_id: RwLock::new(None),
+            active_output_id: RwLock::new(None),
+        }
+    }
+
+    /// Convenience constructor for testing with mock provider.
+    pub fn mock() -> Self {
+        Self::with_provider(Arc::new(MockAudioDeviceProvider::default()))
+    }
+
+    /// Reference to the underlying AudioDeviceProvider.
+    pub fn provider(&self) -> &Arc<dyn AudioDeviceProvider> {
+        &self.provider
+    }
+
+    /// Lists all available input and output devices with current active selections.
+    pub fn list_devices(&self) -> Result<AudioDevicesSummary, VoiceError> {
+        let input_devices = self.provider.list_input_devices()?;
+        let output_devices = self.provider.list_output_devices()?;
+
+        let active_in = self.active_input_id.read().unwrap().clone();
+        let active_out = self.active_output_id.read().unwrap().clone();
+
+        Ok(AudioDevicesSummary {
+            input_devices,
+            output_devices,
+            active_input_id: active_in,
+            active_output_id: active_out,
+        })
+    }
+
+    pub fn list_input_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError> {
+        self.provider.list_input_devices()
+    }
+
+    pub fn list_output_devices(&self) -> Result<Vec<AudioDeviceInfo>, VoiceError> {
+        self.provider.list_output_devices()
+    }
+
+    pub fn default_input_device(&self) -> Result<Option<AudioDeviceInfo>, VoiceError> {
+        self.provider.default_input_device()
+    }
+
+    pub fn default_output_device(&self) -> Result<Option<AudioDeviceInfo>, VoiceError> {
+        self.provider.default_output_device()
+    }
+
+    pub fn find_input_device(
+        &self,
+        id_or_name: &str,
+    ) -> Result<Option<AudioDeviceInfo>, VoiceError> {
+        self.provider.find_input_device(id_or_name)
+    }
+
+    pub fn find_output_device(
+        &self,
+        id_or_name: &str,
+    ) -> Result<Option<AudioDeviceInfo>, VoiceError> {
+        self.provider.find_output_device(id_or_name)
+    }
+
     pub fn active_input_id(&self) -> Option<String> {
         self.active_input_id.read().unwrap().clone()
     }
 
-    /// Currently active output device opaque ID.
     pub fn active_output_id(&self) -> Option<String> {
         self.active_output_id.read().unwrap().clone()
     }
 
-    /// Sets the active input device opaque ID.
     pub fn set_active_input_id(&self, id: Option<String>) {
         *self.active_input_id.write().unwrap() = id;
     }
 
-    /// Sets the active output device opaque ID.
     pub fn set_active_output_id(&self, id: Option<String>) {
         *self.active_output_id.write().unwrap() = id;
     }

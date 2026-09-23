@@ -101,7 +101,6 @@ impl PolicyContext {
         }
     }
 
-
     pub fn with_session(mut self, session_id: impl Into<String>) -> Self {
         self.session_id = Some(session_id.into());
         self

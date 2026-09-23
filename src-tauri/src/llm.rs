@@ -1,18 +1,16 @@
+use lazy_static::lazy_static;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter};
-use std::sync::Mutex;
-use std::process::{Child, Command, Stdio};
-use lazy_static::lazy_static;
 use std::io::{BufRead, BufReader};
+use std::process::{Child, Command, Stdio};
+use std::sync::Mutex;
+use tauri::{AppHandle, Emitter};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 #[cfg(target_os = "windows")]
 const CREATE_NO_WINDOW: u32 = 0x08000000;
-
-
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ChatMessage {
@@ -41,7 +39,10 @@ pub async fn api_chat_cloud(
     request: ChatRequest,
     emit_event: Option<String>,
 ) -> Result<String, String> {
-    let client = Client::builder().timeout(std::time::Duration::from_secs(60)).build().unwrap_or_else(|_| Client::new());
+    let client = Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build()
+        .unwrap_or_else(|_| Client::new());
     let req_body = json!({
         "model": request.model,
         "messages": request.messages,
@@ -59,9 +60,13 @@ pub async fn api_chat_cloud(
     if !res.status().is_success() {
         let status = res.status();
         let error_text = res.text().await.unwrap_or_default();
-        
+
         let clean_msg = if let Ok(val) = serde_json::from_str::<Value>(&error_text) {
-            if let Some(msg) = val.get("error").and_then(|e| e.get("message")).and_then(|m| m.as_str()) {
+            if let Some(msg) = val
+                .get("error")
+                .and_then(|e| e.get("message"))
+                .and_then(|m| m.as_str())
+            {
                 msg.to_string()
             } else if let Some(msg) = val.get("message").and_then(|m| m.as_str()) {
                 msg.to_string()
@@ -77,7 +82,10 @@ pub async fn api_chat_cloud(
         };
 
         // Redact any possible raw API keys or tokens in error message
-        let sanitized = if clean_msg.to_lowercase().contains("bearer") || clean_msg.contains("sk-") || clean_msg.contains("gsk_") {
+        let sanitized = if clean_msg.to_lowercase().contains("bearer")
+            || clean_msg.contains("sk-")
+            || clean_msg.contains("gsk_")
+        {
             "Authentication failed: Invalid or expired API Key. Please verify your provider API key in Settings.".to_string()
         } else {
             clean_msg
@@ -85,8 +93,6 @@ pub async fn api_chat_cloud(
 
         return Err(sanitized);
     }
-
-    
 
     let mut full_text = String::new();
 
@@ -97,7 +103,9 @@ pub async fn api_chat_cloud(
         for line in lines {
             if line.starts_with("data: ") {
                 let data = &line[6..];
-                if data == "[DONE]" { continue; }
+                if data == "[DONE]" {
+                    continue;
+                }
                 if let Ok(parsed) = serde_json::from_str::<Value>(data) {
                     if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
                         full_text.push_str(content);
@@ -121,9 +129,7 @@ fn resolve_folder(folder_name: &str) -> std::path::PathBuf {
     let from_project_root = std::env::current_dir()
         .ok()
         .map(|d| d.join("..").join(folder_name));
-    let from_cwd = std::env::current_dir()
-        .ok()
-        .map(|d| d.join(folder_name));
+    let from_cwd = std::env::current_dir().ok().map(|d| d.join(folder_name));
 
     [from_exe, from_project_root, from_cwd]
         .into_iter()
@@ -134,9 +140,16 @@ fn resolve_folder(folder_name: &str) -> std::path::PathBuf {
 
 /// Start llama-server.exe as a background subprocess
 #[tauri::command]
-pub async fn load_local_llm(_app: AppHandle, path: String, load_mode: String) -> Result<(), String> {
+pub async fn load_local_llm(
+    _app: AppHandle,
+    path: String,
+    load_mode: String,
+) -> Result<(), String> {
     let _ = _app.emit("model-progress", "Process starting... (0%)");
-    println!("RUST: Starting local server... Model: {}, Mode: {}", path, load_mode);
+    println!(
+        "RUST: Starting local server... Model: {}, Mode: {}",
+        path, load_mode
+    );
 
     // Stop any existing server first
     let _ = stop_local_llm().await;
@@ -177,9 +190,12 @@ pub async fn load_local_llm(_app: AppHandle, path: String, load_mode: String) ->
 
     // --- Step 4: Build args ---
     let mut args = vec![
-        "-m".to_string(), full_model_str,
-        "--port".to_string(), "11434".to_string(),
-        "-c".to_string(), "2048".to_string(),
+        "-m".to_string(),
+        full_model_str,
+        "--port".to_string(),
+        "11434".to_string(),
+        "-c".to_string(),
+        "2048".to_string(),
     ];
 
     if load_mode == "ram" {
@@ -263,15 +279,25 @@ pub async fn load_local_llm(_app: AppHandle, path: String, load_mode: String) ->
             if resp.status().is_success() {
                 server_ready = true;
                 let _ = _app.emit("model-progress", "Server Ready! (100%)");
-                println!("RUST: Server is READY after {} attempts (~{}ms)", attempt, attempt * 500);
+                println!(
+                    "RUST: Server is READY after {} attempts (~{}ms)",
+                    attempt,
+                    attempt * 500
+                );
                 break;
             }
         }
 
         if attempt % 20 == 0 {
-            let msg = format!("Loading weights into RAM (Attempt {}/{})...", attempt, max_attempts);
+            let msg = format!(
+                "Loading weights into RAM (Attempt {}/{})...",
+                attempt, max_attempts
+            );
             let _ = _app.emit("model-progress", msg);
-            println!("RUST: Waiting for server... attempt {}/{}", attempt, max_attempts);
+            println!(
+                "RUST: Waiting for server... attempt {}/{}",
+                attempt, max_attempts
+            );
         }
 
         tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -310,7 +336,9 @@ pub async fn local_chat(
     {
         let guard = LOCAL_SERVER_PROCESS.lock().unwrap();
         if guard.is_none() {
-            return Err("No local model loaded. Please load a model first from Settings.".to_string());
+            return Err(
+                "No local model loaded. Please load a model first from Settings.".to_string(),
+            );
         }
     }
 
@@ -330,9 +358,7 @@ pub async fn local_chat(
         "".to_string(), // no api key needed for local server
         "http://127.0.0.1:11434/v1/chat/completions".to_string(),
         req,
-        emit_event
-    ).await
+        emit_event,
+    )
+    .await
 }
-
-
-

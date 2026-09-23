@@ -1,0 +1,177 @@
+warning: in the working copy of 'src-tauri/examples/e2e_reproducible_suite.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/agent.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/ai/adapters/gemini.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/ai/adapters/groq.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/ai/adapters/openai_compatible.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/ai/credentials.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/ai/errors.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/ai/registry.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_agent.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_control.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_download.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_orchestrator.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_privacy.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_profile.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_recovery.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_risk.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_storage.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/browser_tools.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/chat.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/computer_control.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/conversation/core.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/conversation/errors.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/conversation/tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/conversation/turn.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/db.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/embedding.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/events/ids.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/events/mod.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/events/payload.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/events/tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/lib.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/llm.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/memory.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/plugins.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/adapters/browser.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/adapters/command.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/adapters/computer.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/approval.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/audit.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/context.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/decision.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/engine.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/policy/types.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/providers.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/runtime/projections.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/runtime/state.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/screen.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/security.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/task/runtime.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/task/state.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/task/tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/task/types.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/cancellation.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/domains/browser.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/domains/browser_tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/domains/computer.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/domains/computer_platform.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/domains/computer_tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/domains/edith.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/domains/edith_tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/executor.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/router.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/types.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tools/validator.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/tts.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/audio.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/capture.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/devices.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/dsp/echo.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/errors.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/mod.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/output.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/realtime/adapter.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/realtime/engine.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/realtime/mod.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/realtime/production_tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/realtime/recovery.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/realtime/tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/realtime/transport.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/session.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/stt.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/tests.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/voice/tts.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/weather.rs', LF will be replaced by CRLF the next time Git touches it
+warning: in the working copy of 'src-tauri/src/windows.rs', LF will be replaced by CRLF the next time Git touches it
+ src-tauri/examples/e2e_reproducible_suite.rs     | 465 [32m+++++++++++++[m[31m----[m
+ src-tauri/src/agent.rs                           | 346 [32m+++++++++[m[31m----[m
+ src-tauri/src/ai/adapters/gemini.rs              |  66 [32m++[m[31m-[m
+ src-tauri/src/ai/adapters/groq.rs                |  48 [32m+[m[31m-[m
+ src-tauri/src/ai/adapters/openai_compatible.rs   | 108 [32m++[m[31m--[m
+ src-tauri/src/ai/credentials.rs                  |   4 [32m+[m[31m-[m
+ src-tauri/src/ai/errors.rs                       |  95 [32m+++[m[31m-[m
+ src-tauri/src/ai/registry.rs                     |  17 [32m+[m[31m-[m
+ src-tauri/src/browser.rs                         | 631 [32m+++++++++++++++[m[31m-------[m
+ src-tauri/src/browser_agent.rs                   | 476 [32m++++++++++++[m[31m-----[m
+ src-tauri/src/browser_control.rs                 | 149 [32m++++[m[31m--[m
+ src-tauri/src/browser_download.rs                | 143 [32m+++[m[31m--[m
+ src-tauri/src/browser_orchestrator.rs            | 215 [32m+++++[m[31m---[m
+ src-tauri/src/browser_privacy.rs                 | 155 [32m+++[m[31m---[m
+ src-tauri/src/browser_profile.rs                 | 126 [32m++++[m[31m-[m
+ src-tauri/src/browser_recovery.rs                |  73 [32m++[m[31m-[m
+ src-tauri/src/browser_risk.rs                    | 149 [32m++++[m[31m--[m
+ src-tauri/src/browser_storage.rs                 | 119 [32m+++[m[31m--[m
+ src-tauri/src/browser_tools.rs                   | 632 [32m+++++++++++++++++[m[31m------[m
+ src-tauri/src/chat.rs                            | 254 [32m++++++[m[31m---[m
+ src-tauri/src/computer_control.rs                |   9 [32m+[m[31m-[m
+ src-tauri/src/conversation/core.rs               |  76 [32m++[m[31m-[m
+ src-tauri/src/conversation/errors.rs             |  20 [32m+[m[31m-[m
+ src-tauri/src/conversation/tests.rs              | 201 [32m++++[m[31m---[m
+ src-tauri/src/conversation/turn.rs               |  19 [32m+[m[31m-[m
+ src-tauri/src/db.rs                              | 221 [32m+++++[m[31m---[m
+ src-tauri/src/embedding.rs                       |  18 [32m+[m[31m-[m
+ src-tauri/src/events/ids.rs                      |  35 [32m+[m[31m-[m
+ src-tauri/src/events/mod.rs                      |   4 [32m+[m[31m-[m
+ src-tauri/src/events/payload.rs                  |  42 [32m+[m[31m-[m
+ src-tauri/src/events/tests.rs                    | 107 [32m+++[m[31m-[m
+ src-tauri/src/lib.rs                             | 126 [32m+++[m[31m--[m
+ src-tauri/src/llm.rs                             |  86 [32m+[m[31m--[m
+ src-tauri/src/memory.rs                          |  41 [32m+[m[31m-[m
+ src-tauri/src/plugins.rs                         | 176 [32m+++++[m[31m--[m
+ src-tauri/src/policy/adapters/browser.rs         |  34 [32m+[m[31m-[m
+ src-tauri/src/policy/adapters/command.rs         |  25 [32m+[m[31m-[m
+ src-tauri/src/policy/adapters/computer.rs        |  82 [32m++[m[31m-[m
+ src-tauri/src/policy/approval.rs                 |  21 [32m+[m[31m-[m
+ src-tauri/src/policy/audit.rs                    |  12 [32m+[m[31m-[m
+ src-tauri/src/policy/context.rs                  |   1 [31m-[m
+ src-tauri/src/policy/decision.rs                 |   1 [31m-[m
+ src-tauri/src/policy/engine.rs                   |  55 [32m+[m[31m-[m
+ src-tauri/src/policy/tests.rs                    |  23 [32m+[m[31m-[m
+ src-tauri/src/policy/types.rs                    |   1 [31m-[m
+ src-tauri/src/providers.rs                       |  14 [32m+[m[31m-[m
+ src-tauri/src/runtime/projections.rs             |  15 [32m+[m[31m-[m
+ src-tauri/src/runtime/state.rs                   |  10 [32m+[m[31m-[m
+ src-tauri/src/screen.rs                          |  21 [32m+[m[31m-[m
+ src-tauri/src/security.rs                        | 177 [32m+++++[m[31m--[m
+ src-tauri/src/task/runtime.rs                    |  26 [32m+[m[31m-[m
+ src-tauri/src/task/state.rs                      |  15 [32m+[m[31m-[m
+ src-tauri/src/task/tests.rs                      |  55 [32m+[m[31m-[m
+ src-tauri/src/task/types.rs                      |  11 [32m+[m[31m-[m
+ src-tauri/src/tools/cancellation.rs              |  12 [32m+[m[31m-[m
+ src-tauri/src/tools/domains/browser.rs           |   3 [32m+[m[31m-[m
+ src-tauri/src/tools/domains/browser_tests.rs     |  51 [32m+[m[31m-[m
+ src-tauri/src/tools/domains/computer.rs          | 114 [32m++[m[31m--[m
+ src-tauri/src/tools/domains/computer_platform.rs |  87 [32m+++[m[31m-[m
+ src-tauri/src/tools/domains/computer_tests.rs    |  51 [32m+[m[31m-[m
+ src-tauri/src/tools/domains/edith.rs             |  69 [32m+[m[31m--[m
+ src-tauri/src/tools/domains/edith_tests.rs       |  51 [32m+[m[31m-[m
+ src-tauri/src/tools/executor.rs                  |  10 [32m+[m[31m-[m
+ src-tauri/src/tools/router.rs                    |  62 [32m++[m[31m-[m
+ src-tauri/src/tools/tests.rs                     |  56 [32m+[m[31m-[m
+ src-tauri/src/tools/types.rs                     |  14 [32m+[m[31m-[m
+ src-tauri/src/tools/validator.rs                 |   4 [32m+[m[31m-[m
+ src-tauri/src/tts.rs                             | 126 [32m+++[m[31m--[m
+ src-tauri/src/voice/audio.rs                     |   5 [32m+[m[31m-[m
+ src-tauri/src/voice/capture.rs                   |  53 [32m+[m[31m-[m
+ src-tauri/src/voice/devices.rs                   | 409 [32m++++++++++++[m[31m---[m
+ src-tauri/src/voice/dsp/echo.rs                  |   2 [32m+[m[31m-[m
+ src-tauri/src/voice/errors.rs                    |   8 [32m+[m[31m-[m
+ src-tauri/src/voice/mod.rs                       |  13 [32m+[m[31m-[m
+ src-tauri/src/voice/output.rs                    |  94 [32m++[m[31m--[m
+ src-tauri/src/voice/realtime/adapter.rs          |  29 [32m+[m[31m-[m
+ src-tauri/src/voice/realtime/engine.rs           |  29 [32m+[m[31m-[m
+ src-tauri/src/voice/realtime/mod.rs              |   4 [32m+[m[31m-[m
+ src-tauri/src/voice/realtime/production_tests.rs | 135 [32m++++[m[31m-[m
+ src-tauri/src/voice/realtime/recovery.rs         |   5 [32m+[m[31m-[m
+ src-tauri/src/voice/realtime/tests.rs            |  41 [32m+[m[31m-[m
+ src-tauri/src/voice/realtime/transport.rs        |   9 [32m+[m[31m-[m
+ src-tauri/src/voice/session.rs                   | 102 [32m+++[m[31m-[m
+ src-tauri/src/voice/stt.rs                       |  18 [32m+[m[31m-[m
+ src-tauri/src/voice/tests.rs                     |  18 [32m+[m[31m-[m
+ src-tauri/src/voice/tts.rs                       |  33 [32m+[m[31m-[m
+ src-tauri/src/weather.rs                         |  25 [32m+[m[31m-[m
+ src-tauri/src/windows.rs                         |  10 [32m+[m[31m-[m
+ 88 files changed, 5552 insertions(+), 2251 deletions(-)

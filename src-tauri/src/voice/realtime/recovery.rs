@@ -68,7 +68,10 @@ impl RecoveryManager {
         }
 
         self.current_attempt += 1;
-        let factor = self.config.backoff_multiplier.powi((self.current_attempt - 1) as i32);
+        let factor = self
+            .config
+            .backoff_multiplier
+            .powi((self.current_attempt - 1) as i32);
         let raw_delay = (self.config.initial_delay_ms as f64 * factor) as u64;
         let delay_ms = raw_delay.min(self.config.max_delay_ms);
 

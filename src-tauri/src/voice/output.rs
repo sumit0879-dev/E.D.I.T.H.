@@ -25,7 +25,11 @@ pub trait AudioOutputDriver: Send + Sync {
     fn play(&self, buffer: AudioBuffer, session_id: VoiceSessionId) -> Result<(), VoiceError>;
 
     /// Dispatches raw encoded audio bytes (e.g. MP3) directly to the soundcard.
-    fn play_encoded_bytes(&self, bytes: Vec<u8>, session_id: VoiceSessionId) -> Result<(), VoiceError>;
+    fn play_encoded_bytes(
+        &self,
+        bytes: Vec<u8>,
+        session_id: VoiceSessionId,
+    ) -> Result<(), VoiceError>;
 
     /// Halts active playback immediately, flushes buffers, and resets player state.
     fn stop(&self) -> Result<(), VoiceError>;
@@ -80,15 +84,21 @@ pub struct RodioAudioOutputDriver {
     is_playing_flag: Arc<AtomicBool>,
     current_device_id: Arc<std::sync::RwLock<Option<String>>>,
     current_device_name: Arc<std::sync::RwLock<Option<String>>>,
+    device_provider: Arc<dyn super::devices::AudioDeviceProvider>,
 }
 
 impl RodioAudioOutputDriver {
     pub fn new() -> Self {
+        Self::with_provider(Arc::new(super::devices::CpalAudioDeviceProvider::new()))
+    }
+
+    pub fn with_provider(device_provider: Arc<dyn super::devices::AudioDeviceProvider>) -> Self {
         let driver = Self {
             sender: Arc::new(Mutex::new(None)),
             is_playing_flag: Arc::new(AtomicBool::new(false)),
             current_device_id: Arc::new(std::sync::RwLock::new(None)),
             current_device_name: Arc::new(std::sync::RwLock::new(None)),
+            device_provider,
         };
         driver.ensure_started();
         driver
@@ -159,7 +169,10 @@ impl RodioAudioOutputDriver {
                                         playing_flag.store(true, Ordering::SeqCst);
                                     }
                                     Err(e) => {
-                                        eprintln!("[AudioOutput] Failed to decode audio bytes: {}", e);
+                                        eprintln!(
+                                            "[AudioOutput] Failed to decode audio bytes: {}",
+                                            e
+                                        );
                                         playing_flag.store(false, Ordering::SeqCst);
                                     }
                                 }
@@ -188,7 +201,10 @@ impl RodioAudioOutputDriver {
                                     p.set_volume(current_volume);
                                 }
                             }
-                            OutputCommand::SwitchDevice { device_name, device_id: _ } => {
+                            OutputCommand::SwitchDevice {
+                                device_name,
+                                device_id: _,
+                            } => {
                                 if let Some(p) = current_player.take() {
                                     p.stop();
                                 }
@@ -196,8 +212,11 @@ impl RodioAudioOutputDriver {
                                 let new_sink_res = if let Some(ref name) = device_name {
                                     let host = rodio::cpal::default_host();
                                     if let Ok(mut devs) = host.output_devices() {
-                                        if let Some(d) = devs.find(|dev| dev.name().map(|n| n == *name).unwrap_or(false)) {
-                                            rodio::DeviceSinkBuilder::from_device(d).and_then(|b| b.open_sink_or_fallback())
+                                        if let Some(d) = devs.find(|dev| {
+                                            dev.name().map(|n| n == *name).unwrap_or(false)
+                                        }) {
+                                            rodio::DeviceSinkBuilder::from_device(d)
+                                                .and_then(|b| b.open_sink_or_fallback())
                                         } else {
                                             rodio::DeviceSinkBuilder::open_default_sink()
                                         }
@@ -213,7 +232,10 @@ impl RodioAudioOutputDriver {
                                         handle = h;
                                     }
                                     Err(e) => {
-                                        eprintln!("[AudioOutput] Failed to switch audio output sink: {}", e);
+                                        eprintln!(
+                                            "[AudioOutput] Failed to switch audio output sink: {}",
+                                            e
+                                        );
                                     }
                                 }
                                 playing_flag.store(false, Ordering::SeqCst);
@@ -223,7 +245,10 @@ impl RodioAudioOutputDriver {
                     playing_flag.store(false, Ordering::SeqCst);
                 }
                 Err(e) => {
-                    eprintln!("[AudioOutput] CRITICAL: Failed to open default audio sink: {}", e);
+                    eprintln!(
+                        "[AudioOutput] CRITICAL: Failed to open default audio sink: {}",
+                        e
+                    );
                     playing_flag.store(false, Ordering::SeqCst);
                 }
             }
@@ -248,22 +273,37 @@ impl AudioOutputDriver for RodioAudioOutputDriver {
                 sample_rate: buffer.sample_rate,
                 session_id,
             })
-            .map_err(|e| VoiceError::PlaybackFailure(format!("Failed to send buffer to audio player: {}", e)))?;
+            .map_err(|e| {
+                VoiceError::PlaybackFailure(format!("Failed to send buffer to audio player: {}", e))
+            })?;
             Ok(())
         } else {
-            Err(VoiceError::AudioDeviceUnavailable("Audio thread sender is closed".to_string()))
+            Err(VoiceError::AudioDeviceUnavailable(
+                "Audio thread sender is closed".to_string(),
+            ))
         }
     }
 
-    fn play_encoded_bytes(&self, bytes: Vec<u8>, session_id: VoiceSessionId) -> Result<(), VoiceError> {
+    fn play_encoded_bytes(
+        &self,
+        bytes: Vec<u8>,
+        session_id: VoiceSessionId,
+    ) -> Result<(), VoiceError> {
         self.ensure_started();
         let lock = self.sender.lock().unwrap();
         if let Some(ref tx) = *lock {
             tx.send(OutputCommand::PlayEncoded { bytes, session_id })
-                .map_err(|e| VoiceError::PlaybackFailure(format!("Failed to send encoded audio to player: {}", e)))?;
+                .map_err(|e| {
+                    VoiceError::PlaybackFailure(format!(
+                        "Failed to send encoded audio to player: {}",
+                        e
+                    ))
+                })?;
             Ok(())
         } else {
-            Err(VoiceError::AudioDeviceUnavailable("Audio thread sender is closed".to_string()))
+            Err(VoiceError::AudioDeviceUnavailable(
+                "Audio thread sender is closed".to_string(),
+            ))
         }
     }
 
@@ -308,21 +348,11 @@ impl AudioOutputDriver for RodioAudioOutputDriver {
     fn set_device(&self, device_id: Option<String>) -> Result<(), VoiceError> {
         self.ensure_started();
         let dev_name = if let Some(ref id) = device_id {
-            use rodio::cpal::traits::{DeviceTrait, HostTrait};
-            let host = rodio::cpal::default_host();
-            let mut found = None;
-            if let Ok(devs) = host.output_devices() {
-                for d in devs {
-                    if let Ok(name) = d.name() {
-                        let opaque_id = super::devices::compute_opaque_device_id(&name, false);
-                        if &opaque_id == id || &name == id {
-                            found = Some(name);
-                            break;
-                        }
-                    }
-                }
-            }
-            found
+            self.device_provider
+                .find_output_device(id)
+                .ok()
+                .flatten()
+                .map(|d| d.name)
         } else {
             None
         };
@@ -400,7 +430,11 @@ impl AudioOutputDriver for MockAudioOutputDriver {
         Ok(())
     }
 
-    fn play_encoded_bytes(&self, bytes: Vec<u8>, session_id: VoiceSessionId) -> Result<(), VoiceError> {
+    fn play_encoded_bytes(
+        &self,
+        bytes: Vec<u8>,
+        session_id: VoiceSessionId,
+    ) -> Result<(), VoiceError> {
         let dummy = AudioBuffer::new(24000, 1, vec![0.0; bytes.len().min(100)]);
         self.played_buffers.lock().unwrap().push(dummy);
         self.played_sessions.lock().unwrap().push(session_id);
@@ -434,7 +468,9 @@ impl AudioOutputDriver for MockAudioOutputDriver {
     }
 
     fn set_device(&self, device_id: Option<String>) -> Result<(), VoiceError> {
-        let name = device_id.as_ref().map(|id| format!("Mock Output Device ({})", id));
+        let name = device_id
+            .as_ref()
+            .map(|id| format!("Mock Output Device ({})", id));
         *self.current_device_id.write().unwrap() = device_id;
         *self.current_device_name.write().unwrap() = name;
         Ok(())

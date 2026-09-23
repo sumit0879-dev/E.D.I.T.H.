@@ -28,14 +28,25 @@ pub async fn get_weather(lat: f64, lon: f64) -> Result<WeatherResult, String> {
         "https://api.open-meteo.com/v1/forecast?latitude={}&longitude={}&current=temperature_2m,weather_code&timezone=auto",
         lat, lon
     );
-    
-    let resp = reqwest::get(&url).await.map_err(|e| format!("Failed to fetch weather: {}", e))?;
-    let json: serde_json::Value = resp.json().await.map_err(|e| format!("Failed to parse JSON: {}", e))?;
-    
+
+    let resp = reqwest::get(&url)
+        .await
+        .map_err(|e| format!("Failed to fetch weather: {}", e))?;
+    let json: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
     let current = json.get("current").ok_or("No current data found")?;
-    let temp = current.get("temperature_2m").and_then(|v| v.as_f64()).unwrap_or(0.0);
-    let code = current.get("weather_code").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
-    
+    let temp = current
+        .get("temperature_2m")
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0);
+    let code = current
+        .get("weather_code")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0) as i32;
+
     Ok(WeatherResult {
         temperature: temp,
         weather_code: code,

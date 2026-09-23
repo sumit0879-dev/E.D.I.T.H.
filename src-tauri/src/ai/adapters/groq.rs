@@ -44,10 +44,8 @@ impl GroqAdapter {
     }
 
     fn default_models() -> Vec<ModelMetadata> {
-        let text_and_stream = CapabilitySet::from_slice(&[
-            Capability::TextGeneration,
-            Capability::Streaming,
-        ]);
+        let text_and_stream =
+            CapabilitySet::from_slice(&[Capability::TextGeneration, Capability::Streaming]);
         let full_caps = CapabilitySet::from_slice(&[
             Capability::TextGeneration,
             Capability::Streaming,
@@ -60,13 +58,15 @@ impl GroqAdapter {
                 "llama-3.3-70b-versatile",
                 "Meta LLaMA 3.3 70B Versatile",
                 full_caps.clone(),
-            ).with_context_window(128_000),
+            )
+            .with_context_window(128_000),
             ModelMetadata::new(
                 GROQ_PROVIDER_ID,
                 "llama-3.1-8b-instant",
                 "Meta LLaMA 3.1 8B Instant",
                 text_and_stream.clone(),
-            ).with_context_window(128_000),
+            )
+            .with_context_window(128_000),
             ModelMetadata::new(
                 GROQ_PROVIDER_ID,
                 "openai/gpt-oss-120b",
@@ -84,7 +84,8 @@ impl GroqAdapter {
                 "deepseek-r1-distill-llama-70b",
                 "DeepSeek R1 Distill LLaMA 70B",
                 text_and_stream.clone(),
-            ).with_context_window(128_000),
+            )
+            .with_context_window(128_000),
             ModelMetadata::new(
                 GROQ_PROVIDER_ID,
                 "qwen/qwen3.6-27b",
@@ -161,7 +162,8 @@ impl TextGenerationCapability for GroqAdapter {
             let api_key = creds.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(ProviderError::AuthFailure {
-                    message: "Groq API key is missing. Please configure your API key in Settings.".to_string(),
+                    message: "Groq API key is missing. Please configure your API key in Settings."
+                        .to_string(),
                 });
             }
 
@@ -189,9 +191,12 @@ impl TextGenerationCapability for GroqAdapter {
                 return Err(normalize_http_error(status, &text));
             }
 
-            let val: Value = res.json().await.map_err(|e| ProviderError::MalformedResponse {
-                message: format!("Failed to parse Groq response: {}", e),
-            })?;
+            let val: Value = res
+                .json()
+                .await
+                .map_err(|e| ProviderError::MalformedResponse {
+                    message: format!("Failed to parse Groq response: {}", e),
+                })?;
 
             let text = val["choices"][0]["message"]["content"]
                 .as_str()
@@ -222,7 +227,8 @@ impl StreamingTextCapability for GroqAdapter {
             let api_key = creds.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(ProviderError::AuthFailure {
-                    message: "Groq API key is missing. Please configure your API key in Settings.".to_string(),
+                    message: "Groq API key is missing. Please configure your API key in Settings."
+                        .to_string(),
                 });
             }
 
@@ -268,7 +274,8 @@ impl StreamingTextCapability for GroqAdapter {
                         }
 
                         if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                            if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
+                            if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str()
+                            {
                                 full_text.push_str(content);
                                 on_chunk(StreamChunk {
                                     text: content.to_string(),
@@ -321,15 +328,16 @@ impl ModelDiscoveryCapability for GroqAdapter {
                 return Err(normalize_http_error(status, &text));
             }
 
-            let val: Value = res.json().await.map_err(|e| ProviderError::MalformedResponse {
-                message: format!("Failed to parse Groq models JSON: {}", e),
-            })?;
+            let val: Value = res
+                .json()
+                .await
+                .map_err(|e| ProviderError::MalformedResponse {
+                    message: format!("Failed to parse Groq models JSON: {}", e),
+                })?;
 
             let mut discovered = Vec::new();
-            let text_and_stream = CapabilitySet::from_slice(&[
-                Capability::TextGeneration,
-                Capability::Streaming,
-            ]);
+            let text_and_stream =
+                CapabilitySet::from_slice(&[Capability::TextGeneration, Capability::Streaming]);
 
             if let Some(data) = val.get("data").and_then(|d| d.as_array()) {
                 for item in data {

@@ -13,7 +13,8 @@ use std::time::Duration;
 
 pub const GEMINI_PROVIDER_ID: &str = "gemini";
 pub const GEMINI_PROVIDER_NAME: &str = "Google Gemini API";
-pub const GEMINI_OPENAI_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
+pub const GEMINI_OPENAI_URL: &str =
+    "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions";
 pub const GEMINI_MODELS_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models";
 
 /// Adapter for Google Gemini API via OpenAI-compatible endpoint.
@@ -50,10 +51,8 @@ impl GeminiAdapter {
             Capability::Streaming,
             Capability::Vision,
         ]);
-        let text_and_stream = CapabilitySet::from_slice(&[
-            Capability::TextGeneration,
-            Capability::Streaming,
-        ]);
+        let text_and_stream =
+            CapabilitySet::from_slice(&[Capability::TextGeneration, Capability::Streaming]);
 
         vec![
             ModelMetadata::new(
@@ -178,7 +177,9 @@ impl TextGenerationCapability for GeminiAdapter {
             let api_key = creds.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(ProviderError::AuthFailure {
-                    message: "Gemini API key is missing. Please configure your API key in Settings.".to_string(),
+                    message:
+                        "Gemini API key is missing. Please configure your API key in Settings."
+                            .to_string(),
                 });
             }
 
@@ -206,9 +207,12 @@ impl TextGenerationCapability for GeminiAdapter {
                 return Err(normalize_http_error(status, &text));
             }
 
-            let val: Value = res.json().await.map_err(|e| ProviderError::MalformedResponse {
-                message: format!("Failed to parse Gemini response: {}", e),
-            })?;
+            let val: Value = res
+                .json()
+                .await
+                .map_err(|e| ProviderError::MalformedResponse {
+                    message: format!("Failed to parse Gemini response: {}", e),
+                })?;
 
             let text = val["choices"][0]["message"]["content"]
                 .as_str()
@@ -239,7 +243,9 @@ impl StreamingTextCapability for GeminiAdapter {
             let api_key = creds.as_deref().unwrap_or("").trim();
             if api_key.is_empty() {
                 return Err(ProviderError::AuthFailure {
-                    message: "Gemini API key is missing. Please configure your API key in Settings.".to_string(),
+                    message:
+                        "Gemini API key is missing. Please configure your API key in Settings."
+                            .to_string(),
                 });
             }
 
@@ -285,7 +291,8 @@ impl StreamingTextCapability for GeminiAdapter {
                         }
 
                         if let Ok(parsed) = serde_json::from_str::<Value>(data) {
-                            if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str() {
+                            if let Some(content) = parsed["choices"][0]["delta"]["content"].as_str()
+                            {
                                 full_text.push_str(content);
                                 on_chunk(StreamChunk {
                                     text: content.to_string(),
@@ -322,14 +329,14 @@ impl ModelDiscoveryCapability for GeminiAdapter {
                 self.models_endpoint.clone()
             };
 
-            let res = self
-                .client
-                .get(&url)
-                .send()
-                .await
-                .map_err(|e| ProviderError::NetworkFailure {
-                    message: format!("Failed to query Gemini models: {}", e),
-                })?;
+            let res =
+                self.client
+                    .get(&url)
+                    .send()
+                    .await
+                    .map_err(|e| ProviderError::NetworkFailure {
+                        message: format!("Failed to query Gemini models: {}", e),
+                    })?;
 
             let status = res.status();
             if !status.is_success() {
@@ -337,9 +344,12 @@ impl ModelDiscoveryCapability for GeminiAdapter {
                 return Err(normalize_http_error(status, &text));
             }
 
-            let val: Value = res.json().await.map_err(|e| ProviderError::MalformedResponse {
-                message: format!("Failed to parse Gemini models JSON: {}", e),
-            })?;
+            let val: Value = res
+                .json()
+                .await
+                .map_err(|e| ProviderError::MalformedResponse {
+                    message: format!("Failed to parse Gemini models JSON: {}", e),
+                })?;
 
             let mut discovered = Vec::new();
             let text_stream_vision = CapabilitySet::from_slice(&[
@@ -350,12 +360,20 @@ impl ModelDiscoveryCapability for GeminiAdapter {
 
             if let Some(data) = val.get("models").and_then(|d| d.as_array()) {
                 for item in data {
-                    if let Some(name) = item.get("name").or_else(|| item.get("id")).and_then(|n| n.as_str()) {
+                    if let Some(name) = item
+                        .get("name")
+                        .or_else(|| item.get("id"))
+                        .and_then(|n| n.as_str())
+                    {
                         let clean_id = name.strip_prefix("models/").unwrap_or(name);
                         let is_gen_model = item
                             .get("supportedGenerationMethods")
                             .and_then(|m| m.as_array())
-                            .map(|methods| methods.iter().any(|m| m.as_str() == Some("generateContent")))
+                            .map(|methods| {
+                                methods
+                                    .iter()
+                                    .any(|m| m.as_str() == Some("generateContent"))
+                            })
                             .unwrap_or(true);
 
                         if is_gen_model {

@@ -171,14 +171,21 @@ impl AudioCaptureDriver for MockAudioCaptureDriver {
     fn stop_capture(&self) -> Result<AudioBuffer, VoiceError> {
         let mut st = self.state.write().unwrap();
         *st = CaptureState::Idle;
-        let buf = self.mock_samples.read().unwrap().clone().unwrap_or_else(|| {
-            // Default 1 second of 440Hz test sine tone at 16kHz
-            let sr = super::audio::CANONICAL_STT_SAMPLE_RATE;
-            let samples = (0..sr)
-                .map(|i| ((i as f32 * 440.0 * 2.0 * std::f32::consts::PI) / sr as f32).sin() * 0.5)
-                .collect();
-            AudioBuffer::new(sr, 1, samples)
-        });
+        let buf = self
+            .mock_samples
+            .read()
+            .unwrap()
+            .clone()
+            .unwrap_or_else(|| {
+                // Default 1 second of 440Hz test sine tone at 16kHz
+                let sr = super::audio::CANONICAL_STT_SAMPLE_RATE;
+                let samples = (0..sr)
+                    .map(|i| {
+                        ((i as f32 * 440.0 * 2.0 * std::f32::consts::PI) / sr as f32).sin() * 0.5
+                    })
+                    .collect();
+                AudioBuffer::new(sr, 1, samples)
+            });
         Ok(buf)
     }
 
@@ -196,7 +203,9 @@ impl AudioCaptureDriver for MockAudioCaptureDriver {
     }
 
     fn set_device(&self, device_id: Option<String>) -> Result<(), VoiceError> {
-        let name = device_id.as_ref().map(|id| format!("Mock Input Device ({})", id));
+        let name = device_id
+            .as_ref()
+            .map(|id| format!("Mock Input Device ({})", id));
         *self.current_device_id.write().unwrap() = device_id;
         *self.current_device_name.write().unwrap() = name;
         Ok(())
@@ -216,15 +225,21 @@ pub struct NativeCpalCaptureDriver {
     state: Arc<RwLock<CaptureState>>,
     current_device_id: Arc<RwLock<Option<String>>>,
     current_device_name: Arc<RwLock<Option<String>>>,
+    device_provider: Arc<dyn super::devices::AudioDeviceProvider>,
     mock_fallback: MockAudioCaptureDriver,
 }
 
 impl NativeCpalCaptureDriver {
     pub fn new() -> Self {
+        Self::with_provider(Arc::new(super::devices::CpalAudioDeviceProvider::new()))
+    }
+
+    pub fn with_provider(device_provider: Arc<dyn super::devices::AudioDeviceProvider>) -> Self {
         Self {
             state: Arc::new(RwLock::new(CaptureState::Idle)),
             current_device_id: Arc::new(RwLock::new(None)),
             current_device_name: Arc::new(RwLock::new(None)),
+            device_provider,
             mock_fallback: MockAudioCaptureDriver::new(),
         }
     }
@@ -270,21 +285,11 @@ impl AudioCaptureDriver for NativeCpalCaptureDriver {
 
     fn set_device(&self, device_id: Option<String>) -> Result<(), VoiceError> {
         let name = if let Some(ref id) = device_id {
-            use rodio::cpal::traits::{DeviceTrait, HostTrait};
-            let host = rodio::cpal::default_host();
-            let mut found = None;
-            if let Ok(devs) = host.input_devices() {
-                for d in devs {
-                    if let Ok(n) = d.name() {
-                        let opaque_id = super::devices::compute_opaque_device_id(&n, true);
-                        if &opaque_id == id || &n == id {
-                            found = Some(n);
-                            break;
-                        }
-                    }
-                }
-            }
-            found
+            self.device_provider
+                .find_input_device(id)
+                .ok()
+                .flatten()
+                .map(|d| d.name)
         } else {
             None
         };
