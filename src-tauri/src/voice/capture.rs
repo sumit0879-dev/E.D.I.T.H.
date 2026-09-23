@@ -220,12 +220,23 @@ impl AudioCaptureDriver for MockAudioCaptureDriver {
     }
 }
 
+use rodio::cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use rodio::cpal::{SampleFormat, Stream};
+
+struct ActiveCapture {
+    _stream: Stream,
+    sample_rate: u32,
+    channels: u16,
+    buffer: Arc<std::sync::Mutex<Vec<f32>>>,
+}
+
 /// Native hardware audio capture driver using `cpal`.
 pub struct NativeCpalCaptureDriver {
     state: Arc<RwLock<CaptureState>>,
     current_device_id: Arc<RwLock<Option<String>>>,
     current_device_name: Arc<RwLock<Option<String>>>,
     device_provider: Arc<dyn super::devices::AudioDeviceProvider>,
+    active_capture: Arc<std::sync::Mutex<Option<ActiveCapture>>>,
     mock_fallback: MockAudioCaptureDriver,
 }
 
@@ -240,6 +251,7 @@ impl NativeCpalCaptureDriver {
             current_device_id: Arc::new(RwLock::new(None)),
             current_device_name: Arc::new(RwLock::new(None)),
             device_provider,
+            active_capture: Arc::new(std::sync::Mutex::new(None)),
             mock_fallback: MockAudioCaptureDriver::new(),
         }
     }
@@ -260,18 +272,154 @@ impl AudioCaptureDriver for NativeCpalCaptureDriver {
             ));
         }
         *st = CaptureState::Recording;
-        self.mock_fallback.start_capture(session_id)
+
+        // Attempt to initialize real hardware input stream via CPAL
+        let host = rodio::cpal::default_host();
+        let target_device_id = self.current_device_id.read().unwrap().clone();
+
+        let device = if let Some(ref target_id) = target_device_id {
+            let mut found = None;
+            if let Ok(devs) = host.input_devices() {
+                for d in devs {
+                    if let Ok(name) = d.name() {
+                        let id = super::devices::compute_opaque_device_id(&name, true);
+                        if id == *target_id || name == *target_id {
+                            found = Some(d);
+                            break;
+                        }
+                    }
+                }
+            }
+            found
+        } else {
+            None
+        }
+        .or_else(|| host.default_input_device());
+
+        let device = match device {
+            Some(dev) => dev,
+            None => {
+                eprintln!("[NativeCpalCaptureDriver] No hardware input device found, using fallback");
+                return self.mock_fallback.start_capture(session_id);
+            }
+        };
+
+        let default_config = match device.default_input_config() {
+            Ok(cfg) => cfg,
+            Err(e) => {
+                eprintln!("[NativeCpalCaptureDriver] Failed to get default input config: {}, using fallback", e);
+                return self.mock_fallback.start_capture(session_id);
+            }
+        };
+
+        let sample_rate = default_config.sample_rate();
+        let channels = default_config.channels();
+        let sample_format = default_config.sample_format();
+
+        let buffer = Arc::new(std::sync::Mutex::new(Vec::<f32>::new()));
+        let buffer_clone = buffer.clone();
+
+        let err_fn = move |err| {
+            eprintln!("[NativeCpalCaptureDriver] Input stream runtime error: {}", err);
+        };
+
+        let stream_result = match sample_format {
+            SampleFormat::F32 => device.build_input_stream(
+                &default_config.into(),
+                move |data: &[f32], _: &rodio::cpal::InputCallbackInfo| {
+                    if let Ok(mut lock) = buffer_clone.lock() {
+                        lock.extend_from_slice(data);
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            SampleFormat::I16 => device.build_input_stream(
+                &default_config.into(),
+                move |data: &[i16], _: &rodio::cpal::InputCallbackInfo| {
+                    if let Ok(mut lock) = buffer_clone.lock() {
+                        for &s in data {
+                            let norm = if s >= 0 {
+                                s as f32 / i16::MAX as f32
+                            } else {
+                                -(s as f32 / i16::MIN as f32)
+                            };
+                            lock.push(norm.clamp(-1.0, 1.0));
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            SampleFormat::U16 => device.build_input_stream(
+                &default_config.into(),
+                move |data: &[u16], _: &rodio::cpal::InputCallbackInfo| {
+                    if let Ok(mut lock) = buffer_clone.lock() {
+                        for &s in data {
+                            let f = (s as f32 - 32768.0) / 32768.0;
+                            lock.push(f.clamp(-1.0, 1.0));
+                        }
+                    }
+                },
+                err_fn,
+                None,
+            ),
+            _ => {
+                eprintln!("[NativeCpalCaptureDriver] Unsupported sample format {:?}, using fallback", sample_format);
+                return self.mock_fallback.start_capture(session_id);
+            }
+        };
+
+        let stream = match stream_result {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("[NativeCpalCaptureDriver] Failed to build input stream: {}, using fallback", e);
+                return self.mock_fallback.start_capture(session_id);
+            }
+        };
+
+        if let Err(e) = stream.play() {
+            eprintln!("[NativeCpalCaptureDriver] Failed to play input stream: {}, using fallback", e);
+            return self.mock_fallback.start_capture(session_id);
+        }
+
+        let mut lock = self.active_capture.lock().unwrap();
+        *lock = Some(ActiveCapture {
+            _stream: stream,
+            sample_rate,
+            channels,
+            buffer,
+        });
+
+        Ok(())
     }
 
     fn stop_capture(&self) -> Result<AudioBuffer, VoiceError> {
         let mut st = self.state.write().unwrap();
         *st = CaptureState::Idle;
+
+        let active = {
+            let mut lock = self.active_capture.lock().unwrap();
+            lock.take()
+        };
+
+        if let Some(active) = active {
+            let samples = active.buffer.lock().unwrap().clone();
+            if !samples.is_empty() {
+                return Ok(AudioBuffer::new(active.sample_rate, active.channels, samples));
+            }
+        }
+
         self.mock_fallback.stop_capture()
     }
 
     fn cancel_capture(&self) -> Result<(), VoiceError> {
         let mut st = self.state.write().unwrap();
         *st = CaptureState::Idle;
+
+        let mut lock = self.active_capture.lock().unwrap();
+        *lock = None;
+
         self.mock_fallback.cancel_capture()
     }
 

@@ -66,12 +66,14 @@ mod tests {
                     on_chunk(StreamChunk {
                         text: c.clone(),
                         is_done: false,
+                        tool_calls: None,
                     });
                 }
                 Ok(GenerateResponse {
                     text: self.chunks.join(""),
                     model: "mock-model".to_string(),
                     finish_reason: Some("stop".to_string()),
+                    tool_calls: None,
                 })
             })
         }
@@ -239,14 +241,8 @@ mod tests {
         );
 
         let history = vec![
-            ChatMessage {
-                role: "user".to_string(),
-                content: "Status report".to_string(),
-            },
-            ChatMessage {
-                role: "assistant".to_string(),
-                content: "All systems green".to_string(),
-            },
+            ChatMessage::user("Status report"),
+            ChatMessage::assistant("All systems green"),
         ];
 
         let assembled = assembler
@@ -561,5 +557,255 @@ mod tests {
 
         let status = core.get_turn_status(&turn_id).await.unwrap();
         assert_eq!(status.status, TurnStatus::Failed);
+    }
+
+    #[derive(Debug)]
+    struct MockToolCallingProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl MockToolCallingProvider {
+        fn new() -> Self {
+            Self {
+                call_count: std::sync::atomic::AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl Provider for MockToolCallingProvider {
+        fn id(&self) -> &str {
+            "mock_tool_prov"
+        }
+        fn name(&self) -> &str {
+            "Mock Tool Provider"
+        }
+        fn capabilities(&self) -> CapabilitySet {
+            CapabilitySet::from_slice(&[Capability::TextGeneration, Capability::ToolCalling])
+        }
+        fn models(&self) -> Vec<ModelMetadata> {
+            vec![ModelMetadata::new("mock_tool_prov", "tool-model", "Tool Model", self.capabilities())]
+        }
+        fn default_model(&self) -> Option<String> {
+            Some("tool-model".to_string())
+        }
+        fn as_text_generation(&self) -> Option<&dyn crate::ai::TextGenerationCapability> {
+            Some(self)
+        }
+    }
+
+    impl crate::ai::TextGenerationCapability for MockToolCallingProvider {
+        fn generate<'a>(
+            &'a self,
+            req: &'a GenerateRequest,
+            _creds: &'a Option<String>,
+        ) -> Pin<Box<dyn Future<Output = Result<GenerateResponse, ProviderError>> + Send + 'a>> {
+            Box::pin(async move {
+                let count = self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if count == 0 {
+                    Ok(GenerateResponse {
+                        text: "Navigating to Google...".to_string(),
+                        model: "tool-model".to_string(),
+                        finish_reason: Some("tool_calls".to_string()),
+                        tool_calls: Some(vec![crate::ai::ToolCall::new(
+                            "call_nav_1",
+                            "browser.navigate",
+                            "{\"url\":\"https://google.com\"}",
+                        )]),
+                    })
+                } else {
+                    let has_tool_result = req.messages.iter().any(|m| m.role == "tool");
+                    assert!(has_tool_result, "Model must receive tool result in messages");
+                    Ok(GenerateResponse {
+                        text: "I have opened Google for you.".to_string(),
+                        model: "tool-model".to_string(),
+                        finish_reason: Some("stop".to_string()),
+                        tool_calls: None,
+                    })
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agentic_tool_calling_loop() {
+        let mut registry = ProviderRegistry::new();
+        let prov = Arc::new(MockToolCallingProvider::new());
+        registry.register(prov);
+
+        let core = ConversationCore::mock(registry);
+
+        let tool_reg = Arc::new(crate::tools::ToolRegistry::new());
+        let _ = tool_reg.register(crate::tools::ToolDefinition::new(
+            "browser.navigate",
+            crate::tools::types::ToolDomain::Browser,
+            "Navigates to URL",
+            serde_json::json!({
+                "type": "object",
+                "properties": { "url": { "type": "string" } }
+            }),
+            false,
+            5000,
+        ));
+
+        let domain_registry = Arc::new(crate::tools::DomainExecutorRegistry::new());
+        struct TestBrowserExecutor;
+        impl crate::tools::executor::DomainExecutor for TestBrowserExecutor {
+            fn domain(&self) -> crate::tools::types::ToolDomain {
+                crate::tools::types::ToolDomain::Browser
+            }
+            fn execute<'a>(
+                &'a self,
+                _req: &'a crate::tools::ToolRequest,
+                _def: &'a crate::tools::ToolDefinition,
+                _cancel: crate::tools::cancellation::ScopedCancellationToken,
+            ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, crate::tools::types::ToolExecutionError>> + Send + 'a>> {
+                Box::pin(async move {
+                    Ok(serde_json::json!({ "title": "Google", "status": 200 }))
+                })
+            }
+        }
+        domain_registry.register(Arc::new(TestBrowserExecutor));
+
+        let policy_engine = Arc::new(crate::policy::PolicyEngine::new(None));
+        let router = Arc::new(crate::tools::ToolRouter::with_defaults(
+            tool_reg.clone(),
+            domain_registry,
+            policy_engine,
+            None,
+        ));
+
+        core.set_tools(router, tool_reg);
+
+        let sub = core
+            .submit_turn(TurnSubmissionRequest {
+                session_id: "sess-agentic".to_string(),
+                message: "Open Google in browser".to_string(),
+                provider_id: Some("mock_tool_prov".to_string()),
+                model_id: Some("tool-model".to_string()),
+                temperature: Some(0.7),
+                client_turn_id: None,
+            })
+            .await
+            .unwrap();
+
+        let turn_id = TurnId::from_string(sub.turn_id);
+        let res = core.execute_turn(&turn_id, None).await.unwrap();
+
+        assert_eq!(res, "I have opened Google for you.");
+
+        let status = core.get_turn_status(&turn_id).await.unwrap();
+        assert_eq!(status.status, TurnStatus::Completed);
+        assert_eq!(status.final_response.as_deref(), Some("I have opened Google for you."));
+    }
+
+    #[derive(Debug)]
+    struct MockApprovalToolProvider {
+        call_count: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Provider for MockApprovalToolProvider {
+        fn id(&self) -> &str {
+            "mock_appr_prov"
+        }
+        fn name(&self) -> &str {
+            "Mock Approval Provider"
+        }
+        fn capabilities(&self) -> CapabilitySet {
+            CapabilitySet::from_slice(&[Capability::TextGeneration, Capability::ToolCalling])
+        }
+        fn models(&self) -> Vec<ModelMetadata> {
+            vec![ModelMetadata::new("mock_appr_prov", "tool-model", "Tool Model", self.capabilities())]
+        }
+        fn default_model(&self) -> Option<String> {
+            Some("tool-model".to_string())
+        }
+        fn as_text_generation(&self) -> Option<&dyn crate::ai::TextGenerationCapability> {
+            Some(self)
+        }
+    }
+
+    impl crate::ai::TextGenerationCapability for MockApprovalToolProvider {
+        fn generate<'a>(
+            &'a self,
+            req: &'a GenerateRequest,
+            _creds: &'a Option<String>,
+        ) -> Pin<Box<dyn Future<Output = Result<GenerateResponse, ProviderError>> + Send + 'a>> {
+            Box::pin(async move {
+                let count = self.call_count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if count == 0 {
+                    Ok(GenerateResponse {
+                        text: "Executing launch...".to_string(),
+                        model: "tool-model".to_string(),
+                        finish_reason: Some("tool_calls".to_string()),
+                        tool_calls: Some(vec![crate::ai::ToolCall::new(
+                            "call_cmd_1",
+                            "computer.launch_app",
+                            "{\"app_name\":\"notepad\"}",
+                        )]),
+                    })
+                } else {
+                    let tool_msg = req.messages.iter().find(|m| m.role == "tool").expect("Expected tool message");
+                    assert!(tool_msg.content.contains("approval_required"), "Expected approval_required status, got: {}", tool_msg.content);
+                    Ok(GenerateResponse {
+                        text: "Confirmation required before launching notepad.".to_string(),
+                        model: "tool-model".to_string(),
+                        finish_reason: Some("stop".to_string()),
+                        tool_calls: None,
+                    })
+                }
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn test_agentic_computer_and_approval_flow() {
+        let mut registry = ProviderRegistry::new();
+        let prov = Arc::new(MockApprovalToolProvider {
+            call_count: std::sync::atomic::AtomicUsize::new(0),
+        });
+        registry.register(prov);
+
+        let core = ConversationCore::mock(registry);
+
+        let tool_reg = Arc::new(crate::tools::ToolRegistry::new());
+        for def in crate::tools::get_computer_definitions() {
+            let _ = tool_reg.register(def);
+        }
+
+        let domain_registry = Arc::new(crate::tools::DomainExecutorRegistry::new());
+        let computer_executor = Arc::new(crate::tools::ComputerDomainExecutor::new(None));
+        domain_registry.register(computer_executor);
+
+        let policy_engine = Arc::new(crate::policy::PolicyEngine::new(None));
+        let router = Arc::new(crate::tools::ToolRouter::with_defaults(
+            tool_reg.clone(),
+            domain_registry,
+            policy_engine.clone(),
+            None,
+        ));
+
+        core.set_tools(router, tool_reg);
+
+        let sub = core
+            .submit_turn(TurnSubmissionRequest {
+                session_id: "sess-approval".to_string(),
+                message: "Launch notepad".to_string(),
+                provider_id: Some("mock_appr_prov".to_string()),
+                model_id: Some("tool-model".to_string()),
+                temperature: Some(0.7),
+                client_turn_id: None,
+            })
+            .await
+            .unwrap();
+
+        let turn_id = TurnId::from_string(sub.turn_id);
+        let res = core.execute_turn(&turn_id, None).await.unwrap();
+
+        assert_eq!(res, "Confirmation required before launching notepad.");
+
+        // Verify pending approvals exist in policy engine
+        let pending = policy_engine.list_pending_approvals().await;
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].action_request.operation, "launch_app");
     }
 }

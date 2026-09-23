@@ -225,28 +225,52 @@ export const ChatView: React.FC = () => {
     try {
       await tauriService.saveSessionMessage(targetSessionId, 'user', text.trim(), timestamp);
 
-      const historyItems = messages.map((m) => ({
-        role: m.role,
-        text: m.text || m.content || '',
-      }));
+      let responseText = '';
+      let responseType = 'text';
 
-      const res = await tauriService.chatCommand(
-        text.trim(),
-        targetSessionId,
-        historyItems,
-        settings,
-        assistantMsgId
-      );
+      try {
+        // Authoritative path: ConversationCore agentic execution
+        const turnResult = await conversationService.submitConversationTurn({
+          sessionId: targetSessionId,
+          message: text.trim(),
+          providerId: settings.aiProvider,
+          modelId: settings.aiModel,
+          temperature: parseFloat(settings.temperature || '0.7'),
+          clientTurnId: assistantMsgId,
+        });
+
+        responseText = await conversationService.executeConversationTurn(
+          turnResult.turn_id,
+          turnResult.stream_id,
+          settings
+        );
+      } catch (convErr: any) {
+        // Fallback to chatCommand for legacy compatibility
+        const historyItems = messages.map((m) => ({
+          role: m.role,
+          text: m.text || m.content || '',
+        }));
+
+        const res = await tauriService.chatCommand(
+          text.trim(),
+          targetSessionId,
+          historyItems,
+          settings,
+          assistantMsgId
+        );
+        responseText = res.response;
+        responseType = res.type;
+      }
 
       setMessages((prev) =>
         prev.map((m) =>
           m.id === assistantMsgId
             ? {
                 ...m,
-                text: res.response || m.text,
-                content: res.response || m.content,
+                text: responseText || m.text,
+                content: responseText || m.content,
                 isStreaming: false,
-                type: res.type as any,
+                type: responseType as any,
               }
             : m
         )
@@ -255,12 +279,12 @@ export const ChatView: React.FC = () => {
       await tauriService.saveSessionMessage(
         targetSessionId,
         'assistant',
-        res.response,
+        responseText,
         timestamp
       );
 
-      if (settings.autoSpeak === 'true' && res.response && res.type !== 'error') {
-        speakText(res.response);
+      if (settings.autoSpeak === 'true' && responseText && responseType !== 'error') {
+        speakText(responseText);
       }
     } catch (e: any) {
       const errMsg = 'Error: ' + (e.message || e);

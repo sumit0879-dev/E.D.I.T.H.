@@ -670,8 +670,8 @@ pub fn run() {
             let runtime_state = runtime::EdithRuntimeState::new(
                 conversation_core_arc,
                 task_runtime_arc,
-                tool_registry_arc,
-                tool_router_arc,
+                tool_registry_arc.clone(),
+                tool_router_arc.clone(),
                 conversation_core.registry(),
                 policy_engine_arc,
                 Some(app.handle().clone()),
@@ -682,6 +682,9 @@ pub fn run() {
                 std::sync::Arc::new(runtime_state.clone()),
             ));
             domain_executors_arc.register(edith_executor);
+
+            // Wire Universal Tool Runtime into authoritative ConversationCore agentic loop
+            conversation_core.set_tools(tool_router_arc.clone(), tool_registry_arc.clone());
 
             app.manage(task_runtime);
             app.manage(conversation_core);

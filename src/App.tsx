@@ -4,6 +4,7 @@ import { TopHudBar } from './components/TopHudBar';
 import { TacticalNavRail } from './components/TacticalNavRail';
 import { TelemetryDock } from './components/TelemetryDock';
 import { ToastContainer } from './components/Toast';
+import { ApprovalModal } from './components/ApprovalModal';
 
 import { ChatView } from './views/ChatView';
 import { BrowserView } from './views/BrowserView';
@@ -86,6 +87,7 @@ const MainLayout: React.FC = () => {
 
       {/* Floating System Notifications */}
       <ToastContainer />
+      <ApprovalModal />
     </div>
   );
 };

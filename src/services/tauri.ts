@@ -2187,14 +2187,30 @@ export async function browserTabGroupCloseTabs(groupId: string): Promise<string[
 // --- Phase 8 Runtime State & Self-Knowledge APIs ---
 
 export interface RuntimeStatusSummary {
+  session_id?: string | null;
+  active_turn_id?: string | null;
   autonomy_state: string;
-  active_tasks_count: number;
-  active_tool_executions_count: number;
-  has_active_turns: boolean;
-  active_turn_ids: string[];
   security_mode: string;
+  policy_version?: number;
+  active_task_count?: number;
+  active_tasks_count?: number;
+  active_execution_count?: number;
+  active_tool_executions_count?: number;
+  pending_approval_count?: number;
+  active_provider?: string;
+  active_model?: string;
   uptime_seconds: number;
-  timestamp: string;
+  voice?: {
+    state?: string;
+    active_session_id?: string | null;
+    is_speaking?: boolean;
+    is_listening?: boolean;
+    current_input_device?: string | null;
+    current_output_device?: string | null;
+  } | null;
+  timestamp?: string;
+  has_active_turns?: boolean;
+  active_turn_ids?: string[];
 }
 
 export interface ToolDomainSummary {
@@ -2232,6 +2248,36 @@ export async function runtimeGetStatus(): Promise<RuntimeStatusSummary | null> {
   } catch (err) {
     console.error('Failed to get runtime status:', err);
     return null;
+  }
+}
+
+export interface TaskSnapshot {
+  task_id: string;
+  task_type: string;
+  owner: string;
+  goal: string;
+  status: string;
+  progress: {
+    step: number;
+    max_steps: number;
+    status_text: string;
+  };
+  created_at_ms: number;
+  started_at_ms?: number | null;
+  completed_at_ms?: number | null;
+  error?: string | null;
+  result_summary?: string | null;
+}
+
+export async function taskListActive(): Promise<TaskSnapshot[]> {
+  if (!isTauri()) {
+    return [];
+  }
+  try {
+    return await invoke<TaskSnapshot[]>('task_list_active');
+  } catch (err) {
+    console.error('Failed to list active tasks:', err);
+    return [];
   }
 }
 

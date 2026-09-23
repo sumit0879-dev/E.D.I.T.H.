@@ -172,6 +172,7 @@ You can only use one tool at a time. Do not write anything after the tool block.
             .map(|m| crate::ai::ChatMessage {
                 role: m.role.clone(),
                 content: m.content.clone(),
+                ..Default::default()
             })
             .collect();
 
@@ -185,6 +186,7 @@ You can only use one tool at a time. Do not write anything after the tool block.
             temperature,
             max_tokens: None,
             stream: true,
+            ..Default::default()
         };
 
         let emitter = crate::events::EventEmitter::from_app(&app);

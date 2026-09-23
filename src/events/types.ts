@@ -139,12 +139,45 @@ export type RuntimeEventData =
     }
   | { runtime_event: 'notification'; data: { level: string; message: string } };
 
+export type SecurityPolicyEventData =
+  | {
+      security_event: 'policy_evaluated';
+      data: {
+        action_domain: string;
+        action_operation: string;
+        risk_level: string;
+        outcome: string;
+        reason: string;
+        approval_id?: string;
+      };
+    }
+  | {
+      security_event: 'approval_requested';
+      data: {
+        approval_id: string;
+        action_domain: string;
+        action_operation: string;
+        risk_level: string;
+        reason: string;
+        expires_at_ms: number;
+      };
+    }
+  | {
+      security_event: 'approval_resolved';
+      data: {
+        approval_id: string;
+        status: string;
+        notes?: string;
+      };
+    };
+
 export type EdithPayload =
   | { category: 'stream'; data: StreamEventData }
   | { category: 'task'; data: TaskEventData }
   | { category: 'tool'; data: ToolEventData }
   | { category: 'voice'; data: VoiceEventData }
-  | { category: 'runtime'; data: RuntimeEventData };
+  | { category: 'runtime'; data: RuntimeEventData }
+  | { category: 'security_policy'; data: SecurityPolicyEventData };
 
 export type EventCategory = EdithPayload['category'];
 
