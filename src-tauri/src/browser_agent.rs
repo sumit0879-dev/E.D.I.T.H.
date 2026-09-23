@@ -684,6 +684,7 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
             .map(|m| crate::ai::ChatMessage {
                 role: m.role.clone(),
                 content: m.content.clone(),
+                ..Default::default()
             })
             .collect();
 
@@ -697,6 +698,7 @@ Output ONLY ONE tool call per turn. Wait for the tool result before taking the n
             temperature: 0.2,
             max_tokens: None,
             stream: false,
+            ..Default::default()
         };
 
         let ai_reply: Result<String, String> = if let Some(gen) = adapter.as_text_generation() {

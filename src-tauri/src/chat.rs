@@ -339,8 +339,25 @@ pub async fn chat_command(
         .map(|m| crate::ai::ChatMessage {
             role: m.role,
             content: m.content,
+            ..Default::default()
         })
         .collect();
+
+    if let Some(core) = app.try_state::<crate::conversation::ConversationCore>() {
+        let sub_req = crate::conversation::TurnSubmissionRequest {
+            session_id: session_id.clone(),
+            message: message.clone(),
+            provider_id: Some(provider_id.clone()),
+            model_id: Some(model.clone()),
+            temperature: Some(temp),
+            client_turn_id: Some(effective_turn_id.clone()),
+        };
+        let sub_res = core.submit_turn(sub_req).await.map_err(|e| e.to_string())?;
+        let turn_id = crate::events::TurnId::from_string(&sub_res.turn_id);
+        let final_text = core.execute_turn(&turn_id, creds).await.map_err(|e| e.to_string())?;
+        return Ok(ChatResponse::new(final_text, "text".to_string())
+            .with_stream(&sub_res.stream_id, &sub_res.turn_id));
+    }
 
     let req = crate::ai::GenerateRequest {
         model: model.clone(),
@@ -348,30 +365,8 @@ pub async fn chat_command(
         temperature: temp,
         max_tokens: None,
         stream: true,
+        ..Default::default()
     };
-
-    let (effective_turn_id, cancel_token) =
-        if let Some(core) = app.try_state::<crate::conversation::ConversationCore>() {
-            let sub_req = crate::conversation::TurnSubmissionRequest {
-                session_id: session_id.clone(),
-                message: message.clone(),
-                provider_id: Some(provider_id.clone()),
-                model_id: Some(model.clone()),
-                temperature: Some(temp),
-                client_turn_id: Some(effective_turn_id.clone()),
-            };
-            if let Ok(sub_res) = core.submit_turn(sub_req).await {
-                let ct = core
-                    .get_cancellation_token(&crate::events::TurnId::from_string(&sub_res.turn_id))
-                    .await;
-                (sub_res.turn_id, ct)
-            } else {
-                (effective_turn_id, None)
-            }
-        } else {
-            (effective_turn_id, None)
-        };
-    let cancel_token_clone = cancel_token.clone();
 
     let stream_cap = adapter.as_streaming_text();
     let reply_result = if let Some(streamer) = stream_cap {
@@ -385,11 +380,6 @@ pub async fn chat_command(
                 &req,
                 &creds,
                 Box::new(move |chunk| {
-                    if let Some(ref ct) = cancel_token_clone {
-                        if ct.is_cancelled() {
-                            return;
-                        }
-                    }
                     if !chunk.text.is_empty() {
                         let n = seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                         let _ = emitter_clone.emit_stream_chunk(
@@ -402,20 +392,6 @@ pub async fn chat_command(
                 }),
             )
             .await;
-
-        if let Some(ref ct) = cancel_token {
-            if ct.is_cancelled() {
-                let _ = emitter.emit_stream_cancelled(
-                    &correlation,
-                    Some("Turn cancelled by user".to_string()),
-                );
-                return Ok(ChatResponse::new(
-                    "Turn cancelled by user".to_string(),
-                    "error".to_string(),
-                )
-                .with_stream(&stream_id, &effective_turn_id));
-            }
-        }
 
         match &res {
             Ok(_) => {

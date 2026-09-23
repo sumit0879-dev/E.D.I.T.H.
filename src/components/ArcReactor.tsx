@@ -1,6 +1,7 @@
 import React, { useEffect, useState, useRef } from 'react';
 import { Mic, Sparkles, Activity, Radio, Zap } from 'lucide-react';
 import { eventRouter } from '../events';
+import { useApp } from '../context/AppContext';
 
 interface ArcReactorProps {
   status?: 'standby' | 'listening' | 'processing' | 'speaking' | 'online';
@@ -19,6 +20,7 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
   compact = false,
   className = '',
 }) => {
+  const { isSpeaking = false } = useApp();
   // 12 radial wave visualizer bars (15% to 100% height)
   const [waveLevels, setWaveLevels] = useState<number[]>([
     20, 25, 20, 30, 25, 35, 25, 30, 20, 25, 20, 20,
@@ -27,6 +29,18 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
   const [voiceDirection, setVoiceDirection] = useState<'input' | 'output' | 'idle'>('idle');
   const [isSpeechActive, setIsSpeechActive] = useState<boolean>(false);
   const lastPacketTimeRef = useRef<number>(Date.now());
+
+  // Animate waves during active speech synthesis if raw DSP bands are absent
+  useEffect(() => {
+    if (isSpeaking && activeRms === 0) {
+      const timer = setInterval(() => {
+        setWaveLevels((prev) =>
+          prev.map((_, i) => 25 + Math.round(Math.sin(Date.now() / 150 + i) * 25 + 25))
+        );
+      }, 80);
+      return () => clearInterval(timer);
+    }
+  }, [isSpeaking, activeRms]);
 
   // Subscribe to real signal-driven VisualizerEnergy events from backend DSP pipeline
   useEffect(() => {
@@ -91,6 +105,8 @@ export const ArcReactor: React.FC<ArcReactorProps> = ({
 
   const effectiveStatus = isListening
     ? 'listening'
+    : isSpeaking
+    ? 'speaking'
     : isSpeechActive && voiceDirection === 'output'
     ? 'speaking'
     : isSpeechActive && voiceDirection === 'input'

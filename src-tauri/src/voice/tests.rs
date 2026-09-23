@@ -51,6 +51,7 @@ impl TextGenerationCapability for MockVoiceTestProvider {
                 text: "Hello! Tactical systems online and operational.".to_string(),
                 model: "test-model".to_string(),
                 finish_reason: Some("stop".to_string()),
+                tool_calls: None,
             })
         })
     }
@@ -112,6 +113,30 @@ fn test_audio_buffer_linear_resampling() {
     let resampled = buf.resample_linear(target_sr);
     assert_eq!(resampled.sample_rate, target_sr);
     assert!(resampled.len() > buf.len());
+}
+
+#[test]
+fn test_audio_buffer_wav_header() {
+    let sr = 16000;
+    let buf = AudioBuffer::new(sr, 1, vec![0.0; 100]);
+    let wav = buf.to_wav_bytes();
+
+    assert_eq!(&wav[0..4], b"RIFF");
+    assert_eq!(&wav[8..12], b"WAVE");
+    assert_eq!(&wav[12..16], b"fmt ");
+    assert_eq!(&wav[36..40], b"data");
+
+    // 100 samples * 2 bytes = 200 bytes PCM + 44 header bytes = 244 total
+    assert_eq!(wav.len(), 244);
+
+    let pcm_len = u32::from_le_bytes([wav[40], wav[41], wav[42], wav[43]]);
+    assert_eq!(pcm_len, 200);
+
+    let channels = u16::from_le_bytes([wav[22], wav[23]]);
+    assert_eq!(channels, 1);
+
+    let sample_rate = u32::from_le_bytes([wav[24], wav[25], wav[26], wav[27]]);
+    assert_eq!(sample_rate, 16000);
 }
 
 // -----------------------------------------------------------------------------

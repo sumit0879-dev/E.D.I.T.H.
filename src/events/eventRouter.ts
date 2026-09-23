@@ -19,6 +19,7 @@ export class EdithEventRouter {
     this.categoryHandlers.set('tool', new Set());
     this.categoryHandlers.set('voice', new Set());
     this.categoryHandlers.set('runtime', new Set());
+    this.categoryHandlers.set('security_policy', new Set());
   }
 
   /**

@@ -143,11 +143,8 @@ export async function resolveApproval(
     throw new Error('Approval resolution requires active Tauri host runtime.');
   }
 
-  // Map to Rust enum shape
-  const rustDecision =
-    decision.type === 'approve'
-      ? { approve: { notes: decision.notes ?? null } }
-      : { deny: { notes: decision.notes ?? null } };
+  // Map to Rust enum shape ('approve' | 'deny' | 'cancel')
+  const rustDecision = decision.type;
 
   return await invoke<ApprovalRequest>('policy_resolve_approval', {
     approvalId,

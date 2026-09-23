@@ -3,7 +3,7 @@ use crate::ai::errors::{normalize_http_error, ProviderError};
 use crate::ai::model::ModelMetadata;
 use crate::ai::provider::{
     GenerateRequest, GenerateResponse, ModelDiscoveryCapability, Provider, StreamChunk,
-    StreamingTextCapability, TextGenerationCapability,
+    StreamingTextCapability, TextGenerationCapability, ToolCall, ToolChoice,
 };
 use reqwest::Client;
 use serde_json::{json, Value};
@@ -167,12 +167,45 @@ impl TextGenerationCapability for GroqAdapter {
                 });
             }
 
-            let body = json!({
+            let mut body = json!({
                 "model": req.model,
                 "messages": req.messages,
                 "temperature": req.temperature,
                 "stream": false
             });
+
+            if let Some(ref tools) = req.tools {
+                if !tools.is_empty() {
+                    let tools_json: Vec<Value> = tools
+                        .iter()
+                        .map(|t| {
+                            json!({
+                                "type": "function",
+                                "function": {
+                                    "name": t.name,
+                                    "description": t.description,
+                                    "parameters": t.parameters_schema,
+                                }
+                            })
+                        })
+                        .collect();
+                    body["tools"] = json!(tools_json);
+
+                    if let Some(ref choice) = req.tool_choice {
+                        match choice {
+                            ToolChoice::Auto => body["tool_choice"] = json!("auto"),
+                            ToolChoice::None => body["tool_choice"] = json!("none"),
+                            ToolChoice::Required => body["tool_choice"] = json!("required"),
+                            ToolChoice::Specific(name) => {
+                                body["tool_choice"] = json!({
+                                    "type": "function",
+                                    "function": { "name": name }
+                                })
+                            }
+                        }
+                    }
+                }
+            }
 
             let res = self
                 .client
@@ -207,10 +240,34 @@ impl TextGenerationCapability for GroqAdapter {
                 .as_str()
                 .map(|s| s.to_string());
 
+            let tool_calls = val["choices"][0]["message"]["tool_calls"]
+                .as_array()
+                .and_then(|arr| {
+                    let list: Vec<ToolCall> = arr
+                        .iter()
+                        .filter_map(|tc| {
+                            let id = tc["id"].as_str()?.to_string();
+                            let name = tc["function"]["name"].as_str()?.to_string();
+                            let args = if let Some(s) = tc["function"]["arguments"].as_str() {
+                                s.to_string()
+                            } else {
+                                tc["function"]["arguments"].to_string()
+                            };
+                            Some(ToolCall::new(id, name, args))
+                        })
+                        .collect();
+                    if list.is_empty() {
+                        None
+                    } else {
+                        Some(list)
+                    }
+                });
+
             Ok(GenerateResponse {
                 text,
                 model: req.model.clone(),
                 finish_reason,
+                tool_calls,
             })
         })
     }
@@ -232,12 +289,45 @@ impl StreamingTextCapability for GroqAdapter {
                 });
             }
 
-            let body = json!({
+            let mut body = json!({
                 "model": req.model,
                 "messages": req.messages,
                 "temperature": req.temperature,
                 "stream": true
             });
+
+            if let Some(ref tools) = req.tools {
+                if !tools.is_empty() {
+                    let tools_json: Vec<Value> = tools
+                        .iter()
+                        .map(|t| {
+                            json!({
+                                "type": "function",
+                                "function": {
+                                    "name": t.name,
+                                    "description": t.description,
+                                    "parameters": t.parameters_schema,
+                                }
+                            })
+                        })
+                        .collect();
+                    body["tools"] = json!(tools_json);
+
+                    if let Some(ref choice) = req.tool_choice {
+                        match choice {
+                            ToolChoice::Auto => body["tool_choice"] = json!("auto"),
+                            ToolChoice::None => body["tool_choice"] = json!("none"),
+                            ToolChoice::Required => body["tool_choice"] = json!("required"),
+                            ToolChoice::Specific(name) => {
+                                body["tool_choice"] = json!({
+                                    "type": "function",
+                                    "function": { "name": name }
+                                })
+                            }
+                        }
+                    }
+                }
+            }
 
             let mut res = self
                 .client
@@ -258,6 +348,8 @@ impl StreamingTextCapability for GroqAdapter {
 
             let mut full_text = String::new();
             let mut finish_reason = None;
+            let mut partial_tool_calls: std::collections::HashMap<usize, ToolCall> =
+                std::collections::HashMap::new();
 
             while let Ok(Some(chunk)) = res.chunk().await {
                 let chunk_str = String::from_utf8_lossy(&chunk);
@@ -269,6 +361,7 @@ impl StreamingTextCapability for GroqAdapter {
                             on_chunk(StreamChunk {
                                 text: String::new(),
                                 is_done: true,
+                                tool_calls: None,
                             });
                             break;
                         }
@@ -280,7 +373,31 @@ impl StreamingTextCapability for GroqAdapter {
                                 on_chunk(StreamChunk {
                                     text: content.to_string(),
                                     is_done: false,
+                                    tool_calls: None,
                                 });
+                            }
+                            if let Some(delta_tool_calls) =
+                                parsed["choices"][0]["delta"]["tool_calls"].as_array()
+                            {
+                                for tc in delta_tool_calls {
+                                    let idx = tc["index"].as_u64().unwrap_or(0) as usize;
+                                    let entry = partial_tool_calls.entry(idx).or_insert_with(|| {
+                                        ToolCall {
+                                            id: String::new(),
+                                            name: String::new(),
+                                            arguments: String::new(),
+                                        }
+                                    });
+                                    if let Some(id) = tc["id"].as_str() {
+                                        entry.id.push_str(id);
+                                    }
+                                    if let Some(name) = tc["function"]["name"].as_str() {
+                                        entry.name.push_str(name);
+                                    }
+                                    if let Some(args) = tc["function"]["arguments"].as_str() {
+                                        entry.arguments.push_str(args);
+                                    }
+                                }
                             }
                             if let Some(reason) = parsed["choices"][0]["finish_reason"].as_str() {
                                 finish_reason = Some(reason.to_string());
@@ -290,10 +407,19 @@ impl StreamingTextCapability for GroqAdapter {
                 }
             }
 
+            let final_tool_calls = if partial_tool_calls.is_empty() {
+                None
+            } else {
+                let mut entries: Vec<_> = partial_tool_calls.into_iter().collect();
+                entries.sort_by_key(|(k, _)| *k);
+                Some(entries.into_iter().map(|(_, tc)| tc).collect())
+            };
+
             Ok(GenerateResponse {
                 text: full_text,
                 model: req.model.clone(),
                 finish_reason,
+                tool_calls: final_tool_calls,
             })
         })
     }

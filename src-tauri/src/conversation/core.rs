@@ -2,9 +2,11 @@ use super::context::ContextAssembler;
 use super::errors::ConversationError;
 use super::turn::{Turn, TurnStatus};
 use super::types::{ModelSelection, TurnSnapshot, TurnSubmissionRequest, TurnSubmissionResult};
-use crate::ai::{ChatMessage, GenerateRequest, ProviderRegistry};
+use crate::ai::{ChatMessage, GenerateRequest, ProviderRegistry, ToolChoice};
 use crate::events::{EventCorrelation, EventEmitter, StreamId, TurnId};
 use crate::task::CancellationToken;
+use crate::tools::types::{ToolExecutionId, ToolRequest, ToolStatus};
+use serde_json::json;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
 use std::sync::Arc;
@@ -31,6 +33,8 @@ pub struct ConversationCore {
     emitter: EventEmitter,
     db_conn: Option<Arc<std::sync::Mutex<rusqlite::Connection>>>,
     context_assembler: Arc<ContextAssembler>,
+    tool_router: Arc<std::sync::RwLock<Option<Arc<crate::tools::ToolRouter>>>>,
+    tool_registry: Arc<std::sync::RwLock<Option<Arc<crate::tools::ToolRegistry>>>>,
 }
 
 impl ConversationCore {
@@ -47,12 +51,28 @@ impl ConversationCore {
             emitter,
             db_conn,
             context_assembler: Arc::new(context_assembler.unwrap_or_default()),
+            tool_router: Arc::new(std::sync::RwLock::new(None)),
+            tool_registry: Arc::new(std::sync::RwLock::new(None)),
         }
     }
 
     /// Creates an in-memory mock ConversationCore for headless automated unit testing.
     pub fn mock(registry: ProviderRegistry) -> Self {
         Self::new(registry, EventEmitter::mock(), None, None)
+    }
+
+    /// Attaches the Universal Tool Runtime router and registry for agentic tool execution.
+    pub fn set_tools(
+        &self,
+        router: Arc<crate::tools::ToolRouter>,
+        registry: Arc<crate::tools::ToolRegistry>,
+    ) {
+        if let Ok(mut r) = self.tool_router.write() {
+            *r = Some(router);
+        }
+        if let Ok(mut reg) = self.tool_registry.write() {
+            *reg = Some(registry);
+        }
     }
 
     pub fn emitter(&self) -> &EventEmitter {
@@ -187,6 +207,7 @@ impl ConversationCore {
                 .map(|m| ChatMessage {
                     role: m.role,
                     content: m.text,
+                    ..Default::default()
                 })
                 .collect::<Vec<_>>()
         } else {
@@ -198,14 +219,6 @@ impl ConversationCore {
             .context_assembler
             .assemble_messages(&history_messages, &user_message)
             .await;
-
-        let req = GenerateRequest {
-            model: model_selection.model_id.clone(),
-            messages: assembled_messages,
-            temperature: model_selection.temperature,
-            max_tokens: None,
-            stream: true,
-        };
 
         // Resolve provider adapter from ProviderRegistry
         let adapter = {
@@ -221,6 +234,24 @@ impl ConversationCore {
             Some(stream_id.to_string()),
         );
 
+        // Fetch available tools from ToolRegistry if attached
+        let (router_opt, registry_opt) = {
+            let r = self.tool_router.read().ok().and_then(|g| g.clone());
+            let reg = self.tool_registry.read().ok().and_then(|g| g.clone());
+            (r, reg)
+        };
+
+        let available_tools = if let Some(ref reg) = registry_opt {
+            let tools = reg.list();
+            if tools.is_empty() {
+                None
+            } else {
+                Some(tools)
+            }
+        } else {
+            None
+        };
+
         // Transition: Processing -> Streaming
         {
             let mut turn = turn_arc.write().await;
@@ -233,143 +264,247 @@ impl ConversationCore {
             turn.status = TurnStatus::Streaming;
         }
 
-        // Stream execution
-        let stream_cap = adapter.as_streaming_text();
-        let final_text = if let Some(streamer) = stream_cap {
-            let _ = self
-                .emitter
-                .emit_stream_started(&correlation, &model_selection.model_id);
-            let emitter_clone = self.emitter.clone();
-            let correlation_clone = correlation.clone();
-            let token_clone = cancellation_token.clone();
-            let seq = AtomicU64::new(0);
-            let accumulated = Arc::new(std::sync::Mutex::new(String::new()));
-            let acc_clone = accumulated.clone();
+        let _ = self
+            .emitter
+            .emit_stream_started(&correlation, &model_selection.model_id);
 
-            let stream_res = streamer
-                .stream(
-                    &req,
-                    &credentials,
-                    Box::new(move |chunk| {
-                        // Check turn scoped cancellation
-                        if token_clone.is_cancelled() {
-                            return;
-                        }
-                        if !chunk.text.is_empty() {
-                            if let Ok(mut text) = acc_clone.lock() {
-                                text.push_str(&chunk.text);
+        let mut loop_messages = assembled_messages;
+        let mut final_text = String::new();
+        let mut iteration = 0;
+        const MAX_AGENTIC_ITERATIONS: usize = 10;
+        let seq = Arc::new(AtomicU64::new(0));
+
+        while iteration < MAX_AGENTIC_ITERATIONS {
+            iteration += 1;
+
+            if cancellation_token.is_cancelled() {
+                let mut turn = turn_arc.write().await;
+                if turn.status != TurnStatus::Cancelled {
+                    turn.status = TurnStatus::Cancelled;
+                    turn.completed_at_ms = Some(now_ms());
+                    turn.error = Some("Turn cancelled by operator".to_string());
+                    let _ = self.emitter.emit_stream_cancelled(
+                        &correlation,
+                        Some("Turn cancelled by operator".to_string()),
+                    );
+                }
+                return Err(ConversationError::Cancellation(
+                    "Turn cancelled by operator".to_string(),
+                ));
+            }
+
+            let req = GenerateRequest {
+                model: model_selection.model_id.clone(),
+                messages: loop_messages.clone(),
+                temperature: model_selection.temperature,
+                max_tokens: None,
+                stream: true,
+                tools: available_tools.clone(),
+                tool_choice: available_tools.as_ref().map(|_| ToolChoice::Auto),
+            };
+
+            // Stream execution
+            let stream_cap = adapter.as_streaming_text();
+            let response = if let Some(streamer) = stream_cap {
+                let emitter_clone = self.emitter.clone();
+                let correlation_clone = correlation.clone();
+                let token_clone = cancellation_token.clone();
+                let seq_clone = seq.clone();
+                let accumulated = Arc::new(std::sync::Mutex::new(String::new()));
+                let acc_clone = accumulated.clone();
+
+                let stream_res = streamer
+                    .stream(
+                        &req,
+                        &credentials,
+                        Box::new(move |chunk| {
+                            if token_clone.is_cancelled() {
+                                return;
                             }
-                            let n = seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                            let _ = emitter_clone.emit_stream_chunk(
-                                &correlation_clone,
-                                chunk.text,
-                                n,
-                                false,
-                            );
+                            if !chunk.text.is_empty() {
+                                if let Ok(mut text) = acc_clone.lock() {
+                                    text.push_str(&chunk.text);
+                                }
+                                let n = seq_clone
+                                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+                                    + 1;
+                                let _ = emitter_clone.emit_stream_chunk(
+                                    &correlation_clone,
+                                    chunk.text,
+                                    n,
+                                    false,
+                                );
+                            }
+                        }),
+                    )
+                    .await;
+
+                if cancellation_token.is_cancelled() {
+                    let mut turn = turn_arc.write().await;
+                    if turn.status != TurnStatus::Cancelled {
+                        turn.status = TurnStatus::Cancelled;
+                        turn.completed_at_ms = Some(now_ms());
+                        turn.error = Some("Turn cancelled by operator".to_string());
+                        let _ = self.emitter.emit_stream_cancelled(
+                            &correlation,
+                            Some("Turn cancelled by operator".to_string()),
+                        );
+                    }
+                    return Err(ConversationError::Cancellation(
+                        "Turn cancelled by operator".to_string(),
+                    ));
+                }
+
+                match stream_res {
+                    Ok(resp) => resp,
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        let _ = self
+                            .emitter
+                            .emit_stream_failed(&correlation, &err_str, None);
+                        let mut turn = turn_arc.write().await;
+                        turn.status = TurnStatus::Failed;
+                        turn.completed_at_ms = Some(now_ms());
+                        turn.error = Some(err_str);
+                        return Err(ConversationError::from(e));
+                    }
+                }
+            } else if let Some(gen) = adapter.as_text_generation() {
+                let gen_res = gen.generate(&req, &credentials).await;
+
+                if cancellation_token.is_cancelled() {
+                    let mut turn = turn_arc.write().await;
+                    if turn.status != TurnStatus::Cancelled {
+                        turn.status = TurnStatus::Cancelled;
+                        turn.completed_at_ms = Some(now_ms());
+                        turn.error = Some("Turn cancelled by operator".to_string());
+                        let _ = self.emitter.emit_stream_cancelled(
+                            &correlation,
+                            Some("Turn cancelled by operator".to_string()),
+                        );
+                    }
+                    return Err(ConversationError::Cancellation(
+                        "Turn cancelled by operator".to_string(),
+                    ));
+                }
+
+                match gen_res {
+                    Ok(resp) => {
+                        let n = seq.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        let _ = self
+                            .emitter
+                            .emit_stream_chunk(&correlation, resp.text.clone(), n, false);
+                        resp
+                    }
+                    Err(e) => {
+                        let err_str = e.to_string();
+                        let _ = self
+                            .emitter
+                            .emit_stream_failed(&correlation, &err_str, None);
+                        let mut turn = turn_arc.write().await;
+                        turn.status = TurnStatus::Failed;
+                        turn.completed_at_ms = Some(now_ms());
+                        turn.error = Some(err_str);
+                        return Err(ConversationError::from(e));
+                    }
+                }
+            } else {
+                let err = format!(
+                    "Provider '{}' does not support text generation",
+                    model_selection.provider_id
+                );
+                let _ = self.emitter.emit_stream_failed(&correlation, &err, None);
+                let mut turn = turn_arc.write().await;
+                turn.status = TurnStatus::Failed;
+                turn.completed_at_ms = Some(now_ms());
+                turn.error = Some(err.clone());
+                return Err(ConversationError::ModelUnavailable(err));
+            };
+
+            // Check if model emitted tool calls
+            if let Some(ref tool_calls) = response.tool_calls {
+                if !tool_calls.is_empty() && router_opt.is_some() {
+                    let router = router_opt.as_ref().unwrap();
+
+                    // Append assistant message with tool calls
+                    loop_messages.push(ChatMessage::assistant_with_tools(
+                        response.text.clone(),
+                        tool_calls.clone(),
+                    ));
+
+                    // Execute each requested tool through the Universal Tool Runtime
+                    for call in tool_calls {
+                        if cancellation_token.is_cancelled() {
+                            break;
                         }
-                    }),
-                )
-                .await;
 
-            // Check if cancelled during streaming
-            // Guarantees exactly one terminal event: if cancel_turn already emitted StreamCancelled,
-            // do NOT emit a duplicate event here.
-            if cancellation_token.is_cancelled() {
-                let mut turn = turn_arc.write().await;
-                if turn.status != TurnStatus::Cancelled {
-                    turn.status = TurnStatus::Cancelled;
-                    turn.completed_at_ms = Some(now_ms());
-                    turn.error = Some("Turn cancelled by operator".to_string());
-                    let _ = self.emitter.emit_stream_cancelled(
-                        &correlation,
-                        Some("Turn cancelled by operator".to_string()),
-                    );
+                        let args = serde_json::from_str::<serde_json::Value>(&call.arguments)
+                            .unwrap_or_else(|_| json!({ "raw": call.arguments }));
+
+                        let tool_req = ToolRequest::new(
+                            call.name.clone(),
+                            args,
+                            correlation.clone(),
+                        )
+                        .with_execution_id(ToolExecutionId::from_string(call.id.clone()));
+
+                        let tool_result = router.execute(tool_req).await;
+
+                        let result_payload = match &tool_result.status {
+                            ToolStatus::Completed => {
+                                json!({
+                                    "status": "success",
+                                    "data": tool_result.data
+                                })
+                                .to_string()
+                            }
+                            ToolStatus::ApprovalRequired => {
+                                json!({
+                                    "status": "approval_required",
+                                    "approval_id": tool_result.approval_id,
+                                    "reason": tool_result.error
+                                })
+                                .to_string()
+                            }
+                            ToolStatus::Blocked => {
+                                json!({
+                                    "status": "blocked",
+                                    "error": tool_result.error,
+                                    "error_code": tool_result.error_code
+                                })
+                                .to_string()
+                            }
+                            _ => {
+                                json!({
+                                    "status": "error",
+                                    "error": tool_result.error
+                                })
+                                .to_string()
+                            }
+                        };
+
+                        loop_messages.push(ChatMessage::tool_result(
+                            call.id.clone(),
+                            call.name.clone(),
+                            result_payload,
+                        ));
+                    }
+
+                    // Feed tool outputs back to the model in the same conversational turn!
+                    continue;
                 }
-                return Err(ConversationError::Cancellation(
-                    "Turn cancelled by operator".to_string(),
-                ));
             }
 
-            match stream_res {
-                Ok(_) => {
-                    let _ = self.emitter.emit_stream_finished(
-                        &correlation,
-                        None,
-                        Some("stop".to_string()),
-                    );
-                    let collected = accumulated.lock().unwrap().clone();
-                    collected
-                }
-                Err(e) => {
-                    let err_str = e.to_string();
-                    let _ = self
-                        .emitter
-                        .emit_stream_failed(&correlation, &err_str, None);
-                    let mut turn = turn_arc.write().await;
-                    turn.status = TurnStatus::Failed;
-                    turn.completed_at_ms = Some(now_ms());
-                    turn.error = Some(err_str);
-                    return Err(ConversationError::from(e));
-                }
-            }
-        } else if let Some(gen) = adapter.as_text_generation() {
-            let _ = self
-                .emitter
-                .emit_stream_started(&correlation, &model_selection.model_id);
-            let gen_res = gen.generate(&req, &credentials).await;
+            // No tool calls — this is the terminal model response
+            final_text = response.text;
+            break;
+        }
 
-            if cancellation_token.is_cancelled() {
-                let mut turn = turn_arc.write().await;
-                if turn.status != TurnStatus::Cancelled {
-                    turn.status = TurnStatus::Cancelled;
-                    turn.completed_at_ms = Some(now_ms());
-                    turn.error = Some("Turn cancelled by operator".to_string());
-                    let _ = self.emitter.emit_stream_cancelled(
-                        &correlation,
-                        Some("Turn cancelled by operator".to_string()),
-                    );
-                }
-                return Err(ConversationError::Cancellation(
-                    "Turn cancelled by operator".to_string(),
-                ));
-            }
-
-            match gen_res {
-                Ok(reply) => {
-                    let _ =
-                        self.emitter
-                            .emit_stream_chunk(&correlation, reply.text.clone(), 1, true);
-                    let _ = self.emitter.emit_stream_finished(
-                        &correlation,
-                        None,
-                        Some("stop".to_string()),
-                    );
-                    reply.text
-                }
-                Err(e) => {
-                    let err_str = e.to_string();
-                    let _ = self
-                        .emitter
-                        .emit_stream_failed(&correlation, &err_str, None);
-                    let mut turn = turn_arc.write().await;
-                    turn.status = TurnStatus::Failed;
-                    turn.completed_at_ms = Some(now_ms());
-                    turn.error = Some(err_str);
-                    return Err(ConversationError::from(e));
-                }
-            }
-        } else {
-            let err = format!(
-                "Provider '{}' does not support text generation",
-                model_selection.provider_id
-            );
-            let _ = self.emitter.emit_stream_failed(&correlation, &err, None);
-            let mut turn = turn_arc.write().await;
-            turn.status = TurnStatus::Failed;
-            turn.completed_at_ms = Some(now_ms());
-            turn.error = Some(err.clone());
-            return Err(ConversationError::ModelUnavailable(err));
-        };
+        let _ = self.emitter.emit_stream_finished(
+            &correlation,
+            None,
+            Some("stop".to_string()),
+        );
 
         // Transition: Streaming -> Completed
         {

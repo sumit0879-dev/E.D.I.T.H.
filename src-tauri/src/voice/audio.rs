@@ -109,6 +109,40 @@ impl AudioBuffer {
         bytes
     }
 
+    /// Packs the audio samples into a standard 44-byte RIFF/WAVE header container.
+    pub fn to_wav_bytes(&self) -> Vec<u8> {
+        let pcm = self.to_i16_pcm();
+        let pcm_len = pcm.len() as u32;
+        let total_file_size = 36 + pcm_len;
+        let channels = self.channels.max(1);
+        let sample_rate = self.sample_rate.max(1);
+        let byte_rate = sample_rate * channels as u32 * 2;
+        let block_align = channels * 2;
+
+        let mut wav = Vec::with_capacity(44 + pcm.len());
+        // RIFF chunk
+        wav.extend_from_slice(b"RIFF");
+        wav.extend_from_slice(&total_file_size.to_le_bytes());
+        wav.extend_from_slice(b"WAVE");
+
+        // fmt subchunk
+        wav.extend_from_slice(b"fmt ");
+        wav.extend_from_slice(&16u32.to_le_bytes()); // Subchunk1Size (16 for PCM)
+        wav.extend_from_slice(&1u16.to_le_bytes());  // AudioFormat (1 for linear PCM)
+        wav.extend_from_slice(&channels.to_le_bytes());
+        wav.extend_from_slice(&sample_rate.to_le_bytes());
+        wav.extend_from_slice(&byte_rate.to_le_bytes());
+        wav.extend_from_slice(&block_align.to_le_bytes());
+        wav.extend_from_slice(&16u16.to_le_bytes()); // BitsPerSample (16)
+
+        // data subchunk
+        wav.extend_from_slice(b"data");
+        wav.extend_from_slice(&pcm_len.to_le_bytes());
+        wav.extend_from_slice(&pcm);
+
+        wav
+    }
+
     /// Decodes 16-bit signed integer PCM bytes (little-endian) into an normalized `AudioBuffer`.
     pub fn from_i16_pcm(bytes: &[u8], sample_rate: u32, channels: u16) -> Self {
         let sample_count = bytes.len() / 2;

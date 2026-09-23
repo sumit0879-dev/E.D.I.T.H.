@@ -13,5 +13,6 @@ pub use model::{Modality, ModelAvailability, ModelMetadata};
 pub use provider::{
     ChatMessage, GenerateRequest, GenerateResponse, ModelDiscoveryCapability, Provider,
     RealtimeAudioCapability, StreamChunk, StreamingTextCapability, TextGenerationCapability,
+    ToolCall, ToolChoice,
 };
 pub use registry::{ProviderRegistry, ProviderSummary};

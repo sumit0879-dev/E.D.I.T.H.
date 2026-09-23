@@ -213,17 +213,24 @@ impl STTAdapter for CloudSTTAdapter {
                 return Err(VoiceError::EmptyTranscript);
             }
 
-            let key = self.api_key.read().unwrap().clone();
-            if key.is_none() {
-                return Err(VoiceError::ProviderUnavailable(format!(
-                    "API key not configured for STT provider '{}'",
-                    self.provider_id
-                )));
-            }
+            let key = match self.api_key.read().unwrap().clone() {
+                Some(k) if !k.trim().is_empty() => k,
+                _ => {
+                    return Err(VoiceError::ProviderUnavailable(format!(
+                        "API key not configured for STT provider '{}'",
+                        self.provider_id
+                    )));
+                }
+            };
 
             // Convert audio to canonical 16kHz mono WAV/PCM
             let mono = audio.to_mono();
-            let pcm_bytes = mono.to_i16_pcm();
+            let canonical = if mono.sample_rate != crate::voice::audio::CANONICAL_STT_SAMPLE_RATE {
+                mono.resample_linear(crate::voice::audio::CANONICAL_STT_SAMPLE_RATE)
+            } else {
+                mono
+            };
+            let wav_bytes = canonical.to_wav_bytes();
 
             if cancellation.is_cancelled() {
                 return Err(VoiceError::Cancelled(
@@ -231,12 +238,93 @@ impl STTAdapter for CloudSTTAdapter {
                 ));
             }
 
+            let endpoint = if !self.endpoint_url.trim().is_empty() {
+                self.endpoint_url.trim().to_string()
+            } else if self.provider_id == "openai" {
+                "https://api.openai.com/v1/audio/transcriptions".to_string()
+            } else {
+                "https://api.groq.com/openai/v1/audio/transcriptions".to_string()
+            };
+
+            let model_name = options.model.clone().unwrap_or_else(|| {
+                if self.provider_id == "openai" {
+                    "whisper-1".to_string()
+                } else {
+                    "whisper-large-v3".to_string()
+                }
+            });
+
+            // Construct multipart/form-data payload with boundary
+            let boundary = format!("----WebKitFormBoundary{}", uuid::Uuid::new_v4().simple());
+            let mut body = Vec::new();
+
+            // Part 1: file (audio.wav)
+            body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            body.extend_from_slice(b"Content-Disposition: form-data; name=\"file\"; filename=\"audio.wav\"\r\n");
+            body.extend_from_slice(b"Content-Type: audio/wav\r\n\r\n");
+            body.extend_from_slice(&wav_bytes);
+            body.extend_from_slice(b"\r\n");
+
+            // Part 2: model
+            body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            body.extend_from_slice(b"Content-Disposition: form-data; name=\"model\"\r\n\r\n");
+            body.extend_from_slice(model_name.as_bytes());
+            body.extend_from_slice(b"\r\n");
+
+            // Part 3: language (if provided and not empty)
+            if !options.language.trim().is_empty() {
+                let lang = options.language.split('-').next().unwrap_or(&options.language);
+                body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+                body.extend_from_slice(b"Content-Disposition: form-data; name=\"language\"\r\n\r\n");
+                body.extend_from_slice(lang.as_bytes());
+                body.extend_from_slice(b"\r\n");
+            }
+
+            // Part 4: response_format (json)
+            body.extend_from_slice(format!("--{}\r\n", boundary).as_bytes());
+            body.extend_from_slice(b"Content-Disposition: form-data; name=\"response_format\"\r\n\r\n");
+            body.extend_from_slice(b"json\r\n");
+
+            // End boundary
+            body.extend_from_slice(format!("--{}--\r\n", boundary).as_bytes());
+
+            let client = reqwest::Client::new();
+            let res = client
+                .post(&endpoint)
+                .header("Authorization", format!("Bearer {}", key))
+                .header("Content-Type", format!("multipart/form-data; boundary={}", boundary))
+                .body(body)
+                .send()
+                .await
+                .map_err(|e| VoiceError::STTUnavailable(e.to_string()))?;
+
+            if !res.status().is_success() {
+                let status = res.status();
+                let err_text = res.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+                return Err(VoiceError::STTUnavailable(format!(
+                    "STT provider returned HTTP {}: {}",
+                    status, err_text
+                )));
+            }
+
+            let resp_json: serde_json::Value = res
+                .json()
+                .await
+                .map_err(|e| VoiceError::STTUnavailable(format!("Failed to parse STT response JSON: {}", e)))?;
+
+            let text = resp_json
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim()
+                .to_string();
+
+            if text.is_empty() {
+                return Err(VoiceError::EmptyTranscript);
+            }
+
             Ok(Transcript {
-                text: format!(
-                    "Cloud audio transcription ({} bytes, {} Hz)",
-                    pcm_bytes.len(),
-                    mono.sample_rate
-                ),
+                text,
                 confidence: Some(0.95),
                 language: options.language.clone(),
                 is_final: true,

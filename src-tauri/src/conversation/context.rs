@@ -135,10 +135,7 @@ impl ContextAssembler {
         let system_prompt = self.build_system_prompt(&memory_items);
 
         let mut messages = Vec::with_capacity(history.len() + 2);
-        messages.push(ChatMessage {
-            role: "system".to_string(),
-            content: system_prompt,
-        });
+        messages.push(ChatMessage::system(system_prompt));
 
         for msg in history {
             // Do not duplicate system prompts from history
@@ -147,10 +144,7 @@ impl ContextAssembler {
             }
         }
 
-        messages.push(ChatMessage {
-            role: "user".to_string(),
-            content: current_input.to_string(),
-        });
+        messages.push(ChatMessage::user(current_input.to_string()));
 
         messages
     }
