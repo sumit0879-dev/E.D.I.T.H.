@@ -32,10 +32,14 @@ impl fmt::Display for VoiceError {
             Self::STTTimeout => write!(f, "STT transcription timed out"),
             Self::ProviderUnavailable(msg) => write!(f, "Voice provider unavailable: {}", msg),
             Self::TTSUnavailable(msg) => write!(f, "TTS synthesis failed: {}", msg),
-            Self::AudioDeviceUnavailable(msg) => write!(f, "Audio output device unavailable: {}", msg),
+            Self::AudioDeviceUnavailable(msg) => {
+                write!(f, "Audio output device unavailable: {}", msg)
+            }
             Self::PlaybackFailure(msg) => write!(f, "Audio playback error: {}", msg),
             Self::Cancelled(msg) => write!(f, "Voice operation cancelled: {}", msg),
-            Self::CaptureConflict(msg) => write!(f, "Microphone capture ownership conflict: {}", msg),
+            Self::CaptureConflict(msg) => {
+                write!(f, "Microphone capture ownership conflict: {}", msg)
+            }
             Self::Internal(msg) => write!(f, "Internal voice error: {}", msg),
         }
     }

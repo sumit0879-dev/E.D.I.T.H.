@@ -33,10 +33,7 @@ pub enum TransportEvent {
     /// Inbound audio chunk for speaker playback.
     Audio(AudioFrame),
     /// Partial or final speech transcription delta.
-    TranscriptDelta {
-        text: String,
-        is_final: bool,
-    },
+    TranscriptDelta { text: String, is_final: bool },
     /// Inbound tool/function invocation requested by the model.
     ToolCall {
         call_id: String,
@@ -44,9 +41,7 @@ pub enum TransportEvent {
         arguments: serde_json::Value,
     },
     /// Remote provider signaling speech interruption (e.g. server VAD detected user speech).
-    Interrupted {
-        reason: String,
-    },
+    Interrupted { reason: String },
     /// Conversational turn complete boundary.
     TurnComplete,
     /// Transport or protocol-level error.

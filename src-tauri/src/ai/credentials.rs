@@ -55,7 +55,9 @@ impl CredentialStore for SettingsCredentialStore {
 
         // 2. Check custom providers JSON array if present
         if let Some(custom_providers_raw) = self.settings.get("customProviders") {
-            if let Ok(providers_list) = serde_json::from_str::<Vec<serde_json::Value>>(custom_providers_raw) {
+            if let Ok(providers_list) =
+                serde_json::from_str::<Vec<serde_json::Value>>(custom_providers_raw)
+            {
                 for cp in providers_list {
                     if cp.get("id").and_then(|i| i.as_str()) == Some(provider_id) {
                         if let Some(key) = cp.get("apiKey").and_then(|k| k.as_str()) {

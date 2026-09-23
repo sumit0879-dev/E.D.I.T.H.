@@ -58,7 +58,13 @@ fn setup_test_env() -> (
         None,
     ));
 
-    (conversation_core, tool_router, audio_output, capture_driver, engine)
+    (
+        conversation_core,
+        tool_router,
+        audio_output,
+        capture_driver,
+        engine,
+    )
 }
 
 #[tokio::test]
@@ -128,8 +134,14 @@ async fn test_03_authoritative_turn_ownership_in_conversation_core() {
 
     // Verify turn completed in ConversationCore
     let status_completed = core.get_turn_status(&turn_id).await.unwrap();
-    assert_eq!(status_completed.status, crate::conversation::TurnStatus::Completed);
-    assert_eq!(status_completed.final_response, Some("Hello user".to_string()));
+    assert_eq!(
+        status_completed.status,
+        crate::conversation::TurnStatus::Completed
+    );
+    assert_eq!(
+        status_completed.final_response,
+        Some("Hello user".to_string())
+    );
 
     // Active turn in session should now be None
     assert!(session.active_turn_id.read().await.is_none());
@@ -185,7 +197,9 @@ async fn test_05_stale_assistant_audio_rejection_on_generation_increment() {
 
     // Trigger barge-in: increments generation to 2 and halts output
     let session_arc = engine.active_session().read().await.clone().unwrap();
-    engine.handle_barge_in(&session_arc, adapter.as_ref(), "user_interrupt").await;
+    engine
+        .handle_barge_in(&session_arc, adapter.as_ref(), "user_interrupt")
+        .await;
 
     assert_eq!(session_arc.current_generation(), 2);
     assert!(output.get_stop_count() >= 1);
@@ -250,14 +264,22 @@ async fn test_06_barge_in_cancels_turn_in_conversation_core() {
     // Start turn
     let turn_id = engine.ensure_active_turn(&session_arc).await.unwrap();
     let status_before = core.get_turn_status(&turn_id).await.unwrap();
-    assert_eq!(status_before.status, crate::conversation::TurnStatus::Processing);
+    assert_eq!(
+        status_before.status,
+        crate::conversation::TurnStatus::Processing
+    );
 
     // User speaks -> triggers barge-in
-    engine.handle_barge_in(&session_arc, adapter.as_ref(), "user_barge_in").await;
+    engine
+        .handle_barge_in(&session_arc, adapter.as_ref(), "user_barge_in")
+        .await;
 
     // Turn in ConversationCore was cancelled!
     let status_after = core.get_turn_status(&turn_id).await.unwrap();
-    assert_eq!(status_after.status, crate::conversation::TurnStatus::Cancelled);
+    assert_eq!(
+        status_after.status,
+        crate::conversation::TurnStatus::Cancelled
+    );
 
     // Session's active turn is reset to None
     assert!(session_arc.active_turn_id.read().await.is_none());
@@ -288,7 +310,10 @@ async fn test_07_realtime_tool_call_delegation_to_universal_tool_runtime() {
         arguments: json!({ "location": "New York" }),
     };
 
-    transport.inject_inbound_event(tool_call_event).await.unwrap();
+    transport
+        .inject_inbound_event(tool_call_event)
+        .await
+        .unwrap();
 
     // Allow event loop to dispatch through ToolRouter
     tokio::time::sleep(Duration::from_millis(50)).await;

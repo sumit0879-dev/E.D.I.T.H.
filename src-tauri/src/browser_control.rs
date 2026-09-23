@@ -1,9 +1,9 @@
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
 
 // ============================================================================
@@ -42,7 +42,8 @@ impl Default for BrowserControlManager {
 }
 
 lazy_static! {
-    pub static ref GLOBAL_CONTROL_MGR: Arc<BrowserControlManager> = Arc::new(BrowserControlManager::default());
+    pub static ref GLOBAL_CONTROL_MGR: Arc<BrowserControlManager> =
+        Arc::new(BrowserControlManager::default());
 }
 
 fn current_timestamp_ms() -> u64 {
@@ -60,7 +61,8 @@ impl BrowserControlManager {
     /// Returns control state of a tab, defaulting to UserControlled (Step 20 & 22 Fail-Safe)
     pub fn get_tab_control_state(&self, tab_id: &str) -> BrowserControlState {
         let controls = self.tab_controls.lock().unwrap();
-        controls.get(tab_id)
+        controls
+            .get(tab_id)
             .map(|c| c.control_state)
             .unwrap_or(BrowserControlState::UserControlled)
     }
@@ -68,13 +70,16 @@ impl BrowserControlManager {
     /// Returns full TabControlInfo for a tab
     pub fn get_tab_control_info(&self, tab_id: &str) -> TabControlInfo {
         let controls = self.tab_controls.lock().unwrap();
-        controls.get(tab_id).cloned().unwrap_or_else(|| TabControlInfo {
-            tab_id: tab_id.to_string(),
-            control_state: BrowserControlState::UserControlled,
-            last_transition: current_timestamp_ms(),
-            ai_task_id: None,
-            reason: Some("Default user control".to_string()),
-        })
+        controls
+            .get(tab_id)
+            .cloned()
+            .unwrap_or_else(|| TabControlInfo {
+                tab_id: tab_id.to_string(),
+                control_state: BrowserControlState::UserControlled,
+                last_transition: current_timestamp_ms(),
+                ai_task_id: None,
+                reason: Some("Default user control".to_string()),
+            })
     }
 
     /// Returns all tab control records
@@ -84,7 +89,12 @@ impl BrowserControlManager {
     }
 
     /// Step 3: User -> AI Handoff
-    pub fn request_ai_control(&self, app: &AppHandle, tab_id: &str, task_id: Option<String>) -> Result<TabControlInfo, String> {
+    pub fn request_ai_control(
+        &self,
+        app: &AppHandle,
+        tab_id: &str,
+        task_id: Option<String>,
+    ) -> Result<TabControlInfo, String> {
         let mut controls = self.tab_controls.lock().unwrap();
         let now = current_timestamp_ms();
 
@@ -98,17 +108,25 @@ impl BrowserControlManager {
 
         controls.insert(tab_id.to_string(), info.clone());
 
-        let _ = app.emit("browser-control-changed", json!({
-            "tab_id": tab_id,
-            "control_state": "AI_CONTROLLED",
-            "timestamp": now
-        }));
+        let _ = app.emit(
+            "browser-control-changed",
+            json!({
+                "tab_id": tab_id,
+                "control_state": "AI_CONTROLLED",
+                "timestamp": now
+            }),
+        );
 
         Ok(info)
     }
 
     /// Step 4: AI -> User Immediate Takeover (Host-Enforced Priority)
-    pub fn takeover_tab(&self, app: &AppHandle, tab_id: &str, reason: Option<String>) -> Result<TabControlInfo, String> {
+    pub fn takeover_tab(
+        &self,
+        app: &AppHandle,
+        tab_id: &str,
+        reason: Option<String>,
+    ) -> Result<TabControlInfo, String> {
         let mut controls = self.tab_controls.lock().unwrap();
         let now = current_timestamp_ms();
 
@@ -122,18 +140,25 @@ impl BrowserControlManager {
 
         controls.insert(tab_id.to_string(), info.clone());
 
-        let _ = app.emit("browser-control-changed", json!({
-            "tab_id": tab_id,
-            "control_state": "USER_CONTROLLED",
-            "timestamp": now,
-            "event": "HUMAN_TAKEOVER"
-        }));
+        let _ = app.emit(
+            "browser-control-changed",
+            json!({
+                "tab_id": tab_id,
+                "control_state": "USER_CONTROLLED",
+                "timestamp": now,
+                "event": "HUMAN_TAKEOVER"
+            }),
+        );
 
         Ok(info)
     }
 
     /// Step 5: Explicit AI Release
-    pub fn release_ai_control(&self, app: &AppHandle, tab_id: &str) -> Result<TabControlInfo, String> {
+    pub fn release_ai_control(
+        &self,
+        app: &AppHandle,
+        tab_id: &str,
+    ) -> Result<TabControlInfo, String> {
         let mut controls = self.tab_controls.lock().unwrap();
         let now = current_timestamp_ms();
 
@@ -147,18 +172,25 @@ impl BrowserControlManager {
 
         controls.insert(tab_id.to_string(), info.clone());
 
-        let _ = app.emit("browser-control-changed", json!({
-            "tab_id": tab_id,
-            "control_state": "USER_CONTROLLED",
-            "timestamp": now,
-            "event": "AI_RELEASED"
-        }));
+        let _ = app.emit(
+            "browser-control-changed",
+            json!({
+                "tab_id": tab_id,
+                "control_state": "USER_CONTROLLED",
+                "timestamp": now,
+                "event": "AI_RELEASED"
+            }),
+        );
 
         Ok(info)
     }
 
     /// Step 7: Pause AI Control
-    pub fn pause_ai_control(&self, app: &AppHandle, tab_id: &str) -> Result<TabControlInfo, String> {
+    pub fn pause_ai_control(
+        &self,
+        app: &AppHandle,
+        tab_id: &str,
+    ) -> Result<TabControlInfo, String> {
         let mut controls = self.tab_controls.lock().unwrap();
         let now = current_timestamp_ms();
 
@@ -173,17 +205,24 @@ impl BrowserControlManager {
 
         controls.insert(tab_id.to_string(), info.clone());
 
-        let _ = app.emit("browser-control-changed", json!({
-            "tab_id": tab_id,
-            "control_state": "AI_PAUSED",
-            "timestamp": now
-        }));
+        let _ = app.emit(
+            "browser-control-changed",
+            json!({
+                "tab_id": tab_id,
+                "control_state": "AI_PAUSED",
+                "timestamp": now
+            }),
+        );
 
         Ok(info)
     }
 
     /// Step 7: Resume AI Control (Forces re-observation)
-    pub fn resume_ai_control(&self, app: &AppHandle, tab_id: &str) -> Result<TabControlInfo, String> {
+    pub fn resume_ai_control(
+        &self,
+        app: &AppHandle,
+        tab_id: &str,
+    ) -> Result<TabControlInfo, String> {
         let mut controls = self.tab_controls.lock().unwrap();
         let now = current_timestamp_ms();
 
@@ -198,12 +237,15 @@ impl BrowserControlManager {
 
         controls.insert(tab_id.to_string(), info.clone());
 
-        let _ = app.emit("browser-control-changed", json!({
-            "tab_id": tab_id,
-            "control_state": "AI_CONTROLLED",
-            "timestamp": now,
-            "event": "RESUMED_FRESH_OBSERVE"
-        }));
+        let _ = app.emit(
+            "browser-control-changed",
+            json!({
+                "tab_id": tab_id,
+                "control_state": "AI_CONTROLLED",
+                "timestamp": now,
+                "event": "RESUMED_FRESH_OBSERVE"
+            }),
+        );
 
         Ok(info)
     }
@@ -243,17 +285,28 @@ impl BrowserControlManager {
 // ============================================================================
 
 #[tauri::command]
-pub fn browser_request_ai_control(app: AppHandle, tab_id: String, task_id: Option<String>) -> Result<TabControlInfo, String> {
+pub fn browser_request_ai_control(
+    app: AppHandle,
+    tab_id: String,
+    task_id: Option<String>,
+) -> Result<TabControlInfo, String> {
     GLOBAL_CONTROL_MGR.request_ai_control(&app, &tab_id, task_id)
 }
 
 #[tauri::command]
-pub fn browser_takeover_tab(app: AppHandle, tab_id: String, reason: Option<String>) -> Result<TabControlInfo, String> {
+pub fn browser_takeover_tab(
+    app: AppHandle,
+    tab_id: String,
+    reason: Option<String>,
+) -> Result<TabControlInfo, String> {
     GLOBAL_CONTROL_MGR.takeover_tab(&app, &tab_id, reason)
 }
 
 #[tauri::command]
-pub fn browser_release_ai_control(app: AppHandle, tab_id: String) -> Result<TabControlInfo, String> {
+pub fn browser_release_ai_control(
+    app: AppHandle,
+    tab_id: String,
+) -> Result<TabControlInfo, String> {
     GLOBAL_CONTROL_MGR.release_ai_control(&app, &tab_id)
 }
 

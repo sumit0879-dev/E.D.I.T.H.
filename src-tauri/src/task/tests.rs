@@ -82,10 +82,9 @@ mod tests {
 
         // Events check
         let events = runtime.emitter().get_mock_events();
-        assert!(events.iter().any(|e| matches!(
-            &e.payload,
-            EdithPayload::Task(TaskPayload::Started { .. })
-        )));
+        assert!(events
+            .iter()
+            .any(|e| matches!(&e.payload, EdithPayload::Task(TaskPayload::Started { .. }))));
         assert!(events.iter().any(|e| matches!(
             &e.payload,
             EdithPayload::Task(TaskPayload::StepProgress { step: 1, .. })
@@ -101,12 +100,7 @@ mod tests {
         let runtime = TaskRuntime::mock();
         let corr = EventCorrelation::default();
         let task_id = runtime
-            .create_task(
-                TaskType::Background,
-                "One-off job",
-                corr,
-                TaskOwner::User,
-            )
+            .create_task(TaskType::Background, "One-off job", corr, TaskOwner::User)
             .await;
 
         // Attempting to complete before starting should fail (Created -> Completed is invalid)
@@ -175,13 +169,28 @@ mod tests {
         let runtime = TaskRuntime::mock();
 
         let id_a = runtime
-            .create_task(TaskType::Background, "Task A", EventCorrelation::default(), TaskOwner::User)
+            .create_task(
+                TaskType::Background,
+                "Task A",
+                EventCorrelation::default(),
+                TaskOwner::User,
+            )
             .await;
         let id_b = runtime
-            .create_task(TaskType::BrowserAgent, "Task B", EventCorrelation::default(), TaskOwner::User)
+            .create_task(
+                TaskType::BrowserAgent,
+                "Task B",
+                EventCorrelation::default(),
+                TaskOwner::User,
+            )
             .await;
         let id_c = runtime
-            .create_task(TaskType::DevAgent, "Task C", EventCorrelation::default(), TaskOwner::User)
+            .create_task(
+                TaskType::DevAgent,
+                "Task C",
+                EventCorrelation::default(),
+                TaskOwner::User,
+            )
             .await;
 
         let token_a = runtime.get_cancellation_token(&id_a).await.unwrap();
@@ -194,7 +203,10 @@ mod tests {
         assert!(runtime.start_task(&id_c).await.is_ok());
 
         // Cancel Task A
-        assert!(runtime.cancel_task(&id_a, Some("Abort A".to_string())).await.is_ok());
+        assert!(runtime
+            .cancel_task(&id_a, Some("Abort A".to_string()))
+            .await
+            .is_ok());
 
         // Complete Task B
         assert!(runtime.complete_task(&id_b, "B succeeded").await.is_ok());
@@ -208,9 +220,18 @@ mod tests {
         assert!(!token_c.is_cancelled());
 
         // Verify statuses isolation
-        assert_eq!(runtime.get_task(&id_a).await.unwrap().status, TaskStatus::Cancelled);
-        assert_eq!(runtime.get_task(&id_b).await.unwrap().status, TaskStatus::Completed);
-        assert_eq!(runtime.get_task(&id_c).await.unwrap().status, TaskStatus::Failed);
+        assert_eq!(
+            runtime.get_task(&id_a).await.unwrap().status,
+            TaskStatus::Cancelled
+        );
+        assert_eq!(
+            runtime.get_task(&id_b).await.unwrap().status,
+            TaskStatus::Completed
+        );
+        assert_eq!(
+            runtime.get_task(&id_c).await.unwrap().status,
+            TaskStatus::Failed
+        );
 
         // Active tasks count should now be 0 since all 3 reached terminal states
         assert_eq!(runtime.list_active_tasks().await.len(), 0);

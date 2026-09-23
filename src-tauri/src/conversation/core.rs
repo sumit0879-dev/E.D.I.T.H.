@@ -1,11 +1,9 @@
 use super::context::ContextAssembler;
 use super::errors::ConversationError;
 use super::turn::{Turn, TurnStatus};
-use super::types::{
-    ModelSelection, TurnSnapshot, TurnSubmissionRequest, TurnSubmissionResult,
-};
+use super::types::{ModelSelection, TurnSnapshot, TurnSubmissionRequest, TurnSubmissionResult};
 use crate::ai::{ChatMessage, GenerateRequest, ProviderRegistry};
-use crate::events::{EventEmitter, EventCorrelation, StreamId, TurnId};
+use crate::events::{EventCorrelation, EventEmitter, StreamId, TurnId};
 use crate::task::CancellationToken;
 use std::collections::HashMap;
 use std::sync::atomic::AtomicU64;
@@ -73,7 +71,9 @@ impl ConversationCore {
     ) -> Result<TurnSubmissionResult, ConversationError> {
         let trimmed_msg = req.message.trim().to_string();
         if trimmed_msg.is_empty() {
-            return Err(ConversationError::Internal("Message cannot be empty".to_string()));
+            return Err(ConversationError::Internal(
+                "Message cannot be empty".to_string(),
+            ));
         }
 
         // Backend is ALWAYS the sole authoritative creator and owner of TurnId.
@@ -109,7 +109,9 @@ impl ConversationCore {
 
         // Persist user message to SQLite if db connection is present
         if let Some(ref db_conn) = self.db_conn {
-            let conn = db_conn.lock().map_err(|e| ConversationError::Internal(e.to_string()))?;
+            let conn = db_conn
+                .lock()
+                .map_err(|e| ConversationError::Internal(e.to_string()))?;
             let timestamp = current_timestamp_str();
             let _ = crate::db::save_session_message(
                 &conn,
@@ -151,7 +153,9 @@ impl ConversationCore {
         let (session_id, stream_id, user_message, model_selection, cancellation_token) = {
             let mut turn = turn_arc.write().await;
             if turn.status == TurnStatus::Cancelled || turn.cancellation_token.is_cancelled() {
-                return Err(ConversationError::Cancellation("Turn was cancelled before execution".to_string()));
+                return Err(ConversationError::Cancellation(
+                    "Turn was cancelled before execution".to_string(),
+                ));
             }
 
             // Transition: InputAccepted -> Processing
@@ -174,7 +178,9 @@ impl ConversationCore {
 
         // Load conversation history from SQLite if available
         let history_messages = if let Some(ref db_conn) = self.db_conn {
-            let conn = db_conn.lock().map_err(|e| ConversationError::Internal(e.to_string()))?;
+            let conn = db_conn
+                .lock()
+                .map_err(|e| ConversationError::Internal(e.to_string()))?;
             let db_msgs = crate::db::get_session_messages(&conn, &session_id).unwrap_or_default();
             db_msgs
                 .into_iter()
@@ -230,7 +236,9 @@ impl ConversationCore {
         // Stream execution
         let stream_cap = adapter.as_streaming_text();
         let final_text = if let Some(streamer) = stream_cap {
-            let _ = self.emitter.emit_stream_started(&correlation, &model_selection.model_id);
+            let _ = self
+                .emitter
+                .emit_stream_started(&correlation, &model_selection.model_id);
             let emitter_clone = self.emitter.clone();
             let correlation_clone = correlation.clone();
             let token_clone = cancellation_token.clone();
@@ -272,20 +280,31 @@ impl ConversationCore {
                     turn.status = TurnStatus::Cancelled;
                     turn.completed_at_ms = Some(now_ms());
                     turn.error = Some("Turn cancelled by operator".to_string());
-                    let _ = self.emitter.emit_stream_cancelled(&correlation, Some("Turn cancelled by operator".to_string()));
+                    let _ = self.emitter.emit_stream_cancelled(
+                        &correlation,
+                        Some("Turn cancelled by operator".to_string()),
+                    );
                 }
-                return Err(ConversationError::Cancellation("Turn cancelled by operator".to_string()));
+                return Err(ConversationError::Cancellation(
+                    "Turn cancelled by operator".to_string(),
+                ));
             }
 
             match stream_res {
                 Ok(_) => {
-                    let _ = self.emitter.emit_stream_finished(&correlation, None, Some("stop".to_string()));
+                    let _ = self.emitter.emit_stream_finished(
+                        &correlation,
+                        None,
+                        Some("stop".to_string()),
+                    );
                     let collected = accumulated.lock().unwrap().clone();
                     collected
                 }
                 Err(e) => {
                     let err_str = e.to_string();
-                    let _ = self.emitter.emit_stream_failed(&correlation, &err_str, None);
+                    let _ = self
+                        .emitter
+                        .emit_stream_failed(&correlation, &err_str, None);
                     let mut turn = turn_arc.write().await;
                     turn.status = TurnStatus::Failed;
                     turn.completed_at_ms = Some(now_ms());
@@ -294,7 +313,9 @@ impl ConversationCore {
                 }
             }
         } else if let Some(gen) = adapter.as_text_generation() {
-            let _ = self.emitter.emit_stream_started(&correlation, &model_selection.model_id);
+            let _ = self
+                .emitter
+                .emit_stream_started(&correlation, &model_selection.model_id);
             let gen_res = gen.generate(&req, &credentials).await;
 
             if cancellation_token.is_cancelled() {
@@ -303,20 +324,33 @@ impl ConversationCore {
                     turn.status = TurnStatus::Cancelled;
                     turn.completed_at_ms = Some(now_ms());
                     turn.error = Some("Turn cancelled by operator".to_string());
-                    let _ = self.emitter.emit_stream_cancelled(&correlation, Some("Turn cancelled by operator".to_string()));
+                    let _ = self.emitter.emit_stream_cancelled(
+                        &correlation,
+                        Some("Turn cancelled by operator".to_string()),
+                    );
                 }
-                return Err(ConversationError::Cancellation("Turn cancelled by operator".to_string()));
+                return Err(ConversationError::Cancellation(
+                    "Turn cancelled by operator".to_string(),
+                ));
             }
 
             match gen_res {
                 Ok(reply) => {
-                    let _ = self.emitter.emit_stream_chunk(&correlation, reply.text.clone(), 1, true);
-                    let _ = self.emitter.emit_stream_finished(&correlation, None, Some("stop".to_string()));
+                    let _ =
+                        self.emitter
+                            .emit_stream_chunk(&correlation, reply.text.clone(), 1, true);
+                    let _ = self.emitter.emit_stream_finished(
+                        &correlation,
+                        None,
+                        Some("stop".to_string()),
+                    );
                     reply.text
                 }
                 Err(e) => {
                     let err_str = e.to_string();
-                    let _ = self.emitter.emit_stream_failed(&correlation, &err_str, None);
+                    let _ = self
+                        .emitter
+                        .emit_stream_failed(&correlation, &err_str, None);
                     let mut turn = turn_arc.write().await;
                     turn.status = TurnStatus::Failed;
                     turn.completed_at_ms = Some(now_ms());
@@ -388,7 +422,9 @@ impl ConversationCore {
         turn.cancellation_token.cancel();
         turn.status = TurnStatus::Cancelled;
         turn.completed_at_ms = Some(now_ms());
-        turn.error = reason.clone().or_else(|| Some("Turn cancelled".to_string()));
+        turn.error = reason
+            .clone()
+            .or_else(|| Some("Turn cancelled".to_string()));
 
         let correlation = EventCorrelation::for_stream(
             Some(turn.session_id.clone()),

@@ -60,10 +60,31 @@ macro_rules! define_id {
     };
 }
 
-define_id!(EventId, "Globally unique identifier for a single runtime event.");
-define_id!(ConversationId, "Identifies a conversation or session thread.");
-define_id!(TurnId, "Identifies a specific conversational turn between user and assistant.");
-define_id!(StreamId, "Identifies an individual continuous token-generation stream.");
-define_id!(TaskId, "Identifies an autonomous background workflow or agent task.");
-define_id!(ToolExecutionId, "Identifies an individual tool proposal or invocation.");
-define_id!(VoiceSessionId, "Identifies an active speech-to-speech or pipeline voice session.");
+define_id!(
+    EventId,
+    "Globally unique identifier for a single runtime event."
+);
+define_id!(
+    ConversationId,
+    "Identifies a conversation or session thread."
+);
+define_id!(
+    TurnId,
+    "Identifies a specific conversational turn between user and assistant."
+);
+define_id!(
+    StreamId,
+    "Identifies an individual continuous token-generation stream."
+);
+define_id!(
+    TaskId,
+    "Identifies an autonomous background workflow or agent task."
+);
+define_id!(
+    ToolExecutionId,
+    "Identifies an individual tool proposal or invocation."
+);
+define_id!(
+    VoiceSessionId,
+    "Identifies an active speech-to-speech or pipeline voice session."
+);

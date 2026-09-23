@@ -2258,6 +2258,31 @@ export async function runtimeGetCapabilities(): Promise<CapabilitiesSummary | nu
   }
 }
 
+export interface AudioDeviceInfo {
+  id: string;
+  opaque_id: string;
+  name: string;
+  is_default: boolean;
+  sample_rates: number[];
+  channels: number;
+}
+
+export interface AudioDevicesSummary {
+  input_devices: AudioDeviceInfo[];
+  output_devices: AudioDeviceInfo[];
+  active_input_id?: string;
+  active_output_id?: string;
+}
+
+export interface DuplexVoiceState {
+  session: 'disabled' | 'idle' | 'connecting' | 'connected' | 'reconnecting' | 'fallback' | 'error';
+  input: 'inactive' | 'listening_ambient' | 'user_speaking' | 'muted';
+  output: 'silent' | 'assistant_speaking' | 'interrupted_ducking';
+  processing: 'idle' | 'model_inferring' | 'model_streaming' | 'tool_executing';
+  active_turn_id?: string;
+  generation_id: number;
+}
+
 export interface VoiceStatusSummary {
   is_active: boolean;
   mode?: string;
@@ -2271,6 +2296,11 @@ export interface VoiceStatusSummary {
   reconnect_attempt?: number;
   is_muted: boolean;
   last_error?: string;
+  duplex_state?: DuplexVoiceState;
+  active_input_device_id?: string;
+  active_output_device_id?: string;
+  active_input_device_name?: string;
+  active_output_device_name?: string;
 }
 
 export async function voiceSessionStart(conversationId: string): Promise<string> {
@@ -2384,5 +2414,52 @@ export async function realtimeVoiceGetStatus(): Promise<VoiceStatusSummary | nul
     console.warn('Failed to get realtime voice status:', e);
     return null;
   }
+}
+
+export async function voiceListDevices(): Promise<AudioDevicesSummary> {
+  if (!isTauri()) {
+    return {
+      input_devices: [
+        {
+          id: 'in_mock_default',
+          opaque_id: 'in_mock_default',
+          name: 'Default Microphone (Browser)',
+          is_default: true,
+          sample_rates: [16000, 48000],
+          channels: 1,
+        },
+      ],
+      output_devices: [
+        {
+          id: 'out_mock_default',
+          opaque_id: 'out_mock_default',
+          name: 'Default Speakers (Browser)',
+          is_default: true,
+          sample_rates: [24000, 48000],
+          channels: 2,
+        },
+      ],
+      active_input_id: 'in_mock_default',
+      active_output_id: 'out_mock_default',
+    };
+  }
+  return await invoke<AudioDevicesSummary>('voice_list_devices');
+}
+
+export async function voiceSetInputDevice(deviceId?: string | null): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('voice_set_input_device', { deviceId: deviceId || null });
+}
+
+export async function voiceSetOutputDevice(deviceId?: string | null): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('voice_set_output_device', { deviceId: deviceId || null });
+}
+
+export async function voiceGetDeviceStatus(): Promise<AudioDevicesSummary> {
+  if (!isTauri()) {
+    return voiceListDevices();
+  }
+  return await invoke<AudioDevicesSummary>('voice_get_device_status');
 }
 

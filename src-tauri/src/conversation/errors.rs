@@ -12,10 +12,7 @@ pub enum ConversationError {
     Timeout(String),
     GenerationFailure(String),
     Cancellation(String),
-    InvalidTurnState {
-        current: String,
-        target: String,
-    },
+    InvalidTurnState { current: String, target: String },
     NotFound(String),
     Internal(String),
 }
@@ -31,7 +28,11 @@ impl std::fmt::Display for ConversationError {
             ConversationError::GenerationFailure(msg) => write!(f, "Generation failed: {}", msg),
             ConversationError::Cancellation(reason) => write!(f, "Turn cancelled: {}", reason),
             ConversationError::InvalidTurnState { current, target } => {
-                write!(f, "Invalid turn state transition from '{}' to '{}'", current, target)
+                write!(
+                    f,
+                    "Invalid turn state transition from '{}' to '{}'",
+                    current, target
+                )
             }
             ConversationError::NotFound(msg) => write!(f, "Not found: {}", msg),
             ConversationError::Internal(msg) => write!(f, "Internal conversation error: {}", msg),
@@ -50,12 +51,17 @@ impl From<ProviderError> for ConversationError {
                 ConversationError::ModelUnavailable(format!("{}: {}", model, reason))
             }
             ProviderError::CapabilityUnsupported { capability } => {
-                ConversationError::ModelUnavailable(format!("Capability not supported: {}", capability))
+                ConversationError::ModelUnavailable(format!(
+                    "Capability not supported: {}",
+                    capability
+                ))
             }
             ProviderError::RateLimited { message, .. } => ConversationError::RateLimit(message),
             ProviderError::NetworkFailure { message } => ConversationError::NetworkFailure(message),
             ProviderError::Timeout { message } => ConversationError::Timeout(message),
-            ProviderError::ServerError { message, .. } => ConversationError::GenerationFailure(message),
+            ProviderError::ServerError { message, .. } => {
+                ConversationError::GenerationFailure(message)
+            }
             ProviderError::MalformedResponse { message } => ConversationError::Internal(message),
             ProviderError::Unknown { message } => ConversationError::Internal(message),
         }

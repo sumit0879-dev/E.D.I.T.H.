@@ -230,10 +230,7 @@ async fn test_approval_lifecycle_and_single_use_consumption() {
 
     // 2. Operator resolves approval
     let resolve_res = engine
-        .resolve_approval(
-            &approval_id,
-            OperatorDecision::Approve,
-        )
+        .resolve_approval(&approval_id, OperatorDecision::Approve)
         .await;
     assert!(resolve_res.is_ok());
 
@@ -245,7 +242,9 @@ async fn test_approval_lifecycle_and_single_use_consumption() {
     // 4. Replay attempt with consumed approval token -> BLOCKED
     let decision3 = engine.evaluate(&req, &ctx).await;
     assert_eq!(decision3.outcome, PolicyOutcome::Blocked);
-    assert!(decision3.reason.contains("consumed") || decision3.reason.contains("Invalid authorization"));
+    assert!(
+        decision3.reason.contains("consumed") || decision3.reason.contains("Invalid authorization")
+    );
 }
 
 #[tokio::test]
@@ -267,10 +266,7 @@ async fn test_tampered_arguments_rejected_despite_valid_approval_id() {
 
     // 2. Operator approves deletion of temp.txt
     engine
-        .resolve_approval(
-            &approval_id,
-            OperatorDecision::Approve,
-        )
+        .resolve_approval(&approval_id, OperatorDecision::Approve)
         .await
         .unwrap();
 
@@ -288,7 +284,9 @@ async fn test_tampered_arguments_rejected_despite_valid_approval_id() {
 
     // Must be strictly BLOCKED due to SHA-256 hash mismatch
     assert_eq!(decision2.outcome, PolicyOutcome::Blocked);
-    assert!(decision2.reason.contains("hash") || decision2.reason.contains("parameters do not match"));
+    assert!(
+        decision2.reason.contains("hash") || decision2.reason.contains("parameters do not match")
+    );
 }
 
 #[tokio::test]
@@ -309,10 +307,7 @@ async fn test_denied_approval_cannot_authorize_action() {
 
     // Operator explicitly DENIES
     engine
-        .resolve_approval(
-            &approval_id,
-            OperatorDecision::Deny,
-        )
+        .resolve_approval(&approval_id, OperatorDecision::Deny)
         .await
         .unwrap();
 

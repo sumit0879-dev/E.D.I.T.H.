@@ -1,9 +1,9 @@
+use chrono;
 use rusqlite::{params, Connection, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Mutex;
-use chrono;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Session {
@@ -172,7 +172,6 @@ pub struct DbState {
 }
 
 pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
-
     // Create the parent directory if it doesn't exist
     if let Some(parent) = db_path.parent() {
         if !parent.exists() {
@@ -181,12 +180,14 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
     }
 
     let conn = Connection::open(&db_path)?;
-    conn.execute_batch("
+    conn.execute_batch(
+        "
         PRAGMA journal_mode = WAL;
         PRAGMA synchronous = NORMAL;
         PRAGMA cache_size = -64000;
         PRAGMA temp_store = MEMORY;
-    ")?;
+    ",
+    )?;
 
     conn.execute_batch(
         "
@@ -357,10 +358,19 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
     )?;
 
     // Non-destructive migrations for profile-scoping history & bookmarks (Step 24 & 25)
-    let _ = conn.execute("ALTER TABLE browser_history ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0;", []);
+    let _ = conn.execute(
+        "ALTER TABLE browser_history ADD COLUMN visited_at INTEGER NOT NULL DEFAULT 0;",
+        [],
+    );
     let _ = conn.execute("ALTER TABLE browser_history ADD COLUMN tab_id TEXT;", []);
-    let _ = conn.execute("ALTER TABLE browser_history ADD COLUMN profile_id TEXT DEFAULT 'profile_default';", []);
-    let _ = conn.execute("ALTER TABLE browser_bookmarks ADD COLUMN profile_id TEXT DEFAULT 'profile_default';", []);
+    let _ = conn.execute(
+        "ALTER TABLE browser_history ADD COLUMN profile_id TEXT DEFAULT 'profile_default';",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE browser_bookmarks ADD COLUMN profile_id TEXT DEFAULT 'profile_default';",
+        [],
+    );
     // Phase 5.6F-C: Non-destructive migration for tab group association
     let _ = conn.execute("ALTER TABLE browser_tabs ADD COLUMN group_id TEXT;", []);
 
@@ -370,13 +380,19 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
 // SEC-05 Hardening: Windows DPAPI Secret Protection with Custom Provider Credential Isolation
 fn is_secret_key(key: &str) -> bool {
     let k = key.to_lowercase();
-    k.contains("apikey") || k.contains("api_key") || k.ends_with("token") || k.ends_with("secret") || k.starts_with("custom_provider_key_")
+    k.contains("apikey")
+        || k.contains("api_key")
+        || k.ends_with("token")
+        || k.ends_with("secret")
+        || k.starts_with("custom_provider_key_")
 }
 
 // Settings
 pub fn get_all_settings(conn: &Connection) -> Result<std::collections::HashMap<String, String>> {
     let mut stmt = conn.prepare("SELECT key, value FROM settings")?;
-    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+    })?;
 
     let mut map = std::collections::HashMap::new();
     let mut raw_map = std::collections::HashMap::new();
@@ -402,12 +418,14 @@ pub fn get_all_settings(conn: &Connection) -> Result<std::collections::HashMap<S
                 if let Some(id) = item.get("id").and_then(|v| v.as_str()) {
                     let cred_key = format!("custom_provider_key_{}", id);
                     if let Some(enc_val) = raw_map.get(&cred_key) {
-                        let plain_key = crate::security::CredentialVault::unprotect(enc_val).unwrap_or_default();
+                        let plain_key = crate::security::CredentialVault::unprotect(enc_val)
+                            .unwrap_or_default();
                         item["apiKey"] = serde_json::Value::String(plain_key);
                     } else if let Some(existing_key) = item.get("apiKey").and_then(|v| v.as_str()) {
                         // Migration: Encrypt legacy embedded plaintext key into separate vault key
                         if !existing_key.is_empty() && existing_key != "[PROTECTED_BY_DPAPI]" {
-                            if let Ok(enc) = crate::security::CredentialVault::protect(existing_key) {
+                            if let Ok(enc) = crate::security::CredentialVault::protect(existing_key)
+                            {
                                 let _ = conn.execute(
                                     "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
                                     rusqlite::params![cred_key, enc],
@@ -424,7 +442,8 @@ pub fn get_all_settings(conn: &Connection) -> Result<std::collections::HashMap<S
                 let mut sanitized_list = list.clone();
                 for item in &mut sanitized_list {
                     if item.get("apiKey").is_some() {
-                        item["apiKey"] = serde_json::Value::String("[PROTECTED_BY_DPAPI]".to_string());
+                        item["apiKey"] =
+                            serde_json::Value::String("[PROTECTED_BY_DPAPI]".to_string());
                     }
                 }
                 if let Ok(sanitized_str) = serde_json::to_string(&sanitized_list) {
@@ -454,7 +473,11 @@ pub fn save_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
                     if let Some(api_key) = item.get("apiKey").and_then(|v| v.as_str()) {
                         if !api_key.is_empty() && api_key != "[PROTECTED_BY_DPAPI]" {
                             let protected = crate::security::CredentialVault::protect(api_key)
-                                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))))?;
+                                .map_err(|e| {
+                                    rusqlite::Error::ToSqlConversionFailure(Box::new(
+                                        std::io::Error::new(std::io::ErrorKind::Other, e),
+                                    ))
+                                })?;
                             conn.execute(
                                 "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
                                 rusqlite::params![cred_key, protected],
@@ -474,8 +497,12 @@ pub fn save_setting(conn: &Connection, key: &str, value: &str) -> Result<()> {
     }
 
     let stored_val = if is_secret_key(key) && !value.is_empty() {
-        crate::security::CredentialVault::protect(value)
-            .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(std::io::ErrorKind::Other, e))))?
+        crate::security::CredentialVault::protect(value).map_err(|e| {
+            rusqlite::Error::ToSqlConversionFailure(Box::new(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e,
+            )))
+        })?
     } else {
         value.to_string()
     };
@@ -542,8 +569,8 @@ pub fn save_session_message(
 }
 
 pub fn get_session_messages(conn: &Connection, session_id: &str) -> Result<Vec<Message>> {
-    let mut stmt =
-        conn.prepare("SELECT id, role, text, time FROM messages WHERE session_id=?1 ORDER BY id ASC")?;
+    let mut stmt = conn
+        .prepare("SELECT id, role, text, time FROM messages WHERE session_id=?1 ORDER BY id ASC")?;
     let rows = stmt.query_map(params![session_id], |row| {
         let text: String = row.get(2)?;
         Ok(Message {
@@ -638,7 +665,9 @@ pub fn delete_custom_app(conn: &Connection, app_id: i32) -> Result<()> {
 // Plugin States
 pub fn get_plugin_states(conn: &Connection) -> Result<std::collections::HashMap<String, bool>> {
     let mut stmt = conn.prepare("SELECT id, enabled FROM plugin_states")?;
-    let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?)))?;
+    let rows = stmt.query_map([], |row| {
+        Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?))
+    })?;
     let mut map = std::collections::HashMap::new();
     for row in rows {
         if let Ok((id, enabled)) = row {
@@ -668,7 +697,11 @@ pub fn add_browser_history_entry(
 ) -> Result<BrowserHistoryEntry> {
     let now = chrono::Utc::now().timestamp_millis() as u64;
     let url_trimmed = url.trim();
-    let title_trimmed = if title.trim().is_empty() { url_trimmed } else { title.trim() };
+    let title_trimmed = if title.trim().is_empty() {
+        url_trimmed
+    } else {
+        title.trim()
+    };
 
     // Dedup Policy: Check if same URL was visited within the last 15 seconds (15000 ms)
     let mut check_stmt = conn.prepare(
@@ -676,7 +709,7 @@ pub fn add_browser_history_entry(
          FROM browser_history 
          WHERE url = ?1 
          ORDER BY last_visited_at DESC 
-         LIMIT 1"
+         LIMIT 1",
     )?;
 
     let mut rows = check_stmt.query(params![url_trimmed])?;
@@ -720,13 +753,16 @@ pub fn add_browser_history_entry(
     })
 }
 
-pub fn get_recent_browser_history(conn: &Connection, limit: Option<u32>) -> Result<Vec<BrowserHistoryEntry>> {
+pub fn get_recent_browser_history(
+    conn: &Connection,
+    limit: Option<u32>,
+) -> Result<Vec<BrowserHistoryEntry>> {
     let lim = limit.unwrap_or(50).clamp(1, 200);
     let mut stmt = conn.prepare(
         "SELECT id, url, title, visited_at, tab_id, visit_count, last_visited_at 
          FROM browser_history 
          ORDER BY last_visited_at DESC 
-         LIMIT ?1"
+         LIMIT ?1",
     )?;
 
     let rows = stmt.query_map(params![lim], |row| {
@@ -748,7 +784,11 @@ pub fn get_recent_browser_history(conn: &Connection, limit: Option<u32>) -> Resu
     Ok(entries)
 }
 
-pub fn search_browser_history(conn: &Connection, query: &str, limit: Option<u32>) -> Result<Vec<BrowserHistoryEntry>> {
+pub fn search_browser_history(
+    conn: &Connection,
+    query: &str,
+    limit: Option<u32>,
+) -> Result<Vec<BrowserHistoryEntry>> {
     let lim = limit.unwrap_or(50).clamp(1, 200);
     let pattern = format!("%{}%", query.trim().to_lowercase());
     let mut stmt = conn.prepare(
@@ -756,7 +796,7 @@ pub fn search_browser_history(conn: &Connection, query: &str, limit: Option<u32>
          FROM browser_history 
          WHERE LOWER(url) LIKE ?1 OR LOWER(title) LIKE ?1 
          ORDER BY last_visited_at DESC 
-         LIMIT ?2"
+         LIMIT ?2",
     )?;
 
     let rows = stmt.query_map(params![pattern, lim], |row| {
@@ -801,9 +841,14 @@ pub fn add_browser_bookmark(
 ) -> Result<BrowserBookmark> {
     let now = chrono::Utc::now().timestamp_millis() as u64;
     let url_trimmed = url.trim();
-    let title_trimmed = if title.trim().is_empty() { url_trimmed } else { title.trim() };
+    let title_trimmed = if title.trim().is_empty() {
+        url_trimmed
+    } else {
+        title.trim()
+    };
 
-    let mut check_stmt = conn.prepare("SELECT id, created_at FROM browser_bookmarks WHERE url = ?1 LIMIT 1")?;
+    let mut check_stmt =
+        conn.prepare("SELECT id, created_at FROM browser_bookmarks WHERE url = ?1 LIMIT 1")?;
     let mut rows = check_stmt.query(params![url_trimmed])?;
     if let Some(row) = rows.next()? {
         let existing_id: String = row.get(0)?;
@@ -865,7 +910,7 @@ pub fn get_all_browser_bookmarks(conn: &Connection) -> Result<Vec<BrowserBookmar
     let mut stmt = conn.prepare(
         "SELECT id, title, url, folder_id, favicon, created_at, updated_at 
          FROM browser_bookmarks 
-         ORDER BY created_at DESC"
+         ORDER BY created_at DESC",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -893,7 +938,7 @@ pub fn search_browser_bookmarks(conn: &Connection, query: &str) -> Result<Vec<Br
         "SELECT id, title, url, folder_id, favicon, created_at, updated_at 
          FROM browser_bookmarks 
          WHERE LOWER(title) LIKE ?1 OR LOWER(url) LIKE ?1 
-         ORDER BY updated_at DESC"
+         ORDER BY updated_at DESC",
     )?;
 
     let rows = stmt.query_map(params![pattern], |row| {
@@ -921,7 +966,11 @@ pub fn is_url_bookmarked(conn: &Connection, url: &str) -> Result<bool> {
     Ok(count > 0)
 }
 
-pub fn create_bookmark_folder(conn: &Connection, name: &str, parent_id: Option<&str>) -> Result<BrowserBookmarkFolder> {
+pub fn create_bookmark_folder(
+    conn: &Connection,
+    name: &str,
+    parent_id: Option<&str>,
+) -> Result<BrowserBookmarkFolder> {
     let now = chrono::Utc::now().timestamp_millis() as u64;
     let id = uuid::Uuid::new_v4().to_string();
     conn.execute(
@@ -937,8 +986,14 @@ pub fn create_bookmark_folder(conn: &Connection, name: &str, parent_id: Option<&
 }
 
 pub fn delete_bookmark_folder(conn: &Connection, folder_id: &str) -> Result<bool> {
-    conn.execute("UPDATE browser_bookmarks SET folder_id = NULL WHERE folder_id = ?1", params![folder_id])?;
-    let count = conn.execute("DELETE FROM browser_bookmark_folders WHERE id = ?1", params![folder_id])?;
+    conn.execute(
+        "UPDATE browser_bookmarks SET folder_id = NULL WHERE folder_id = ?1",
+        params![folder_id],
+    )?;
+    let count = conn.execute(
+        "DELETE FROM browser_bookmark_folders WHERE id = ?1",
+        params![folder_id],
+    )?;
     Ok(count > 0)
 }
 
@@ -984,7 +1039,7 @@ pub fn get_browser_download(conn: &Connection, id: &str) -> Result<Option<Browse
         "SELECT id, url, filename, suggested_filename, destination,
                 total_bytes, received_bytes, progress, status,
                 started_at, completed_at, error, tab_id
-         FROM browser_downloads WHERE id = ?1 LIMIT 1"
+         FROM browser_downloads WHERE id = ?1 LIMIT 1",
     )?;
 
     let mut rows = stmt.query(params![id])?;
@@ -1009,7 +1064,10 @@ pub fn get_browser_download(conn: &Connection, id: &str) -> Result<Option<Browse
     }
 }
 
-pub fn list_browser_downloads(conn: &Connection, limit: Option<u32>) -> Result<Vec<BrowserDownloadRecord>> {
+pub fn list_browser_downloads(
+    conn: &Connection,
+    limit: Option<u32>,
+) -> Result<Vec<BrowserDownloadRecord>> {
     let lim = limit.unwrap_or(50).clamp(1, 200);
     let mut stmt = conn.prepare(
         "SELECT id, url, filename, suggested_filename, destination,
@@ -1017,7 +1075,7 @@ pub fn list_browser_downloads(conn: &Connection, limit: Option<u32>) -> Result<V
                 started_at, completed_at, error, tab_id
          FROM browser_downloads
          ORDER BY started_at DESC
-         LIMIT ?1"
+         LIMIT ?1",
     )?;
 
     let rows = stmt.query_map(params![lim], |row| {
@@ -1136,7 +1194,10 @@ pub fn list_browser_profiles(conn: &Connection) -> Result<Vec<BrowserProfileReco
 
 pub fn set_active_browser_profile(conn: &Connection, profile_id: &str) -> Result<bool> {
     conn.execute("UPDATE browser_profiles SET is_active = 0", [])?;
-    let count = conn.execute("UPDATE browser_profiles SET is_active = 1 WHERE id = ?1", params![profile_id])?;
+    let count = conn.execute(
+        "UPDATE browser_profiles SET is_active = 1 WHERE id = ?1",
+        params![profile_id],
+    )?;
     Ok(count > 0)
 }
 
@@ -1144,7 +1205,10 @@ pub fn delete_browser_profile_record(conn: &Connection, profile_id: &str) -> Res
     if profile_id == "profile_default" {
         return Err(rusqlite::Error::InvalidQuery);
     }
-    let count = conn.execute("DELETE FROM browser_profiles WHERE id = ?1 AND is_default = 0", params![profile_id])?;
+    let count = conn.execute(
+        "DELETE FROM browser_profiles WHERE id = ?1 AND is_default = 0",
+        params![profile_id],
+    )?;
     Ok(count > 0)
 }
 
@@ -1191,7 +1255,7 @@ pub fn load_browser_tabs(conn: &Connection) -> Result<Vec<BrowserTabRecord>> {
     let mut stmt = conn.prepare(
         "SELECT id, url, title, profile_id, is_pinned, is_active, position, group_id
          FROM browser_tabs
-         ORDER BY position ASC"
+         ORDER BY position ASC",
     )?;
 
     let rows = stmt.query_map([], |row| {
@@ -1253,7 +1317,7 @@ pub fn get_browser_tab_group(conn: &Connection, id: &str) -> Result<Option<Brows
     let mut stmt = conn.prepare(
         "SELECT id, profile_id, name, color, is_collapsed, position, created_at, updated_at
          FROM browser_tab_groups
-         WHERE id = ?1 LIMIT 1"
+         WHERE id = ?1 LIMIT 1",
     )?;
 
     let mut rows = stmt.query(params![id])?;
@@ -1273,14 +1337,17 @@ pub fn get_browser_tab_group(conn: &Connection, id: &str) -> Result<Option<Brows
     }
 }
 
-pub fn list_browser_tab_groups(conn: &Connection, profile_id: Option<&str>) -> Result<Vec<BrowserTabGroupRecord>> {
+pub fn list_browser_tab_groups(
+    conn: &Connection,
+    profile_id: Option<&str>,
+) -> Result<Vec<BrowserTabGroupRecord>> {
     let mut list = Vec::new();
     if let Some(pid) = profile_id {
         let mut stmt = conn.prepare(
             "SELECT id, profile_id, name, color, is_collapsed, position, created_at, updated_at
              FROM browser_tab_groups
              WHERE profile_id = ?1
-             ORDER BY position ASC, created_at ASC"
+             ORDER BY position ASC, created_at ASC",
         )?;
         let rows = stmt.query_map(params![pid], |row| {
             Ok(BrowserTabGroupRecord {
@@ -1301,7 +1368,7 @@ pub fn list_browser_tab_groups(conn: &Connection, profile_id: Option<&str>) -> R
         let mut stmt = conn.prepare(
             "SELECT id, profile_id, name, color, is_collapsed, position, created_at, updated_at
              FROM browser_tab_groups
-             ORDER BY position ASC, created_at ASC"
+             ORDER BY position ASC, created_at ASC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(BrowserTabGroupRecord {
@@ -1324,15 +1391,26 @@ pub fn list_browser_tab_groups(conn: &Connection, profile_id: Option<&str>) -> R
 
 pub fn delete_browser_tab_group(conn: &Connection, id: &str) -> Result<bool> {
     // Ungroup all associated tabs without deleting them (Step 5)
-    let _ = conn.execute("UPDATE browser_tabs SET group_id = NULL WHERE group_id = ?1", params![id]);
+    let _ = conn.execute(
+        "UPDATE browser_tabs SET group_id = NULL WHERE group_id = ?1",
+        params![id],
+    );
     let count = conn.execute("DELETE FROM browser_tab_groups WHERE id = ?1", params![id])?;
     Ok(count > 0)
 }
 
-pub fn set_browser_tab_group_collapsed(conn: &Connection, id: &str, is_collapsed: bool) -> Result<bool> {
+pub fn set_browser_tab_group_collapsed(
+    conn: &Connection,
+    id: &str,
+    is_collapsed: bool,
+) -> Result<bool> {
     let count = conn.execute(
         "UPDATE browser_tab_groups SET is_collapsed = ?1, updated_at = ?2 WHERE id = ?3",
-        params![if is_collapsed { 1 } else { 0 }, chrono::Utc::now().timestamp_millis() as u64, id],
+        params![
+            if is_collapsed { 1 } else { 0 },
+            chrono::Utc::now().timestamp_millis() as u64,
+            id
+        ],
     )?;
     Ok(count > 0)
 }
@@ -1341,7 +1419,10 @@ pub fn set_browser_tab_group_collapsed(conn: &Connection, id: &str, is_collapsed
 // Phase 5.6E: Privacy & Content Blocking Database Helpers
 // ============================================================================
 
-pub fn get_browser_privacy_settings(conn: &Connection, profile_id: &str) -> Result<BrowserPrivacySettingsRecord> {
+pub fn get_browser_privacy_settings(
+    conn: &Connection,
+    profile_id: &str,
+) -> Result<BrowserPrivacySettingsRecord> {
     let mut stmt = conn.prepare(
         "SELECT profile_id, enabled, block_ads, block_trackers, send_dnt, send_gpc, created_at, updated_at
          FROM browser_privacy_settings
@@ -1401,7 +1482,10 @@ pub fn get_browser_privacy_settings(conn: &Connection, profile_id: &str) -> Resu
     }
 }
 
-pub fn upsert_browser_privacy_settings(conn: &Connection, settings: &BrowserPrivacySettingsRecord) -> Result<()> {
+pub fn upsert_browser_privacy_settings(
+    conn: &Connection,
+    settings: &BrowserPrivacySettingsRecord,
+) -> Result<()> {
     conn.execute(
         "INSERT INTO browser_privacy_settings (profile_id, enabled, block_ads, block_trackers, send_dnt, send_gpc, created_at, updated_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
@@ -1426,14 +1510,17 @@ pub fn upsert_browser_privacy_settings(conn: &Connection, settings: &BrowserPriv
     Ok(())
 }
 
-pub fn list_browser_privacy_allowlist(conn: &Connection, profile_id: Option<&str>) -> Result<Vec<BrowserPrivacyAllowlistRecord>> {
+pub fn list_browser_privacy_allowlist(
+    conn: &Connection,
+    profile_id: Option<&str>,
+) -> Result<Vec<BrowserPrivacyAllowlistRecord>> {
     let mut list = Vec::new();
     if let Some(pid) = profile_id {
         let mut stmt = conn.prepare(
             "SELECT id, domain, profile_id, created_at
              FROM browser_privacy_allowlist
              WHERE profile_id = ?1 OR profile_id = 'global'
-             ORDER BY created_at DESC"
+             ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map(params![pid], |row| {
             Ok(BrowserPrivacyAllowlistRecord {
@@ -1450,7 +1537,7 @@ pub fn list_browser_privacy_allowlist(conn: &Connection, profile_id: Option<&str
         let mut stmt = conn.prepare(
             "SELECT id, domain, profile_id, created_at
              FROM browser_privacy_allowlist
-             ORDER BY created_at DESC"
+             ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(BrowserPrivacyAllowlistRecord {
@@ -1467,7 +1554,11 @@ pub fn list_browser_privacy_allowlist(conn: &Connection, profile_id: Option<&str
     Ok(list)
 }
 
-pub fn add_browser_privacy_allowlist(conn: &Connection, domain: &str, profile_id: &str) -> Result<BrowserPrivacyAllowlistRecord> {
+pub fn add_browser_privacy_allowlist(
+    conn: &Connection,
+    domain: &str,
+    profile_id: &str,
+) -> Result<BrowserPrivacyAllowlistRecord> {
     let id = format!("al_{}", uuid::Uuid::new_v4());
     let now = chrono::Utc::now().timestamp_millis() as u64;
     conn.execute(
@@ -1483,7 +1574,11 @@ pub fn add_browser_privacy_allowlist(conn: &Connection, domain: &str, profile_id
     })
 }
 
-pub fn remove_browser_privacy_allowlist(conn: &Connection, domain: &str, profile_id: Option<&str>) -> Result<bool> {
+pub fn remove_browser_privacy_allowlist(
+    conn: &Connection,
+    domain: &str,
+    profile_id: Option<&str>,
+) -> Result<bool> {
     let count = if let Some(pid) = profile_id {
         conn.execute(
             "DELETE FROM browser_privacy_allowlist WHERE domain = ?1 AND (profile_id = ?2 OR profile_id = 'global')",
@@ -1498,14 +1593,17 @@ pub fn remove_browser_privacy_allowlist(conn: &Connection, domain: &str, profile
     Ok(count > 0)
 }
 
-pub fn list_browser_privacy_rules(conn: &Connection, profile_id: Option<&str>) -> Result<Vec<BrowserPrivacyRuleRecord>> {
+pub fn list_browser_privacy_rules(
+    conn: &Connection,
+    profile_id: Option<&str>,
+) -> Result<Vec<BrowserPrivacyRuleRecord>> {
     let mut list = Vec::new();
     if let Some(pid) = profile_id {
         let mut stmt = conn.prepare(
             "SELECT id, pattern, rule_type, action, category, profile_id, enabled, created_at
              FROM browser_privacy_rules
              WHERE profile_id = ?1 OR profile_id = 'global'
-             ORDER BY created_at DESC"
+             ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map(params![pid], |row| {
             Ok(BrowserPrivacyRuleRecord {
@@ -1526,7 +1624,7 @@ pub fn list_browser_privacy_rules(conn: &Connection, profile_id: Option<&str>) -
         let mut stmt = conn.prepare(
             "SELECT id, pattern, rule_type, action, category, profile_id, enabled, created_at
              FROM browser_privacy_rules
-             ORDER BY created_at DESC"
+             ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             Ok(BrowserPrivacyRuleRecord {
@@ -1566,18 +1664,21 @@ pub fn add_browser_privacy_rule(conn: &Connection, rule: &BrowserPrivacyRuleReco
 }
 
 pub fn delete_browser_privacy_rule(conn: &Connection, rule_id: &str) -> Result<bool> {
-    let count = conn.execute("DELETE FROM browser_privacy_rules WHERE id = ?1", params![rule_id])?;
+    let count = conn.execute(
+        "DELETE FROM browser_privacy_rules WHERE id = ?1",
+        params![rule_id],
+    )?;
     Ok(count > 0)
 }
 
-pub fn toggle_browser_privacy_rule(conn: &Connection, rule_id: &str, enabled: bool) -> Result<bool> {
+pub fn toggle_browser_privacy_rule(
+    conn: &Connection,
+    rule_id: &str,
+    enabled: bool,
+) -> Result<bool> {
     let count = conn.execute(
         "UPDATE browser_privacy_rules SET enabled = ?1 WHERE id = ?2",
         params![if enabled { 1 } else { 0 }, rule_id],
     )?;
     Ok(count > 0)
 }
-
-
-
-

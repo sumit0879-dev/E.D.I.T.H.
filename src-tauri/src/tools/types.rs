@@ -314,11 +314,7 @@ impl ToolExecutionResult {
         }
     }
 
-    pub fn timeout(
-        execution_id: ToolExecutionId,
-        tool_name: String,
-        duration_ms: u64,
-    ) -> Self {
+    pub fn timeout(execution_id: ToolExecutionId, tool_name: String, duration_ms: u64) -> Self {
         Self {
             execution_id,
             tool_name,
@@ -355,13 +351,17 @@ impl fmt::Display for ToolExecutionError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             ToolExecutionError::ToolNotFound(msg) => write!(f, "Tool not found: {}", msg),
-            ToolExecutionError::InvalidArguments(msg) => write!(f, "Invalid tool arguments: {}", msg),
+            ToolExecutionError::InvalidArguments(msg) => {
+                write!(f, "Invalid tool arguments: {}", msg)
+            }
             ToolExecutionError::PolicyBlocked(msg) => write!(f, "Policy blocked: {}", msg),
             ToolExecutionError::ApprovalDenied(msg) => write!(f, "Approval denied: {}", msg),
             ToolExecutionError::ApprovalExpired(msg) => write!(f, "Approval expired: {}", msg),
             ToolExecutionError::Timeout(msg) => write!(f, "Execution timed out: {}", msg),
             ToolExecutionError::Cancelled(msg) => write!(f, "Execution cancelled: {}", msg),
-            ToolExecutionError::ExecutorUnavailable(msg) => write!(f, "Executor unavailable: {}", msg),
+            ToolExecutionError::ExecutorUnavailable(msg) => {
+                write!(f, "Executor unavailable: {}", msg)
+            }
             ToolExecutionError::DomainError(msg) => write!(f, "Domain execution error: {}", msg),
             ToolExecutionError::InternalError(msg) => write!(f, "Internal tool error: {}", msg),
         }

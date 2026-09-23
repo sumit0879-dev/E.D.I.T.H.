@@ -1,12 +1,12 @@
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::time::{SystemTime, UNIX_EPOCH, Duration};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Manager, State};
 
-use crate::db::{self, DbState, BrowserProfileRecord};
 use crate::browser::BrowserState;
+use crate::db::{self, BrowserProfileRecord, DbState};
 
 // ============================================================================
 // PHASE 5.6C BROWSER PROFILE DATA MODEL (Step 2)
@@ -57,7 +57,8 @@ impl Default for BrowserProfileManager {
 }
 
 lazy_static! {
-    pub static ref GLOBAL_PROFILE_MGR: Arc<BrowserProfileManager> = Arc::new(BrowserProfileManager::default());
+    pub static ref GLOBAL_PROFILE_MGR: Arc<BrowserProfileManager> =
+        Arc::new(BrowserProfileManager::default());
 }
 
 fn current_timestamp_ms() -> u64 {
@@ -73,12 +74,18 @@ fn current_timestamp_ms() -> u64 {
 
 pub fn get_profile_root_dir() -> PathBuf {
     if let Ok(user_profile) = std::env::var("USERPROFILE") {
-        let path = PathBuf::from(user_profile).join(".gemini").join("antigravity-ide").join("edith_browser_profiles");
+        let path = PathBuf::from(user_profile)
+            .join(".gemini")
+            .join("antigravity-ide")
+            .join("edith_browser_profiles");
         let _ = std::fs::create_dir_all(&path);
         return path;
     }
     if let Ok(home) = std::env::var("HOME") {
-        let path = PathBuf::from(home).join(".gemini").join("antigravity-ide").join("edith_browser_profiles");
+        let path = PathBuf::from(home)
+            .join(".gemini")
+            .join("antigravity-ide")
+            .join("edith_browser_profiles");
         let _ = std::fs::create_dir_all(&path);
         return path;
     }
@@ -88,8 +95,15 @@ pub fn get_profile_root_dir() -> PathBuf {
 }
 
 pub fn sanitize_profile_id(id: &str) -> String {
-    let cleaned: String = id.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' || c == '-' { c } else { '_' })
+    let cleaned: String = id
+        .chars()
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' || c == '-' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
     if cleaned.is_empty() {
         "profile_custom".to_string()
@@ -134,7 +148,11 @@ impl BrowserProfileManager {
         let id = custom_id
             .map(|s| sanitize_profile_id(s))
             .unwrap_or_else(|| {
-                let suffix = uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>();
+                let suffix = uuid::Uuid::new_v4()
+                    .to_string()
+                    .chars()
+                    .take(8)
+                    .collect::<String>();
                 format!("profile_{}", suffix)
             });
 
@@ -161,14 +179,24 @@ impl BrowserProfileManager {
         Ok(record)
     }
 
-    pub fn switch_profile(&self, app: &AppHandle, profile_id: &str) -> Result<BrowserProfileRecord, String> {
-        let db_state = app.try_state::<DbState>()
+    pub fn switch_profile(
+        &self,
+        app: &AppHandle,
+        profile_id: &str,
+    ) -> Result<BrowserProfileRecord, String> {
+        let db_state = app
+            .try_state::<DbState>()
             .ok_or_else(|| "Database state not initialized.".to_string())?;
         let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
 
         let profile = db::get_browser_profile(&conn, profile_id)
             .map_err(|e| e.to_string())?
-            .ok_or_else(|| format!("PROFILE_NOT_FOUND: Profile '{}' does not exist.", profile_id))?;
+            .ok_or_else(|| {
+                format!(
+                    "PROFILE_NOT_FOUND: Profile '{}' does not exist.",
+                    profile_id
+                )
+            })?;
 
         db::set_active_browser_profile(&conn, profile_id).map_err(|e| e.to_string())?;
         self.set_active_profile_id(profile_id);
@@ -176,9 +204,16 @@ impl BrowserProfileManager {
         Ok(profile)
     }
 
-    pub fn delete_profile(&self, app: &AppHandle, profile_id: &str, browser_state: &BrowserState) -> Result<bool, String> {
+    pub fn delete_profile(
+        &self,
+        app: &AppHandle,
+        profile_id: &str,
+        browser_state: &BrowserState,
+    ) -> Result<bool, String> {
         if profile_id == "profile_default" {
-            return Err("CANNOT_DELETE_DEFAULT: The default browser profile cannot be deleted.".to_string());
+            return Err(
+                "CANNOT_DELETE_DEFAULT: The default browser profile cannot be deleted.".to_string(),
+            );
         }
 
         // Step 8 & 27: Verify no active tabs are using this profile
@@ -189,15 +224,18 @@ impl BrowserProfileManager {
         }
         drop(tabs);
 
-        let db_state = app.try_state::<DbState>()
+        let db_state = app
+            .try_state::<DbState>()
             .ok_or_else(|| "Database state not initialized.".to_string())?;
         let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
 
         // Retrieve record to get user_data_dir
-        if let Some(record) = db::get_browser_profile(&conn, profile_id).map_err(|e| e.to_string())? {
+        if let Some(record) =
+            db::get_browser_profile(&conn, profile_id).map_err(|e| e.to_string())?
+        {
             let path = PathBuf::from(&record.user_data_dir);
             let root = get_profile_root_dir();
-            
+
             // Path security check (Step 26 & 27): ensure path is inside root
             if path.starts_with(&root) && path != root {
                 let _ = std::fs::remove_dir_all(&path);
@@ -216,13 +254,27 @@ impl BrowserProfileManager {
     }
 
     /// Step 11: Creates an isolated, disposable profile for autonomous AI research tasks
-    pub fn create_agent_temporary_profile(&self, app: &AppHandle, task_id: &str) -> Result<BrowserProfileRecord, String> {
+    pub fn create_agent_temporary_profile(
+        &self,
+        app: &AppHandle,
+        task_id: &str,
+    ) -> Result<BrowserProfileRecord, String> {
         let custom_id = format!("agent_{}", sanitize_profile_id(task_id));
-        self.create_profile(app, &format!("AI Task {}", task_id), "AGENT_TEMPORARY", Some(&custom_id))
+        self.create_profile(
+            app,
+            &format!("AI Task {}", task_id),
+            "AGENT_TEMPORARY",
+            Some(&custom_id),
+        )
     }
 
     /// Step 11: Cleans up and deletes an agent temporary profile
-    pub fn cleanup_agent_temporary_profile(&self, app: &AppHandle, profile_id: &str, browser_state: &BrowserState) -> Result<bool, String> {
+    pub fn cleanup_agent_temporary_profile(
+        &self,
+        app: &AppHandle,
+        profile_id: &str,
+        browser_state: &BrowserState,
+    ) -> Result<bool, String> {
         if !profile_id.starts_with("agent_") && !profile_id.contains("temporary") {
             return Err("INVALID_OPERATION: cleanup_agent_temporary_profile can only be used on temporary profiles.".to_string());
         }
@@ -235,15 +287,22 @@ impl BrowserProfileManager {
 // ============================================================================
 
 #[tauri::command]
-pub fn browser_profiles_list(db_state: State<'_, DbState>) -> Result<Vec<BrowserProfileRecord>, String> {
+pub fn browser_profiles_list(
+    db_state: State<'_, DbState>,
+) -> Result<Vec<BrowserProfileRecord>, String> {
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    db::list_browser_profiles(&conn).map_err(|e| format!("DB_ERROR: Failed to list profiles: {}", e))
+    db::list_browser_profiles(&conn)
+        .map_err(|e| format!("DB_ERROR: Failed to list profiles: {}", e))
 }
 
 #[tauri::command]
-pub fn browser_profile_get(profile_id: String, db_state: State<'_, DbState>) -> Result<Option<BrowserProfileRecord>, String> {
+pub fn browser_profile_get(
+    profile_id: String,
+    db_state: State<'_, DbState>,
+) -> Result<Option<BrowserProfileRecord>, String> {
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    db::get_browser_profile(&conn, &profile_id).map_err(|e| format!("DB_ERROR: Failed to get profile: {}", e))
+    db::get_browser_profile(&conn, &profile_id)
+        .map_err(|e| format!("DB_ERROR: Failed to get profile: {}", e))
 }
 
 #[tauri::command]
@@ -257,7 +316,10 @@ pub fn browser_profile_create(
 }
 
 #[tauri::command]
-pub fn browser_profile_switch(app: AppHandle, profile_id: String) -> Result<BrowserProfileRecord, String> {
+pub fn browser_profile_switch(
+    app: AppHandle,
+    profile_id: String,
+) -> Result<BrowserProfileRecord, String> {
     GLOBAL_PROFILE_MGR.switch_profile(&app, &profile_id)
 }
 
@@ -270,7 +332,12 @@ pub fn browser_profile_rename(
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
     let mut profile = db::get_browser_profile(&conn, &profile_id)
         .map_err(|e| e.to_string())?
-        .ok_or_else(|| format!("PROFILE_NOT_FOUND: Profile '{}' does not exist.", profile_id))?;
+        .ok_or_else(|| {
+            format!(
+                "PROFILE_NOT_FOUND: Profile '{}' does not exist.",
+                profile_id
+            )
+        })?;
 
     profile.name = new_name.trim().to_string();
     profile.updated_at = current_timestamp_ms();
@@ -289,7 +356,10 @@ pub fn browser_profile_delete(
 }
 
 #[tauri::command]
-pub fn browser_profile_create_temporary(app: AppHandle, task_id: String) -> Result<BrowserProfileRecord, String> {
+pub fn browser_profile_create_temporary(
+    app: AppHandle,
+    task_id: String,
+) -> Result<BrowserProfileRecord, String> {
     GLOBAL_PROFILE_MGR.create_agent_temporary_profile(&app, &task_id)
 }
 

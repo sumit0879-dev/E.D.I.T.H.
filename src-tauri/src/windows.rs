@@ -1,5 +1,5 @@
-use tauri::command;
 use std::process::Command;
+use tauri::command;
 
 #[command]
 pub async fn arrange_windows_cmd(action: String) -> Result<String, String> {
@@ -7,11 +7,9 @@ pub async fn arrange_windows_cmd(action: String) -> Result<String, String> {
         "minimize_all" => {
             // PowerShell command to minimize all windows
             "(New-Object -ComObject Shell.Application).MinimizeAll()"
-        },
-        "restore_all" => {
-            "(New-Object -ComObject Shell.Application).UndoMinimizeAll()"
-        },
-        _ => return Err("Unknown window action".to_string())
+        }
+        "restore_all" => "(New-Object -ComObject Shell.Application).UndoMinimizeAll()",
+        _ => return Err("Unknown window action".to_string()),
     };
 
     let output = Command::new("powershell")

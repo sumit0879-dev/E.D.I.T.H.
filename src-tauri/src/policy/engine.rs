@@ -89,11 +89,7 @@ impl PolicyEngine {
 
     /// Evaluates an incoming action request in host context against active policies.
     /// Strictly host-enforced: produces a deterministic decision (Allow, ConfirmationRequired, Restricted, Blocked).
-    pub async fn evaluate(
-        &self,
-        req: &ActionRequest,
-        ctx: &PolicyContext,
-    ) -> PolicyDecision {
+    pub async fn evaluate(&self, req: &ActionRequest, ctx: &PolicyContext) -> PolicyDecision {
         let current_policy_version = self.get_policy_version();
         let constraints = self.get_constraints().await;
 
@@ -103,7 +99,8 @@ impl PolicyEngine {
                 match approval.validate_authorization(req, current_policy_version) {
                     Ok(()) => {
                         // Strictly consume approval to prevent replay attacks
-                        if let Err(consume_err) = self.approvals.consume_approval(approval_id).await {
+                        if let Err(consume_err) = self.approvals.consume_approval(approval_id).await
+                        {
                             return PolicyDecision::blocked(
                                 RiskLevel::High,
                                 "APPROVAL_CONSUMPTION_FAILURE",
@@ -182,7 +179,12 @@ impl PolicyEngine {
             (r, o, "POLICY_ALLOW".to_string(), msg)
         } else if domain_lower == "edith" {
             let decision = EdithAdapter::evaluate(req, ctx, current_policy_version);
-            (decision.risk_level, decision.outcome, decision.policy_code, decision.reason)
+            (
+                decision.risk_level,
+                decision.outcome,
+                decision.policy_code,
+                decision.reason,
+            )
         } else {
             // General external actions evaluation
             if !constraints.allow_external_services {
@@ -207,7 +209,11 @@ impl PolicyEngine {
             PolicyOutcome::Allow => (
                 PolicyDecision::allow(
                     risk_level,
-                    if policy_code.is_empty() || policy_code == "POLICY_BLOCKED" { "POLICY_ALLOW" } else { &policy_code },
+                    if policy_code.is_empty() || policy_code == "POLICY_BLOCKED" {
+                        "POLICY_ALLOW"
+                    } else {
+                        &policy_code
+                    },
                     reason.clone(),
                     current_policy_version,
                 ),
@@ -233,21 +239,25 @@ impl PolicyEngine {
                 // Emit ApprovalRequested correlated event
                 if let Some(ref emitter) = self.emitter {
                     let corr = EventCorrelation {
-                        conversation_id: ctx.conversation_id.clone().or_else(|| ctx.session_id.clone()),
+                        conversation_id: ctx
+                            .conversation_id
+                            .clone()
+                            .or_else(|| ctx.session_id.clone()),
                         turn_id: ctx.turn_id.clone(),
                         task_id: ctx.task_id.clone(),
                         stream_id: None,
                         tool_execution_id: None,
                         voice_session_id: None,
                     };
-                    let payload = EdithPayload::SecurityPolicy(SecurityPolicyPayload::ApprovalRequested {
-                        approval_id: app_id.clone(),
-                        action_domain: req.domain.clone(),
-                        action_operation: req.operation.clone(),
-                        risk_level: format!("{:?}", risk_level),
-                        reason: reason.clone(),
-                        expires_at_ms: approval.expires_at_ms,
-                    });
+                    let payload =
+                        EdithPayload::SecurityPolicy(SecurityPolicyPayload::ApprovalRequested {
+                            approval_id: app_id.clone(),
+                            action_domain: req.domain.clone(),
+                            action_operation: req.operation.clone(),
+                            risk_level: format!("{:?}", risk_level),
+                            reason: reason.clone(),
+                            expires_at_ms: approval.expires_at_ms,
+                        });
                     let _ = emitter.emit_payload(corr, payload);
                 }
 
@@ -275,7 +285,11 @@ impl PolicyEngine {
             PolicyOutcome::Blocked => (
                 PolicyDecision::blocked(
                     risk_level,
-                    if policy_code.is_empty() { "POLICY_BLOCKED" } else { &policy_code },
+                    if policy_code.is_empty() {
+                        "POLICY_BLOCKED"
+                    } else {
+                        &policy_code
+                    },
                     reason.clone(),
                     current_policy_version,
                 ),
@@ -300,7 +314,10 @@ impl PolicyEngine {
         // 5. Emit PolicyEvaluated Correlated Event
         if let Some(ref emitter) = self.emitter {
             let corr = EventCorrelation {
-                conversation_id: ctx.conversation_id.clone().or_else(|| ctx.session_id.clone()),
+                conversation_id: ctx
+                    .conversation_id
+                    .clone()
+                    .or_else(|| ctx.session_id.clone()),
                 turn_id: ctx.turn_id.clone(),
                 task_id: ctx.task_id.clone(),
                 stream_id: None,

@@ -1,18 +1,18 @@
 // src-tauri/src/browser_recovery.rs
 //! Phase 5.7C: Crash Recovery, Startup Recovery & State Integrity Subsystem
-//! 
+//!
 //! Ensures deterministic, safe, and bounded recovery from unexpected termination,
 //! application crashes, process kills, and corrupted/partial session snapshots.
 
-use std::path::{Path, PathBuf};
-use std::time::{Instant, SystemTime, UNIX_EPOCH, Duration};
-use std::collections::HashSet;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tauri::Url;
 
-use crate::db::{self, BrowserProfileRecord};
 use crate::browser_profile::get_profile_root_dir;
+use crate::db::{self, BrowserProfileRecord};
 
 // ============================================================================
 // STATE CLASSIFICATION & CONSTANTS (Step 2 & 5)
@@ -81,7 +81,10 @@ pub fn validate_profile_dir(profile_dir: &str, root: &Path) -> Result<PathBuf, S
     // Reject obvious traversal attempts
     let dir_str = profile_dir.replace('\\', "/");
     if dir_str.contains("../") || dir_str.contains("/..") || dir_str.starts_with("../") {
-        return Err(format!("SECURITY_VIOLATION: Path traversal detected in profile directory '{}'", profile_dir));
+        return Err(format!(
+            "SECURITY_VIOLATION: Path traversal detected in profile directory '{}'",
+            profile_dir
+        ));
     }
 
     // Resolve relative to root if relative
@@ -95,7 +98,10 @@ pub fn validate_profile_dir(profile_dir: &str, root: &Path) -> Result<PathBuf, S
     if let Ok(canonical_root) = root.canonicalize() {
         if let Ok(canonical_candidate) = candidate.canonicalize() {
             if !canonical_candidate.starts_with(&canonical_root) {
-                return Err(format!("SECURITY_VIOLATION: Profile directory '{}' escapes root directory", profile_dir));
+                return Err(format!(
+                    "SECURITY_VIOLATION: Profile directory '{}' escapes root directory",
+                    profile_dir
+                ));
             }
         }
     }
@@ -116,8 +122,8 @@ pub fn validate_url_for_recovery(raw_url: &str) -> Result<String, String> {
         return Ok("about:blank".to_string());
     }
 
-    let parsed = Url::parse(trimmed)
-        .map_err(|e| format!("MALFORMED_URL: '{}' ({})", trimmed, e))?;
+    let parsed =
+        Url::parse(trimmed).map_err(|e| format!("MALFORMED_URL: '{}' ({})", trimmed, e))?;
 
     match parsed.scheme() {
         "http" | "https" => Ok(trimmed.to_string()),
@@ -151,12 +157,14 @@ pub fn validate_url_for_recovery(raw_url: &str) -> Result<String, String> {
                 Err(format!("DISALLOWED_DATA_SCHEME: '{}'", trimmed))
             }
         }
-        "javascript" | "vbscript" | "file" | "shell" | "chrome" | "opera" => {
-            Err(format!("DISALLOWED_SCHEME: Scheme '{}' is prohibited in restored sessions.", parsed.scheme()))
-        }
-        other => {
-            Err(format!("UNSUPPORTED_SCHEME: Scheme '{}' is not supported for recovery.", other))
-        }
+        "javascript" | "vbscript" | "file" | "shell" | "chrome" | "opera" => Err(format!(
+            "DISALLOWED_SCHEME: Scheme '{}' is prohibited in restored sessions.",
+            parsed.scheme()
+        )),
+        other => Err(format!(
+            "UNSUPPORTED_SCHEME: Scheme '{}' is not supported for recovery.",
+            other
+        )),
     }
 }
 
@@ -183,13 +191,17 @@ pub fn run_startup_recovery(conn: &Connection) -> Result<RecoveryReport, String>
                 if status.to_lowercase() == "ok" {
                     integrity_ok = true;
                 } else {
-                    report.database_issues.push(format!("SQLite quick_check warning: {}", status));
+                    report
+                        .database_issues
+                        .push(format!("SQLite quick_check warning: {}", status));
                 }
             }
         }
     }
     if !integrity_ok && report.database_issues.is_empty() {
-        report.database_issues.push("SQLite integrity check returned unexpected response".to_string());
+        report
+            .database_issues
+            .push("SQLite integrity check returned unexpected response".to_string());
     }
 
     // ------------------------------------------------------------------------
@@ -204,14 +216,19 @@ pub fn run_startup_recovery(conn: &Connection) -> Result<RecoveryReport, String>
                 valid_profile_ids.insert(p.id.clone());
             }
             Err(err) => {
-                report.profile_issues.push(format!("Profile '{}' had invalid path: {}", p.id, err));
+                report
+                    .profile_issues
+                    .push(format!("Profile '{}' had invalid path: {}", p.id, err));
             }
         }
     }
 
     // Ensure default profile exists
     if !valid_profile_ids.contains("profile_default") {
-        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or(Duration::ZERO).as_millis() as u64;
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or(Duration::ZERO)
+            .as_millis() as u64;
         let default_rec = BrowserProfileRecord {
             id: "profile_default".to_string(),
             name: "Default Profile".to_string(),
@@ -224,7 +241,9 @@ pub fn run_startup_recovery(conn: &Connection) -> Result<RecoveryReport, String>
         };
         let _ = db::upsert_browser_profile(conn, &default_rec);
         valid_profile_ids.insert("profile_default".to_string());
-        report.profile_issues.push("Restored missing profile_default record.".to_string());
+        report
+            .profile_issues
+            .push("Restored missing profile_default record.".to_string());
     }
 
     // ------------------------------------------------------------------------
@@ -272,7 +291,9 @@ pub fn run_startup_recovery(conn: &Connection) -> Result<RecoveryReport, String>
             }
             Err(e) => {
                 report.skipped_tabs += 1;
-                report.database_issues.push(format!("Skipped tab '{}': {}", tab.id, e));
+                report
+                    .database_issues
+                    .push(format!("Skipped tab '{}': {}", tab.id, e));
             }
         }
     }
@@ -313,10 +334,16 @@ pub fn run_startup_recovery(conn: &Connection) -> Result<RecoveryReport, String>
             parts.push(format!("{} tabs recovered", report.recovered_tabs));
         }
         if report.interrupted_downloads > 0 {
-            parts.push(format!("{} interrupted downloads marked failed", report.interrupted_downloads));
+            parts.push(format!(
+                "{} interrupted downloads marked failed",
+                report.interrupted_downloads
+            ));
         }
         if report.repaired_groups > 0 {
-            parts.push(format!("{} tab group associations repaired", report.repaired_groups));
+            parts.push(format!(
+                "{} tab group associations repaired",
+                report.repaired_groups
+            ));
         }
         report.notice = Some(format!("E.D.I.T.H. Startup Recovery: {}", parts.join(", ")));
     }

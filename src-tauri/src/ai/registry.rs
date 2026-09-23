@@ -54,8 +54,16 @@ impl ProviderRegistry {
             ("cerebras", "Cerebras", "https://api.cerebras.ai/v1"),
             ("sambanova", "SambaNova", "https://api.sambanova.ai/v1"),
             ("mistral", "Mistral AI", "https://api.mistral.ai/v1"),
-            ("huggingface", "Hugging Face", "https://api-inference.huggingface.co/v1"),
-            ("local", "Local LLM (Ollama / Llama-Server)", "http://127.0.0.1:11434/v1"),
+            (
+                "huggingface",
+                "Hugging Face",
+                "https://api-inference.huggingface.co/v1",
+            ),
+            (
+                "local",
+                "Local LLM (Ollama / Llama-Server)",
+                "http://127.0.0.1:11434/v1",
+            ),
         ];
 
         for (id, name, base_url) in standard_endpoints {
@@ -87,7 +95,10 @@ impl ProviderRegistry {
             .get(provider_id)
             .cloned()
             .ok_or_else(|| ProviderError::InvalidRequest {
-                message: format!("Unknown AI provider '{}'. Please select a valid provider in Settings.", provider_id),
+                message: format!(
+                    "Unknown AI provider '{}'. Please select a valid provider in Settings.",
+                    provider_id
+                ),
             })
     }
 

@@ -1,7 +1,10 @@
 //! tests.rs — Comprehensive unit and mock integration tests for E.D.I.T.H. Fallback Voice.
 
 use super::*;
-use crate::ai::{CapabilitySet, GenerateRequest, GenerateResponse, ModelMetadata, Provider, ProviderError, ProviderRegistry, TextGenerationCapability};
+use crate::ai::{
+    CapabilitySet, GenerateRequest, GenerateResponse, ModelMetadata, Provider, ProviderError,
+    ProviderRegistry, TextGenerationCapability,
+};
 use crate::conversation::ConversationCore;
 use crate::events::{ConversationId, EventEmitter, VoiceSessionId};
 use crate::task::CancellationToken;
@@ -284,7 +287,10 @@ async fn test_conversation_core_convergence_and_turn_id() {
 
     assert!(res.is_ok());
     let response_text = res.unwrap();
-    assert_eq!(response_text, "Hello! Tactical systems online and operational.");
+    assert_eq!(
+        response_text,
+        "Hello! Tactical systems online and operational."
+    );
 
     // Verify authoritative TurnId association
     let final_summary = controller.status_summary().await;
@@ -301,7 +307,9 @@ async fn test_conversation_core_convergence_and_turn_id() {
     assert!(!events.is_empty());
 
     let has_started = events.iter().any(|e| match &e.payload {
-        crate::events::EdithPayload::Voice(crate::events::VoicePayload::SessionStarted { .. }) => true,
+        crate::events::EdithPayload::Voice(crate::events::VoicePayload::SessionStarted {
+            ..
+        }) => true,
         _ => false,
     });
     assert!(has_started);
@@ -367,7 +375,9 @@ async fn test_barge_in_interruption() {
     // Verify BargeIn event was emitted
     let events = emitter.get_mock_events();
     let has_barge_in = events.iter().any(|e| match &e.payload {
-        crate::events::EdithPayload::Voice(crate::events::VoicePayload::BargeInTriggered { .. }) => true,
+        crate::events::EdithPayload::Voice(crate::events::VoicePayload::BargeInTriggered {
+            ..
+        }) => true,
         _ => false,
     });
     assert!(has_barge_in);

@@ -1,6 +1,6 @@
 use super::state::TaskStatus;
 use super::types::{TaskError, TaskOwner, TaskProgress, TaskSnapshot, TaskType};
-use crate::events::{EventEmitter, EventCorrelation, TaskId};
+use crate::events::{EventCorrelation, EventEmitter, TaskId};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -200,11 +200,9 @@ impl TaskRuntime {
         task.status = TaskStatus::Running;
         task.started_at_ms = Some(now_ms());
 
-        let _ = self.emitter.emit_task_started(
-            &task.correlation,
-            task.task_id.as_str(),
-            &task.goal,
-        );
+        let _ =
+            self.emitter
+                .emit_task_started(&task.correlation, task.task_id.as_str(), &task.goal);
 
         Ok(())
     }
@@ -305,11 +303,9 @@ impl TaskRuntime {
         task.completed_at_ms = Some(now_ms());
         task.error = Some(error_str.clone());
 
-        let _ = self.emitter.emit_task_failed(
-            &task.correlation,
-            task.task_id.as_str(),
-            &error_str,
-        );
+        let _ = self
+            .emitter
+            .emit_task_failed(&task.correlation, task.task_id.as_str(), &error_str);
 
         Ok(())
     }
@@ -341,11 +337,9 @@ impl TaskRuntime {
         task.completed_at_ms = Some(now_ms());
         task.error = reason.clone();
 
-        let _ = self.emitter.emit_task_cancelled(
-            &task.correlation,
-            task.task_id.as_str(),
-            reason,
-        );
+        let _ = self
+            .emitter
+            .emit_task_cancelled(&task.correlation, task.task_id.as_str(), reason);
 
         Ok(())
     }

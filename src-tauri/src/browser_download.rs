@@ -1,3 +1,7 @@
+use lazy_static::lazy_static;
+use reqwest::Client;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 use std::collections::HashMap;
 use std::fs::File;
 use std::io::Write;
@@ -5,13 +9,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use lazy_static::lazy_static;
-use reqwest::Client;
-use serde::{Deserialize, Serialize};
-use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager, State};
 
-use crate::db::{self, DbState, BrowserDownloadRecord};
+use crate::db::{self, BrowserDownloadRecord, DbState};
 
 // ============================================================================
 // PHASE 5.6B DOWNLOAD DATA MODEL & STATUS
@@ -65,7 +65,8 @@ impl Default for BrowserDownloadManager {
 }
 
 lazy_static! {
-    pub static ref GLOBAL_DOWNLOAD_MGR: Arc<BrowserDownloadManager> = Arc::new(BrowserDownloadManager::default());
+    pub static ref GLOBAL_DOWNLOAD_MGR: Arc<BrowserDownloadManager> =
+        Arc::new(BrowserDownloadManager::default());
 }
 
 fn current_timestamp_ms() -> u64 {
@@ -82,13 +83,17 @@ fn current_timestamp_ms() -> u64 {
 /// Returns a secure, controlled downloads directory owned by E.D.I.T.H.
 pub fn get_safe_downloads_dir() -> PathBuf {
     if let Ok(user_profile) = std::env::var("USERPROFILE") {
-        let path = PathBuf::from(user_profile).join("Downloads").join("EDITH_Downloads");
+        let path = PathBuf::from(user_profile)
+            .join("Downloads")
+            .join("EDITH_Downloads");
         let _ = std::fs::create_dir_all(&path);
         return path;
     }
 
     if let Ok(home) = std::env::var("HOME") {
-        let path = PathBuf::from(home).join("Downloads").join("EDITH_Downloads");
+        let path = PathBuf::from(home)
+            .join("Downloads")
+            .join("EDITH_Downloads");
         let _ = std::fs::create_dir_all(&path);
         return path;
     }
@@ -101,7 +106,7 @@ pub fn get_safe_downloads_dir() -> PathBuf {
 /// Sanitizes a remote/suggested filename against path traversal, control characters, and Windows reserved names.
 pub fn sanitize_filename(suggested: &str) -> String {
     let mut cleaned = suggested.trim().replace('\\', "/");
-    
+
     // Extract base filename only (strip any path components)
     if let Some(pos) = cleaned.rfind('/') {
         cleaned = cleaned[(pos + 1)..].to_string();
@@ -112,16 +117,24 @@ pub fn sanitize_filename(suggested: &str) -> String {
 
     // Replace invalid Windows characters: < > : " / \ | ? *
     let invalid_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*', '\0'];
-    cleaned = cleaned.chars().map(|c| if invalid_chars.contains(&c) || c.is_control() { '_' } else { c }).collect();
+    cleaned = cleaned
+        .chars()
+        .map(|c| {
+            if invalid_chars.contains(&c) || c.is_control() {
+                '_'
+            } else {
+                c
+            }
+        })
+        .collect();
     cleaned = cleaned.trim_matches(['.', ' ']).to_string();
 
     // Check against Windows reserved device names
     let upper = cleaned.to_uppercase();
     let base_stem = upper.split('.').next().unwrap_or("");
     let reserved = [
-        "CON", "PRN", "AUX", "NUL",
-        "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
-        "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9"
+        "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+        "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
     ];
 
     if reserved.contains(&base_stem) {
@@ -143,8 +156,15 @@ pub fn resolve_collision_path(base_dir: &Path, filename: &str) -> (PathBuf, Stri
     }
 
     let path_obj = Path::new(filename);
-    let stem = path_obj.file_stem().and_then(|s| s.to_str()).unwrap_or("file");
-    let ext = path_obj.extension().and_then(|s| s.to_str()).map(|e| format!(".{}", e)).unwrap_or_default();
+    let stem = path_obj
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("file");
+    let ext = path_obj
+        .extension()
+        .and_then(|s| s.to_str())
+        .map(|e| format!(".{}", e))
+        .unwrap_or_default();
 
     for index in 1..1000 {
         let candidate_name = format!("{} ({}){}", stem, index, ext);
@@ -174,7 +194,9 @@ impl BrowserDownloadManager {
     ) -> Result<BrowserDownloadRecord, String> {
         let url_trimmed = url.trim().to_string();
         if !url_trimmed.starts_with("http://") && !url_trimmed.starts_with("https://") {
-            return Err("INVALID_URL: Only http:// and https:// URLs can be downloaded.".to_string());
+            return Err(
+                "INVALID_URL: Only http:// and https:// URLs can be downloaded.".to_string(),
+            );
         }
 
         let raw_name = suggested_name
@@ -224,9 +246,12 @@ impl BrowserDownloadManager {
         let cancel_flag = Arc::new(AtomicBool::new(false));
         {
             let mut active = self.active_downloads.lock().unwrap();
-            active.insert(download_id.clone(), ActiveDownloadHandle {
-                cancel_flag: cancel_flag.clone(),
-            });
+            active.insert(
+                download_id.clone(),
+                ActiveDownloadHandle {
+                    cancel_flag: cancel_flag.clone(),
+                },
+            );
         }
 
         // Emit started event
@@ -241,16 +266,18 @@ impl BrowserDownloadManager {
 
         // Spawn async streaming worker
         tokio::spawn(async move {
-            let res = mgr.execute_download_stream(
-                app_clone.clone(),
-                id_clone.clone(),
-                url_clone,
-                tab_id_clone,
-                initial_record_clone.filename.clone(),
-                temp_path.clone(),
-                final_path.clone(),
-                cancel_flag,
-            ).await;
+            let res = mgr
+                .execute_download_stream(
+                    app_clone.clone(),
+                    id_clone.clone(),
+                    url_clone,
+                    tab_id_clone,
+                    initial_record_clone.filename.clone(),
+                    temp_path.clone(),
+                    final_path.clone(),
+                    cancel_flag,
+                )
+                .await;
 
             // Remove from active list
             {
@@ -270,7 +297,11 @@ impl BrowserDownloadManager {
                     total_bytes: initial_record_clone.total_bytes,
                     received_bytes: 0,
                     progress: 0.0,
-                    status: if e.contains("CANCELLED") { DownloadStatus::Cancelled.as_str().to_string() } else { DownloadStatus::Failed.as_str().to_string() },
+                    status: if e.contains("CANCELLED") {
+                        DownloadStatus::Cancelled.as_str().to_string()
+                    } else {
+                        DownloadStatus::Failed.as_str().to_string()
+                    },
                     started_at: initial_record_clone.started_at,
                     completed_at: Some(fail_now),
                     error: Some(e.clone()),
@@ -300,13 +331,18 @@ impl BrowserDownloadManager {
         final_path: PathBuf,
         cancel_flag: Arc<AtomicBool>,
     ) -> Result<(), String> {
-        let mut resp = self.http_client.get(&url)
+        let mut resp = self
+            .http_client
+            .get(&url)
             .send()
             .await
             .map_err(|e| format!("NETWORK_ERROR: Failed to connect: {}", e))?;
 
         if !resp.status().is_success() {
-            return Err(format!("HTTP_ERROR: Server returned status {}", resp.status()));
+            return Err(format!(
+                "HTTP_ERROR: Server returned status {}",
+                resp.status()
+            ));
         }
 
         let total_bytes = resp.content_length();
@@ -317,7 +353,11 @@ impl BrowserDownloadManager {
         let mut last_emit = Instant::now();
         let start_time = current_timestamp_ms();
 
-        while let Some(chunk) = resp.chunk().await.map_err(|e| format!("STREAM_ERROR: Transfer failed: {}", e))? {
+        while let Some(chunk) = resp
+            .chunk()
+            .await
+            .map_err(|e| format!("STREAM_ERROR: Transfer failed: {}", e))?
+        {
             if cancel_flag.load(Ordering::Relaxed) {
                 return Err("CANCELLED: Download was cancelled by operator.".to_string());
             }
@@ -329,7 +369,9 @@ impl BrowserDownloadManager {
 
             // Throttle progress events to once every 200ms
             if last_emit.elapsed() >= Duration::from_millis(200) {
-                let progress = total_bytes.map(|total| (received_bytes as f64 / total as f64).clamp(0.0, 1.0)).unwrap_or(0.0);
+                let progress = total_bytes
+                    .map(|total| (received_bytes as f64 / total as f64).clamp(0.0, 1.0))
+                    .unwrap_or(0.0);
                 let update = BrowserDownloadRecord {
                     id: download_id.clone(),
                     url: url.clone(),
@@ -351,7 +393,8 @@ impl BrowserDownloadManager {
             }
         }
 
-        file.flush().map_err(|e| format!("IO_ERROR: Flush failed: {}", e))?;
+        file.flush()
+            .map_err(|e| format!("IO_ERROR: Flush failed: {}", e))?;
         drop(file);
 
         // Step 20: Atomic rename from .edith-download to target filename
@@ -363,7 +406,11 @@ impl BrowserDownloadManager {
             id: download_id,
             url,
             filename,
-            suggested_filename: final_path.file_name().unwrap_or_default().to_string_lossy().to_string(),
+            suggested_filename: final_path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string(),
             destination: final_path.to_string_lossy().to_string(),
             total_bytes: Some(received_bytes),
             received_bytes,
@@ -447,9 +494,7 @@ pub fn browser_download_delete_record(
 }
 
 #[tauri::command]
-pub fn browser_download_clear_records(
-    db_state: State<'_, DbState>,
-) -> Result<usize, String> {
+pub fn browser_download_clear_records(db_state: State<'_, DbState>) -> Result<usize, String> {
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
     db::clear_all_browser_download_records(&conn)
         .map_err(|e| format!("DB_ERROR: Failed to clear download records: {}", e))
@@ -461,7 +506,9 @@ pub fn browser_download_show_in_folder(
     db_state: State<'_, DbState>,
 ) -> Result<bool, String> {
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    if let Some(record) = db::get_browser_download(&conn, &download_id).map_err(|e| e.to_string())? {
+    if let Some(record) =
+        db::get_browser_download(&conn, &download_id).map_err(|e| e.to_string())?
+    {
         let path = PathBuf::from(&record.destination);
         if let Some(parent) = path.parent() {
             let _ = open::that(parent);
@@ -477,12 +524,20 @@ pub fn browser_download_open_file(
     db_state: State<'_, DbState>,
 ) -> Result<bool, String> {
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    if let Some(record) = db::get_browser_download(&conn, &download_id).map_err(|e| e.to_string())? {
+    if let Some(record) =
+        db::get_browser_download(&conn, &download_id).map_err(|e| e.to_string())?
+    {
         let path = PathBuf::from(&record.destination);
-        
+
         // Security Check (Step 9 & 15): Block automatic execution of executable binaries/scripts
-        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
-        let dangerous_exts = ["exe", "msi", "bat", "cmd", "ps1", "scr", "dll", "vbs", "sh", "reg"];
+        let ext = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let dangerous_exts = [
+            "exe", "msi", "bat", "cmd", "ps1", "scr", "dll", "vbs", "sh", "reg",
+        ];
         if dangerous_exts.contains(&ext.as_str()) {
             // For security, reveal in folder instead of direct execution
             if let Some(parent) = path.parent() {

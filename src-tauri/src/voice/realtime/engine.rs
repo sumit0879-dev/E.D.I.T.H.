@@ -115,7 +115,9 @@ impl RealtimeVoiceEngine {
                 None,
             )
             .await
-            .map_err(|e| VoiceError::Internal(format!("ConversationCore turn creation failed: {}", e)))?;
+            .map_err(|e| {
+                VoiceError::Internal(format!("ConversationCore turn creation failed: {}", e))
+            })?;
 
         *turn_lock = Some(turn_id.clone());
         Ok(turn_id)
@@ -287,6 +289,38 @@ impl RealtimeVoiceEngine {
                             },
                         );
 
+                        // Signal-driven Visualizer Energy for outbound assistant speech
+                        let rms = frame.rms_energy();
+                        let peak = frame.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+                        let mut bands = [0.0f32; 8];
+                        let chunk_size = frame.samples.len() / 8;
+                        if chunk_size > 0 {
+                            for (i, b) in bands.iter_mut().enumerate() {
+                                let start = i * chunk_size;
+                                let end = (start + chunk_size).min(frame.samples.len());
+                                let sub_sq: f32 =
+                                    frame.samples[start..end].iter().map(|s| s * s).sum();
+                                *b = (sub_sq / (end - start) as f32).sqrt().clamp(0.0, 1.0);
+                            }
+                        }
+                        let rms_bp = (rms * 10000.0).clamp(0.0, 10000.0) as u32;
+                        let peak_bp = (peak * 10000.0).clamp(0.0, 10000.0) as u32;
+                        let mut bands_bp = [0u32; 8];
+                        for idx in 0..8 {
+                            bands_bp[idx] = (bands[idx] * 10000.0).clamp(0.0, 10000.0) as u32;
+                        }
+                        self.emit_voice_event(
+                            &session,
+                            Some(&active_tid),
+                            VoicePayload::VisualizerEnergy {
+                                rms: rms_bp,
+                                peak: peak_bp,
+                                bands: bands_bp,
+                                is_speech: true,
+                                direction: "output".to_string(),
+                            },
+                        );
+
                         // Direct streaming to single authoritative hardware audio sink
                         let _ = self
                             .audio_output
@@ -311,12 +345,8 @@ impl RealtimeVoiceEngine {
                         correlation.turn_id = Some(active_tid.to_string());
                         correlation.tool_execution_id = Some(exec_id.clone());
 
-                        let tool_request = ToolRequest::new(
-                            tool_name,
-                            arguments,
-                            correlation,
-                        )
-                        .with_execution_id(ToolExecutionId::from_string(exec_id));
+                        let tool_request = ToolRequest::new(tool_name, arguments, correlation)
+                            .with_execution_id(ToolExecutionId::from_string(exec_id));
 
                         // Dispatch to ToolRouter with full PolicyEngine gating
                         let result = self.tool_router.execute(tool_request).await;
@@ -326,7 +356,8 @@ impl RealtimeVoiceEngine {
                     }
                     RealtimeProviderEvent::Interrupted { reason } => {
                         // Low-latency barge-in handling
-                        self.handle_barge_in(&session, adapter.as_ref(), &reason).await;
+                        self.handle_barge_in(&session, adapter.as_ref(), &reason)
+                            .await;
                     }
                     RealtimeProviderEvent::TurnComplete => {
                         let u_text = if accumulated_transcript.is_empty() {
@@ -340,9 +371,7 @@ impl RealtimeVoiceEngine {
                             Some(accumulated_assistant.clone())
                         };
 
-                        let _ = self
-                            .finalize_active_turn(&session, u_text, a_text)
-                            .await;
+                        let _ = self.finalize_active_turn(&session, u_text, a_text).await;
 
                         accumulated_transcript.clear();
                         accumulated_assistant.clear();
@@ -437,6 +466,40 @@ impl RealtimeVoiceEngine {
             session.current_generation(),
         );
 
+        // Signal-driven Visualizer Energy for live microphone speech
+        let rms = frame.rms_energy();
+        let peak = frame.samples.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+        let mut bands = [0.0f32; 8];
+        let chunk_size = frame.samples.len() / 8;
+        if chunk_size > 0 {
+            for (i, b) in bands.iter_mut().enumerate() {
+                let start = i * chunk_size;
+                let end = (start + chunk_size).min(frame.samples.len());
+                let sub_sq: f32 = frame.samples[start..end].iter().map(|s| s * s).sum();
+                *b = (sub_sq / (end - start) as f32).sqrt().clamp(0.0, 1.0);
+            }
+        }
+        let is_speech = rms >= 0.02;
+
+        let rms_bp = (rms * 10000.0).clamp(0.0, 10000.0) as u32;
+        let peak_bp = (peak * 10000.0).clamp(0.0, 10000.0) as u32;
+        let mut bands_bp = [0u32; 8];
+        for idx in 0..8 {
+            bands_bp[idx] = (bands[idx] * 10000.0).clamp(0.0, 10000.0) as u32;
+        }
+
+        self.emit_voice_event(
+            session,
+            None,
+            VoicePayload::VisualizerEnergy {
+                rms: rms_bp,
+                peak: peak_bp,
+                bands: bands_bp,
+                is_speech,
+                direction: "input".to_string(),
+            },
+        );
+
         // Send outbound with timeout to avoid stalling on network slowdown
         let send_res = tokio::time::timeout(
             Duration::from_millis(self.config.backpressure_timeout_ms),
@@ -475,8 +538,7 @@ impl RealtimeVoiceEngine {
                 );
 
                 Err(VoiceError::Internal(
-                    "Input stream backpressure timeout; stream discontinuity triggered"
-                        .to_string(),
+                    "Input stream backpressure timeout; stream discontinuity triggered".to_string(),
                 ))
             }
         }
@@ -487,7 +549,9 @@ impl RealtimeVoiceEngine {
         let mut lock = self.active_session.write().await;
         if let Some(session) = lock.take() {
             session.cancellation_token.cancel();
-            let _ = self.cancel_active_turn(&session, "session_stopped_by_user").await;
+            let _ = self
+                .cancel_active_turn(&session, "session_stopped_by_user")
+                .await;
             let _ = self.capture_driver.cancel_capture();
             let _ = self.audio_output.stop();
 

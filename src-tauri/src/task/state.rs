@@ -33,18 +33,15 @@ impl TaskStatus {
                 target,
                 TaskStatus::Queued | TaskStatus::Running | TaskStatus::Cancelled
             ),
-            TaskStatus::Queued => matches!(
-                target,
-                TaskStatus::Running | TaskStatus::Cancelled
-            ),
+            TaskStatus::Queued => matches!(target, TaskStatus::Running | TaskStatus::Cancelled),
             TaskStatus::Running => matches!(
                 target,
-                TaskStatus::Completing | TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled
+                TaskStatus::Completing
+                    | TaskStatus::Completed
+                    | TaskStatus::Failed
+                    | TaskStatus::Cancelled
             ),
-            TaskStatus::Completing => matches!(
-                target,
-                TaskStatus::Completed | TaskStatus::Failed
-            ),
+            TaskStatus::Completing => matches!(target, TaskStatus::Completed | TaskStatus::Failed),
             // Terminal states cannot transition to any other state
             TaskStatus::Completed | TaskStatus::Failed | TaskStatus::Cancelled => false,
         }

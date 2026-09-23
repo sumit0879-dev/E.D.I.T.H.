@@ -8,9 +8,8 @@ pub mod tests;
 
 pub use emitter::{EventEmitter, EDITH_EVENT_CHANNEL, LEGACY_CHAT_CHUNK_CHANNEL};
 pub use envelope::{EdithEventEnvelope, EventCorrelation};
-pub use ids::{
-    ConversationId, EventId, StreamId, TaskId, ToolExecutionId, TurnId, VoiceSessionId,
-};
+pub use ids::{ConversationId, EventId, StreamId, TaskId, ToolExecutionId, TurnId, VoiceSessionId};
 pub use payload::{
-    EdithPayload, RuntimePayload, StreamPayload, TaskPayload, ToolPayload, VoicePayload,
+    DuplexVoiceState, EdithPayload, InputChannelState, OutputChannelState, ProcessingState,
+    RuntimePayload, SessionLifecycleState, StreamPayload, TaskPayload, ToolPayload, VoicePayload,
 };

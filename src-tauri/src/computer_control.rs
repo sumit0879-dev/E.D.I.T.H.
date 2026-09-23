@@ -3,10 +3,10 @@
 //! Provides authoritative control ownership over desktop input actions.
 //! Ensures human actions immediately preempt and pause autonomous AI input.
 
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 /// Discrete states of desktop input control ownership.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -89,7 +89,10 @@ impl ComputerControlManager {
     ) -> Result<(), String> {
         let mut guard = self.control_info.lock().unwrap();
         if guard.control_state == ComputerControlState::AiPaused {
-            return Err("Cannot enter AI control directly while paused by operator. Resume first.".to_string());
+            return Err(
+                "Cannot enter AI control directly while paused by operator. Resume first."
+                    .to_string(),
+            );
         }
         guard.control_state = ComputerControlState::AiControlled;
         guard.last_transition = current_timestamp_ms();

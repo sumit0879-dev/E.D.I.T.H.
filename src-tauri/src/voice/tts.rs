@@ -98,7 +98,9 @@ impl TTSAdapter for EdgeTtsAdapter {
     ) -> Pin<Box<dyn Future<Output = Result<AudioBuffer, VoiceError>> + Send + 'a>> {
         Box::pin(async move {
             if cancellation.is_cancelled() {
-                return Err(VoiceError::Cancelled("TTS cancelled prior to synthesis".to_string()));
+                return Err(VoiceError::Cancelled(
+                    "TTS cancelled prior to synthesis".to_string(),
+                ));
             }
 
             let trimmed = text.trim();
@@ -126,18 +128,26 @@ impl TTSAdapter for EdgeTtsAdapter {
             };
 
             // Synthesize via edge_tts_rust
-            let res = client.synthesize(clean_text, speak_opts).await.map_err(|e| {
-                VoiceError::TTSUnavailable(format!("EdgeTTS synthesis request failed: {}", e))
-            })?;
+            let res = client
+                .synthesize(clean_text, speak_opts)
+                .await
+                .map_err(|e| {
+                    VoiceError::TTSUnavailable(format!("EdgeTTS synthesis request failed: {}", e))
+                })?;
 
             if cancellation.is_cancelled() {
-                return Err(VoiceError::Cancelled("TTS cancelled during/after synthesis".to_string()));
+                return Err(VoiceError::Cancelled(
+                    "TTS cancelled during/after synthesis".to_string(),
+                ));
             }
 
             // Decode MP3 payload into canonical AudioBuffer via Rodio Decoder
             let cursor = Cursor::new(res.audio);
             let decoder = Decoder::new(cursor).map_err(|e| {
-                VoiceError::PlaybackFailure(format!("Failed to decode synthesized MP3 stream: {}", e))
+                VoiceError::PlaybackFailure(format!(
+                    "Failed to decode synthesized MP3 stream: {}",
+                    e
+                ))
             })?;
 
             let sample_rate = decoder.sample_rate().get();
@@ -220,14 +230,18 @@ impl TTSAdapter for MockTtsAdapter {
     ) -> Pin<Box<dyn Future<Output = Result<AudioBuffer, VoiceError>> + Send + 'a>> {
         Box::pin(async move {
             if cancellation.is_cancelled() {
-                return Err(VoiceError::Cancelled("Mock TTS cancelled prior to synthesis".to_string()));
+                return Err(VoiceError::Cancelled(
+                    "Mock TTS cancelled prior to synthesis".to_string(),
+                ));
             }
 
             let delay = *self.simulated_delay_ms.read().unwrap();
             if delay > 0 {
                 tokio::time::sleep(tokio::time::Duration::from_millis(delay)).await;
                 if cancellation.is_cancelled() {
-                    return Err(VoiceError::Cancelled("Mock TTS cancelled during synthesis".to_string()));
+                    return Err(VoiceError::Cancelled(
+                        "Mock TTS cancelled during synthesis".to_string(),
+                    ));
                 }
             }
 
@@ -276,7 +290,8 @@ impl TTSAdapter for LocalTtsAdapter {
     ) -> Pin<Box<dyn Future<Output = Result<AudioBuffer, VoiceError>> + Send + 'a>> {
         Box::pin(async move {
             Err(VoiceError::TTSUnavailable(
-                "Local Kokoro TTS engine is currently disabled to optimize app binary size.".to_string(),
+                "Local Kokoro TTS engine is currently disabled to optimize app binary size."
+                    .to_string(),
             ))
         })
     }

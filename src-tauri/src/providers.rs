@@ -57,7 +57,11 @@ pub async fn fetch_custom_models(
     api_key: Option<String>,
 ) -> Result<Vec<FetchedModel>, String> {
     let raw_url = base_url.trim().trim_end_matches('/').to_string();
-    let creds = api_key.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+    let creds = api_key
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string);
 
     let is_gemini = raw_url.contains("generativelanguage.googleapis.com") || raw_url == "gemini";
 
@@ -68,7 +72,8 @@ pub async fn fetch_custom_models(
             .await
             .map_err(|e| e.to_string())?
     } else {
-        let adapter = OpenAICompatibleAdapter::new("custom", "Custom Provider", raw_url, vec![], None);
+        let adapter =
+            OpenAICompatibleAdapter::new("custom", "Custom Provider", raw_url, vec![], None);
         adapter
             .discover_models(&creds)
             .await
@@ -76,7 +81,10 @@ pub async fn fetch_custom_models(
     };
 
     if discovered.is_empty() {
-        return Err("No models found in the provider response. You can still add models manually.".to_string());
+        return Err(
+            "No models found in the provider response. You can still add models manually."
+                .to_string(),
+        );
     }
 
     let mut result: Vec<FetchedModel> = discovered

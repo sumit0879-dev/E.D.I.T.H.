@@ -1,15 +1,14 @@
-use futures::StreamExt;
-use tauri::Manager;
 use arrow_array::{
-    FixedSizeListArray, Float32Array, RecordBatch, RecordBatchIterator,
-    StringArray, Array,
+    Array, FixedSizeListArray, Float32Array, RecordBatch, RecordBatchIterator, StringArray,
 };
 use arrow_schema::{DataType, Field};
+use futures::StreamExt;
 use lancedb::connect;
 use lancedb::query::{ExecutableQuery, QueryBase};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tauri::command;
+use tauri::Manager;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct MemoryChunk {
@@ -42,14 +41,12 @@ fn get_schema() -> Arc<arrow_schema::Schema> {
     ]))
 }
 
-
 fn make_fixed_size_list(
     item_field: Arc<Field>,
     size: i32,
     values: Arc<dyn Array>,
 ) -> Result<FixedSizeListArray, String> {
-    FixedSizeListArray::try_new(item_field, size, values, None)
-        .map_err(|e| e.to_string())
+    FixedSizeListArray::try_new(item_field, size, values, None).map_err(|e| e.to_string())
 }
 
 #[command]
@@ -110,14 +107,15 @@ pub async fn save_to_memory_cmd(
     let item_field = Arc::new(Field::new("item", DataType::Float32, true));
     let vec_arr = Arc::new(make_fixed_size_list(item_field, 384, float_vals)?) as Arc<dyn Array>;
 
-    let batch = RecordBatch::try_new(
-        schema.clone(),
-        vec![id_arr, text_arr, src_arr, vec_arr],
-    )
-    .map_err(|e| e.to_string())?;
+    let batch = RecordBatch::try_new(schema.clone(), vec![id_arr, text_arr, src_arr, vec_arr])
+        .map_err(|e| e.to_string())?;
 
     let reader = RecordBatchIterator::new(vec![Ok(batch)], schema.clone());
-    let table_names = db.table_names().execute().await.map_err(|e| e.to_string())?;
+    let table_names = db
+        .table_names()
+        .execute()
+        .await
+        .map_err(|e| e.to_string())?;
 
     if table_names.contains(&table_name.to_string()) {
         let table = db
@@ -148,7 +146,11 @@ pub async fn search_memory_cmd(
     let db = get_db(&app).await?;
     let table_name = "memory_chunks";
 
-    let table_names = db.table_names().execute().await.map_err(|e| e.to_string())?;
+    let table_names = db
+        .table_names()
+        .execute()
+        .await
+        .map_err(|e| e.to_string())?;
     if !table_names.contains(&table_name.to_string()) {
         return Ok(vec![]);
     }
@@ -211,7 +213,11 @@ pub async fn get_memories_cmd(app: tauri::AppHandle) -> Result<Vec<MemoryChunk>,
     let db = get_db(&app).await?;
     let table_name = "memory_chunks";
 
-    let table_names = db.table_names().execute().await.map_err(|e| e.to_string())?;
+    let table_names = db
+        .table_names()
+        .execute()
+        .await
+        .map_err(|e| e.to_string())?;
     if !table_names.contains(&table_name.to_string()) {
         return Ok(vec![]);
     }
@@ -283,6 +289,9 @@ pub async fn delete_memory_cmd(app: tauri::AppHandle, source: String) -> Result<
         Err(_) => return Ok(()), // table doesn't exist
     };
     let predicate = crate::security::LanceDbSanitizer::sanitize_source_predicate(&source)?;
-    table.delete(predicate.as_str()).await.map_err(|e| e.to_string())?;
+    table
+        .delete(predicate.as_str())
+        .await
+        .map_err(|e| e.to_string())?;
     Ok(())
 }

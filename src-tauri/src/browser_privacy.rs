@@ -1,11 +1,11 @@
+use crate::db::DbState;
+use lazy_static::lazy_static;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
-use lazy_static::lazy_static;
-use rusqlite::Connection;
 use tauri::State;
 use tauri::Url;
-use crate::db::DbState;
 
 // ============================================================================
 // Phase 5.6E: Browser Content Blocking & Web Request Privacy Policy Engine
@@ -140,7 +140,10 @@ impl BrowserContentPolicyEngine {
             return true;
         }
         for item in set {
-            if clean.len() > item.len() && clean.ends_with(item) && clean.as_bytes()[clean.len() - item.len() - 1] == b'.' {
+            if clean.len() > item.len()
+                && clean.ends_with(item)
+                && clean.as_bytes()[clean.len() - item.len() - 1] == b'.'
+            {
                 return true;
             }
         }
@@ -182,10 +185,14 @@ impl BrowserContentPolicyEngine {
             if let Ok(orig_url) = Url::parse(orig) {
                 if let Some(orig_host) = orig_url.host_str() {
                     let orig_clean = orig_host.to_lowercase();
-                    if let Ok(allowlist) = crate::db::list_browser_privacy_allowlist(conn, Some(pid)) {
+                    if let Ok(allowlist) =
+                        crate::db::list_browser_privacy_allowlist(conn, Some(pid))
+                    {
                         for item in allowlist {
                             let al_domain = item.domain.trim().to_lowercase();
-                            if orig_clean == al_domain || orig_clean.ends_with(&format!(".{}", al_domain)) {
+                            if orig_clean == al_domain
+                                || orig_clean.ends_with(&format!(".{}", al_domain))
+                            {
                                 if let Some(tid) = tab_id {
                                     self.set_tab_allowlisted(tid, orig_clean.clone(), true);
                                 }
@@ -210,7 +217,9 @@ impl BrowserContentPolicyEngine {
                 }
                 let pattern = rule.pattern.to_lowercase();
                 let matches = match rule.rule_type.as_str() {
-                    "DOMAIN" => target_host == pattern || target_host.ends_with(&format!(".{}", pattern)),
+                    "DOMAIN" => {
+                        target_host == pattern || target_host.ends_with(&format!(".{}", pattern))
+                    }
                     "WILDCARD" => target_url.to_lowercase().contains(&pattern),
                     "KEYWORD" => target_url.to_lowercase().contains(&pattern),
                     _ => target_host.contains(&pattern),
@@ -244,7 +253,9 @@ impl BrowserContentPolicyEngine {
         }
 
         // 5. Check Built-in Tracker & Analytics blocking
-        if settings.block_trackers && self.is_domain_in_set(&target_host, &self.builtin_tracker_domains) {
+        if settings.block_trackers
+            && self.is_domain_in_set(&target_host, &self.builtin_tracker_domains)
+        {
             if let Some(tid) = tab_id {
                 self.record_blocked_request(tid, "TRACKER");
             }
@@ -273,14 +284,16 @@ impl BrowserContentPolicyEngine {
 
     pub fn record_blocked_request(&self, tab_id: &str, category: &str) {
         let mut stats = self.tab_stats.lock().unwrap();
-        let entry = stats.entry(tab_id.to_string()).or_insert_with(|| TabPrivacyStats {
-            tab_id: tab_id.to_string(),
-            blocked_ads: 0,
-            blocked_trackers: 0,
-            blocked_total: 0,
-            current_origin: String::new(),
-            is_site_allowlisted: false,
-        });
+        let entry = stats
+            .entry(tab_id.to_string())
+            .or_insert_with(|| TabPrivacyStats {
+                tab_id: tab_id.to_string(),
+                blocked_ads: 0,
+                blocked_trackers: 0,
+                blocked_total: 0,
+                current_origin: String::new(),
+                is_site_allowlisted: false,
+            });
 
         entry.blocked_total += 1;
         if category == "AD" {
@@ -292,28 +305,33 @@ impl BrowserContentPolicyEngine {
 
     pub fn set_tab_allowlisted(&self, tab_id: &str, origin: String, is_allowlisted: bool) {
         let mut stats = self.tab_stats.lock().unwrap();
-        let entry = stats.entry(tab_id.to_string()).or_insert_with(|| TabPrivacyStats {
-            tab_id: tab_id.to_string(),
-            blocked_ads: 0,
-            blocked_trackers: 0,
-            blocked_total: 0,
-            current_origin: origin.clone(),
-            is_site_allowlisted: is_allowlisted,
-        });
+        let entry = stats
+            .entry(tab_id.to_string())
+            .or_insert_with(|| TabPrivacyStats {
+                tab_id: tab_id.to_string(),
+                blocked_ads: 0,
+                blocked_trackers: 0,
+                blocked_total: 0,
+                current_origin: origin.clone(),
+                is_site_allowlisted: is_allowlisted,
+            });
         entry.current_origin = origin;
         entry.is_site_allowlisted = is_allowlisted;
     }
 
     pub fn get_tab_stats(&self, tab_id: &str) -> TabPrivacyStats {
         let stats = self.tab_stats.lock().unwrap();
-        stats.get(tab_id).cloned().unwrap_or_else(|| TabPrivacyStats {
-            tab_id: tab_id.to_string(),
-            blocked_ads: 0,
-            blocked_trackers: 0,
-            blocked_total: 0,
-            current_origin: String::new(),
-            is_site_allowlisted: false,
-        })
+        stats
+            .get(tab_id)
+            .cloned()
+            .unwrap_or_else(|| TabPrivacyStats {
+                tab_id: tab_id.to_string(),
+                blocked_ads: 0,
+                blocked_trackers: 0,
+                blocked_total: 0,
+                current_origin: String::new(),
+                is_site_allowlisted: false,
+            })
     }
 
     pub fn reset_tab_stats(&self, tab_id: &str) {
@@ -323,7 +341,8 @@ impl BrowserContentPolicyEngine {
 }
 
 lazy_static! {
-    pub static ref GLOBAL_POLICY_ENGINE: Arc<BrowserContentPolicyEngine> = Arc::new(BrowserContentPolicyEngine::new());
+    pub static ref GLOBAL_POLICY_ENGINE: Arc<BrowserContentPolicyEngine> =
+        Arc::new(BrowserContentPolicyEngine::new());
 }
 
 // Pre-flight Client Interception & Privacy Initialization Script (Step 10)
@@ -404,16 +423,18 @@ pub async fn browser_privacy_get_status(
     let pid = profile_id.unwrap_or_else(|| "global".to_string());
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
 
-    let settings = crate::db::get_browser_privacy_settings(&conn, &pid)
-        .map_err(|e| e.to_string())?;
+    let settings =
+        crate::db::get_browser_privacy_settings(&conn, &pid).map_err(|e| e.to_string())?;
 
-    let allowlist = crate::db::list_browser_privacy_allowlist(&conn, Some(&pid))
-        .map_err(|e| e.to_string())?;
+    let allowlist =
+        crate::db::list_browser_privacy_allowlist(&conn, Some(&pid)).map_err(|e| e.to_string())?;
 
-    let rules = crate::db::list_browser_privacy_rules(&conn, Some(&pid))
-        .map_err(|e| e.to_string())?;
+    let rules =
+        crate::db::list_browser_privacy_rules(&conn, Some(&pid)).map_err(|e| e.to_string())?;
 
-    let tab_stats = tab_id.as_ref().map(|tid| GLOBAL_POLICY_ENGINE.get_tab_stats(tid));
+    let tab_stats = tab_id
+        .as_ref()
+        .map(|tid| GLOBAL_POLICY_ENGINE.get_tab_stats(tid));
 
     Ok(PrivacyStatus {
         enabled: settings.enabled,
@@ -421,7 +442,9 @@ pub async fn browser_privacy_get_status(
         block_trackers: settings.block_trackers,
         send_dnt: settings.send_dnt,
         send_gpc: settings.send_gpc,
-        total_rules_loaded: rules.len() + GLOBAL_POLICY_ENGINE.builtin_ad_domains.len() + GLOBAL_POLICY_ENGINE.builtin_tracker_domains.len(),
+        total_rules_loaded: rules.len()
+            + GLOBAL_POLICY_ENGINE.builtin_ad_domains.len()
+            + GLOBAL_POLICY_ENGINE.builtin_tracker_domains.len(),
         allowlisted_domains: allowlist.into_iter().map(|a| a.domain).collect(),
         tab_stats,
     })
@@ -436,8 +459,8 @@ pub async fn browser_privacy_toggle_protection(
     let pid = profile_id.unwrap_or_else(|| "global".to_string());
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
 
-    let mut settings = crate::db::get_browser_privacy_settings(&conn, &pid)
-        .unwrap_or_else(|_| crate::db::BrowserPrivacySettingsRecord {
+    let mut settings = crate::db::get_browser_privacy_settings(&conn, &pid).unwrap_or_else(|_| {
+        crate::db::BrowserPrivacySettingsRecord {
             profile_id: pid.clone(),
             enabled: true,
             block_ads: true,
@@ -446,13 +469,13 @@ pub async fn browser_privacy_toggle_protection(
             send_gpc: true,
             created_at: chrono::Utc::now().timestamp_millis() as u64,
             updated_at: chrono::Utc::now().timestamp_millis() as u64,
-        });
+        }
+    });
 
     settings.enabled = enabled;
     settings.updated_at = chrono::Utc::now().timestamp_millis() as u64;
 
-    crate::db::upsert_browser_privacy_settings(&conn, &settings)
-        .map_err(|e| e.to_string())?;
+    crate::db::upsert_browser_privacy_settings(&conn, &settings).map_err(|e| e.to_string())?;
 
     Ok(true)
 }
@@ -470,8 +493,7 @@ pub async fn browser_privacy_allowlist_domain(
     }
 
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    crate::db::add_browser_privacy_allowlist(&conn, &clean, &pid)
-        .map_err(|e| e.to_string())?;
+    crate::db::add_browser_privacy_allowlist(&conn, &clean, &pid).map_err(|e| e.to_string())?;
 
     Ok(true)
 }
@@ -486,8 +508,7 @@ pub async fn browser_privacy_remove_allowlist(
     let clean = domain.trim().to_lowercase();
 
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    crate::db::remove_browser_privacy_allowlist(&conn, &clean, pid)
-        .map_err(|e| e.to_string())
+    crate::db::remove_browser_privacy_allowlist(&conn, &clean, pid).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -519,8 +540,7 @@ pub async fn browser_privacy_add_block_rule(
     };
 
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    crate::db::add_browser_privacy_rule(&conn, &rule)
-        .map_err(|e| e.to_string())?;
+    crate::db::add_browser_privacy_rule(&conn, &rule).map_err(|e| e.to_string())?;
 
     Ok(id)
 }
@@ -531,8 +551,7 @@ pub async fn browser_privacy_remove_block_rule(
     db_state: State<'_, DbState>,
 ) -> Result<bool, String> {
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
-    crate::db::delete_browser_privacy_rule(&conn, &rule_id)
-        .map_err(|e| e.to_string())
+    crate::db::delete_browser_privacy_rule(&conn, &rule_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -543,19 +562,21 @@ pub async fn browser_privacy_list_rules(
     let pid = profile_id.as_deref();
     let conn = db_state.conn.lock().map_err(|e| e.to_string())?;
 
-    let rules = crate::db::list_browser_privacy_rules(&conn, pid)
-        .map_err(|e| e.to_string())?;
+    let rules = crate::db::list_browser_privacy_rules(&conn, pid).map_err(|e| e.to_string())?;
 
-    Ok(rules.into_iter().map(|r| PrivacyRule {
-        id: r.id,
-        pattern: r.pattern,
-        rule_type: r.rule_type,
-        action: r.action,
-        category: r.category,
-        profile_id: r.profile_id,
-        enabled: r.enabled,
-        created_at: r.created_at,
-    }).collect())
+    Ok(rules
+        .into_iter()
+        .map(|r| PrivacyRule {
+            id: r.id,
+            pattern: r.pattern,
+            rule_type: r.rule_type,
+            action: r.action,
+            category: r.category,
+            profile_id: r.profile_id,
+            enabled: r.enabled,
+            created_at: r.created_at,
+        })
+        .collect())
 }
 
 #[tauri::command]

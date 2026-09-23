@@ -7,16 +7,39 @@ use std::fmt;
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", content = "details")]
 pub enum ProviderError {
-    AuthFailure { message: String },
-    InvalidRequest { message: String },
-    ModelUnavailable { model: String, reason: String },
-    CapabilityUnsupported { capability: String },
-    RateLimited { retry_after_secs: Option<u64>, message: String },
-    NetworkFailure { message: String },
-    Timeout { message: String },
-    ServerError { status_code: u16, message: String },
-    MalformedResponse { message: String },
-    Unknown { message: String },
+    AuthFailure {
+        message: String,
+    },
+    InvalidRequest {
+        message: String,
+    },
+    ModelUnavailable {
+        model: String,
+        reason: String,
+    },
+    CapabilityUnsupported {
+        capability: String,
+    },
+    RateLimited {
+        retry_after_secs: Option<u64>,
+        message: String,
+    },
+    NetworkFailure {
+        message: String,
+    },
+    Timeout {
+        message: String,
+    },
+    ServerError {
+        status_code: u16,
+        message: String,
+    },
+    MalformedResponse {
+        message: String,
+    },
+    Unknown {
+        message: String,
+    },
 }
 
 impl fmt::Display for ProviderError {
@@ -28,9 +51,16 @@ impl fmt::Display for ProviderError {
                 write!(f, "Model '{}' is unavailable: {}", model, reason)
             }
             Self::CapabilityUnsupported { capability } => {
-                write!(f, "Capability '{}' is not supported by this provider/model", capability)
+                write!(
+                    f,
+                    "Capability '{}' is not supported by this provider/model",
+                    capability
+                )
             }
-            Self::RateLimited { retry_after_secs, message } => {
+            Self::RateLimited {
+                retry_after_secs,
+                message,
+            } => {
                 if let Some(secs) = retry_after_secs {
                     write!(f, "Rate limited (retry in {}s): {}", secs, message)
                 } else {
@@ -39,8 +69,15 @@ impl fmt::Display for ProviderError {
             }
             Self::NetworkFailure { message } => write!(f, "Network Failure: {}", message),
             Self::Timeout { message } => write!(f, "Request Timeout: {}", message),
-            Self::ServerError { status_code, message } => {
-                write!(f, "Provider Server Error (HTTP {}): {}", status_code, message)
+            Self::ServerError {
+                status_code,
+                message,
+            } => {
+                write!(
+                    f,
+                    "Provider Server Error (HTTP {}): {}",
+                    status_code, message
+                )
             }
             Self::MalformedResponse { message } => write!(f, "Malformed Response: {}", message),
             Self::Unknown { message } => write!(f, "Provider Error: {}", message),
@@ -54,7 +91,11 @@ impl std::error::Error for ProviderError {}
 /// to prevent leaking credentials to logs or higher UI layers.
 pub fn sanitize_error_message(raw: &str) -> String {
     let lower = raw.to_lowercase();
-    if lower.contains("bearer") || lower.contains("gsk_") || lower.contains("sk-") || lower.contains("aiza") {
+    if lower.contains("bearer")
+        || lower.contains("gsk_")
+        || lower.contains("sk-")
+        || lower.contains("aiza")
+    {
         return "Authentication failed: Invalid or expired credentials. Please verify your provider settings.".to_string();
     }
 
@@ -83,19 +124,22 @@ pub fn normalize_http_error(status: reqwest::StatusCode, raw_body: &str) -> Prov
                     None
                 }
             })
-            .or_else(|| val.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
+            .or_else(|| {
+                val.get("message")
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+            })
     } else {
         None
     };
 
-    let detail = parsed_message
-        .unwrap_or_else(|| {
-            if !raw_body.trim().is_empty() && !raw_body.contains('{') {
-                raw_body.trim().to_string()
-            } else {
-                format!("Request failed with HTTP {}", code)
-            }
-        });
+    let detail = parsed_message.unwrap_or_else(|| {
+        if !raw_body.trim().is_empty() && !raw_body.contains('{') {
+            raw_body.trim().to_string()
+        } else {
+            format!("Request failed with HTTP {}", code)
+        }
+    });
 
     let sanitized = sanitize_error_message(&detail);
 
@@ -138,7 +182,8 @@ mod tests {
 
     #[test]
     fn test_normalize_http_error_json() {
-        let body = r#"{"error": {"message": "Invalid model specified", "type": "invalid_request_error"}}"#;
+        let body =
+            r#"{"error": {"message": "Invalid model specified", "type": "invalid_request_error"}}"#;
         let err = normalize_http_error(reqwest::StatusCode::BAD_REQUEST, body);
         match err {
             ProviderError::InvalidRequest { message } => {

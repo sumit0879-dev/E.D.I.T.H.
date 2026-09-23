@@ -73,10 +73,7 @@ pub struct TaskSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TaskError {
     NotFound(String),
-    InvalidStateTransition {
-        current: String,
-        attempted: String,
-    },
+    InvalidStateTransition { current: String, attempted: String },
     AlreadyExists(String),
     ExecutionFailed(String),
     Cancelled(String),
@@ -88,7 +85,11 @@ impl std::fmt::Display for TaskError {
         match self {
             TaskError::NotFound(id) => write!(f, "Task not found: {}", id),
             TaskError::InvalidStateTransition { current, attempted } => {
-                write!(f, "Invalid task transition from '{}' to '{}'", current, attempted)
+                write!(
+                    f,
+                    "Invalid task transition from '{}' to '{}'",
+                    current, attempted
+                )
             }
             TaskError::AlreadyExists(id) => write!(f, "Task already exists: {}", id),
             TaskError::ExecutionFailed(err) => write!(f, "Task execution failed: {}", err),

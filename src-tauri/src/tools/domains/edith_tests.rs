@@ -193,7 +193,10 @@ async fn test_05_self_knowledge_active_tasks_and_details() {
     assert_eq!(data["total_active"], 1);
 
     // Query task details
-    let req_details = ToolRequest::simple("edith.get_task_details", json!({ "task_id": task_id.as_str() }));
+    let req_details = ToolRequest::simple(
+        "edith.get_task_details",
+        json!({ "task_id": task_id.as_str() }),
+    );
     let res_details = router.execute(req_details).await;
     assert!(res_details.is_success());
     let details_data = res_details.data.expect("details payload");
@@ -229,7 +232,9 @@ async fn test_07_self_knowledge_browser_status_sanitization() {
     let cleaned_url = scrub_url(dirty_url);
     assert!(!cleaned_url.contains("secret123"));
     assert!(!cleaned_url.contains("bearer456"));
-    assert!(cleaned_url.contains("token=%5BREDACTED%5D") || cleaned_url.contains("token=[REDACTED]"));
+    assert!(
+        cleaned_url.contains("token=%5BREDACTED%5D") || cleaned_url.contains("token=[REDACTED]")
+    );
     assert!(cleaned_url.contains("user=alice"));
 
     // Tool execution test (headless environment defaults to 0 open tabs safely)
@@ -283,7 +288,9 @@ async fn test_09_self_knowledge_security_status() {
     assert!(result.is_success());
     let data = result.data.expect("security status data");
     assert_eq!(data["pending_approval_count"], 1);
-    let approvals = data["pending_approvals"].as_array().expect("approvals list");
+    let approvals = data["pending_approvals"]
+        .as_array()
+        .expect("approvals list");
     assert_eq!(approvals[0]["operation"], "launch_app");
 
     // Verify cryptographic hashes and raw arguments are not dumped
@@ -300,9 +307,15 @@ async fn test_10_self_knowledge_system_health() {
     assert!(result.is_success());
     let data = result.data.expect("health data");
     assert_eq!(data["overall_healthy"], true);
-    assert!(data["subsystems"]["task_runtime"]["healthy"].as_bool().unwrap());
-    assert!(data["subsystems"]["tool_runtime"]["healthy"].as_bool().unwrap());
-    assert!(data["subsystems"]["policy_engine"]["healthy"].as_bool().unwrap());
+    assert!(data["subsystems"]["task_runtime"]["healthy"]
+        .as_bool()
+        .unwrap());
+    assert!(data["subsystems"]["tool_runtime"]["healthy"]
+        .as_bool()
+        .unwrap());
+    assert!(data["subsystems"]["policy_engine"]["healthy"]
+        .as_bool()
+        .unwrap());
 }
 
 #[tokio::test]
@@ -334,7 +347,11 @@ async fn test_11_self_control_cancel_task_ownership_authorized() {
     );
 
     let result = router.execute(req).await;
-    assert!(result.is_success(), "Cancellation must succeed: {:?}", result.error);
+    assert!(
+        result.is_success(),
+        "Cancellation must succeed: {:?}",
+        result.error
+    );
 
     // Verify task is cancelled in TaskRuntime
     let task_snapshot = task_runtime.get_task(&task_id).await.unwrap();
@@ -452,10 +469,7 @@ async fn test_15_self_control_policy_strict_mode_confirmation() {
         )
         .await;
 
-    let req = ToolRequest::simple(
-        "edith.cancel_task",
-        json!({ "task_id": task_id.as_str() }),
-    );
+    let req = ToolRequest::simple("edith.cancel_task", json!({ "task_id": task_id.as_str() }));
 
     let result = router.execute(req).await;
     assert!(!result.is_success());
@@ -497,7 +511,10 @@ async fn test_17_autonomy_state_transitions() {
     let (runtime_state, _, task_runtime, policy_engine, _) = setup_edith_fixture().await;
 
     // 1. Initial State: Idle
-    assert_eq!(runtime_state.get_autonomy_state().await, AutonomyState::Idle);
+    assert_eq!(
+        runtime_state.get_autonomy_state().await,
+        AutonomyState::Idle
+    );
 
     // 2. Active Task: RunningTask
     let task_id = task_runtime
@@ -543,12 +560,18 @@ async fn test_17_autonomy_state_transitions() {
     // Resolve approval
     policy_engine
         .approvals()
-        .resolve(&approval.approval_id, crate::policy::approval::OperatorDecision::Approve, None)
+        .resolve(
+            &approval.approval_id,
+            crate::policy::approval::OperatorDecision::Approve,
+            None,
+        )
         .await
         .unwrap();
 
     // 4. Human Takeover Preemption: UserTakeover takes highest precedence
-    GLOBAL_COMPUTER_CONTROL_MGR.pause_ai_control(Some("Physical human mouse movement detected".to_string())).unwrap();
+    GLOBAL_COMPUTER_CONTROL_MGR
+        .pause_ai_control(Some("Physical human mouse movement detected".to_string()))
+        .unwrap();
     assert_eq!(
         runtime_state.get_autonomy_state().await,
         AutonomyState::UserTakeover

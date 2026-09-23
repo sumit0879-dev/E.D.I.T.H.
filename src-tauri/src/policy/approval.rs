@@ -111,13 +111,20 @@ impl ApprovalRequest {
         // 2. Status check
         match self.status {
             ApprovalStatus::Pending => {
-                return Err("Security Authorization Error: Action is still pending operator confirmation.".to_string());
+                return Err(
+                    "Security Authorization Error: Action is still pending operator confirmation."
+                        .to_string(),
+                );
             }
             ApprovalStatus::Denied => {
-                return Err("Security Authorization Error: Action was denied by operator.".to_string());
+                return Err(
+                    "Security Authorization Error: Action was denied by operator.".to_string(),
+                );
             }
             ApprovalStatus::Cancelled => {
-                return Err("Security Authorization Error: Approval request was cancelled.".to_string());
+                return Err(
+                    "Security Authorization Error: Approval request was cancelled.".to_string(),
+                );
             }
             ApprovalStatus::Consumed => {
                 return Err("Security Authorization Error: Approval has already been consumed (replay violation).".to_string());
@@ -126,7 +133,9 @@ impl ApprovalRequest {
                 // Valid approved state, proceed to tamper verification
             }
             ApprovalStatus::Expired => {
-                return Err("Security Authorization Error: Approval request has expired.".to_string());
+                return Err(
+                    "Security Authorization Error: Approval request has expired.".to_string(),
+                );
             }
         }
 
@@ -262,7 +271,9 @@ impl ApprovalStore {
         if let Some(expected_sess) = session_id {
             if let Some(ref bound_sess) = approval.session_id {
                 if !expected_sess.trim().is_empty() && bound_sess != expected_sess {
-                    return Err("Security Error: Session mismatch for approval resolution.".to_string());
+                    return Err(
+                        "Security Error: Session mismatch for approval resolution.".to_string()
+                    );
                 }
             }
         }

@@ -1,5 +1,7 @@
 use crate::policy::context::PolicyContext;
-use crate::policy::types::{ActionRequest, ActionTarget, PolicyConstraints, PolicyOutcome, RiskLevel};
+use crate::policy::types::{
+    ActionRequest, ActionTarget, PolicyConstraints, PolicyOutcome, RiskLevel,
+};
 
 /// Evaluates browser automation actions and DOM interaction proposals.
 pub struct BrowserAdapter;
@@ -13,10 +15,19 @@ impl BrowserAdapter {
         let op = req.operation.trim().to_lowercase();
 
         // 1. Evaluate URL / Navigation Actions
-        if op == "navigate" || op == "open_url" || op == "browser_open_url" || op == "new_tab" || op == "browser_new_tab" {
+        if op == "navigate"
+            || op == "open_url"
+            || op == "browser_open_url"
+            || op == "new_tab"
+            || op == "browser_new_tab"
+        {
             let url_str = match &req.target {
                 ActionTarget::Url(u) => Some(u.clone()),
-                _ => req.arguments.get("url").and_then(|v| v.as_str()).map(|s| s.to_string()),
+                _ => req
+                    .arguments
+                    .get("url")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
             };
 
             if let Some(target_url) = url_str {
@@ -35,7 +46,8 @@ impl BrowserAdapter {
                     return (
                         RiskLevel::Critical,
                         PolicyOutcome::Blocked,
-                        "Local filesystem navigation via file: URL scheme is strictly prohibited.".to_string(),
+                        "Local filesystem navigation via file: URL scheme is strictly prohibited."
+                            .to_string(),
                     );
                 }
 
@@ -114,7 +126,8 @@ impl BrowserAdapter {
             return (
                 RiskLevel::Low,
                 PolicyOutcome::Allow,
-                "Passive observation, storage query, or standard navigation action permitted.".to_string(),
+                "Passive observation, storage query, or standard navigation action permitted."
+                    .to_string(),
             );
         }
 
@@ -155,9 +168,14 @@ impl BrowserAdapter {
                 .unwrap_or("");
 
             let mut selector_or_name = match &req.target {
-                ActionTarget::BrowserElement { selector, element_id, .. } => {
-                    selector.clone().or_else(|| element_id.clone()).unwrap_or_default()
-                }
+                ActionTarget::BrowserElement {
+                    selector,
+                    element_id,
+                    ..
+                } => selector
+                    .clone()
+                    .or_else(|| element_id.clone())
+                    .unwrap_or_default(),
                 _ => String::new(),
             };
             if selector_or_name.is_empty() {

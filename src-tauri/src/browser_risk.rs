@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::sync::Mutex;
 use lazy_static::lazy_static;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::sync::Mutex;
 
 // ============================================================================
 // BROWSER RISK & SAFETY ENGINE TYPES
@@ -95,7 +95,8 @@ pub struct PendingBrowserActionApproval {
 // Global In-Memory Audit Log & Pending Approvals
 lazy_static! {
     static ref BROWSER_RISK_AUDIT_LOG: Mutex<Vec<BrowserRiskAuditEntry>> = Mutex::new(Vec::new());
-    static ref PENDING_APPROVALS: Mutex<HashMap<String, PendingBrowserActionApproval>> = Mutex::new(HashMap::new());
+    static ref PENDING_APPROVALS: Mutex<HashMap<String, PendingBrowserActionApproval>> =
+        Mutex::new(HashMap::new());
 }
 
 // ============================================================================
@@ -115,7 +116,7 @@ impl BrowserRiskEngine {
         if tool == "browser_open_url" {
             if let Some(ref target_url) = ctx.url {
                 let lower_url = target_url.trim().to_lowercase();
-                
+
                 if lower_url.starts_with("javascript:") {
                     return BrowserRiskAssessment {
                         risk_level: BrowserRiskLevel::Blocked,
@@ -125,7 +126,7 @@ impl BrowserRiskEngine {
                         user_explanation: "Blocked: Navigation to javascript: URI schemes is prohibited for security isolation.".to_string(),
                     };
                 }
-                
+
                 if lower_url.starts_with("file:") {
                     return BrowserRiskAssessment {
                         risk_level: BrowserRiskLevel::Blocked,
@@ -141,16 +142,19 @@ impl BrowserRiskEngine {
                         risk_level: BrowserRiskLevel::Blocked,
                         decision: BrowserRiskDecision::Block,
                         policy_code: "UNSAFE_DATA_SCHEME".to_string(),
-                        reason: "Unsafe data: or script execution URI scheme is prohibited.".to_string(),
-                        user_explanation: "Blocked: Unsafe URI scheme rejected by browser security policy.".to_string(),
+                        reason: "Unsafe data: or script execution URI scheme is prohibited."
+                            .to_string(),
+                        user_explanation:
+                            "Blocked: Unsafe URI scheme rejected by browser security policy."
+                                .to_string(),
                     };
                 }
 
                 // Check for unsupported native protocols (e.g. mailto, tel, steam, discord)
-                if !lower_url.starts_with("http://") 
-                    && !lower_url.starts_with("https://") 
+                if !lower_url.starts_with("http://")
+                    && !lower_url.starts_with("https://")
                     && !lower_url.starts_with("about:")
-                    && lower_url.contains(':') 
+                    && lower_url.contains(':')
                 {
                     return BrowserRiskAssessment {
                         risk_level: BrowserRiskLevel::Blocked,
@@ -214,7 +218,8 @@ impl BrowserRiskEngine {
                 ctx.placeholder.as_deref().unwrap_or(""),
                 ctx.element_text.as_deref().unwrap_or(""),
                 ctx.element_id.as_deref().unwrap_or("")
-            ).to_lowercase();
+            )
+            .to_lowercase();
 
             // Credit Card & Payment Inputs -> HIGH / REQUIRE_APPROVAL
             if combined_meta.contains("credit card")
@@ -261,7 +266,8 @@ impl BrowserRiskEngine {
         }
 
         // 4. Click & Key Press Semantic Target Analysis (Step 4, 7)
-        if tool == "browser_click" || tool == "browser_press_key" || tool == "browser_select_option" {
+        if tool == "browser_click" || tool == "browser_press_key" || tool == "browser_select_option"
+        {
             let combined_target = format!(
                 "{} {} {} {} {}",
                 ctx.element_text.as_deref().unwrap_or(""),
@@ -269,7 +275,8 @@ impl BrowserRiskEngine {
                 ctx.element_href.as_deref().unwrap_or(""),
                 ctx.form_action.as_deref().unwrap_or(""),
                 ctx.placeholder.as_deref().unwrap_or("")
-            ).to_lowercase();
+            )
+            .to_lowercase();
 
             // A. Destructive Actions (Account Deletion, Data Erase, Repository Drop)
             if combined_target.contains("delete account")
@@ -352,17 +359,32 @@ impl BrowserRiskEngine {
         }
 
         // Phase 5.6A: Browser History & Bookmarks Risk Policies (Part M)
-        if tool == "browser_history_recent" || tool == "browser_history_search" || tool == "browser_bookmarks_list" || tool == "browser_bookmarks_search" || tool == "browser_bookmark_add" || tool == "browser_bookmark_open" {
+        if tool == "browser_history_recent"
+            || tool == "browser_history_search"
+            || tool == "browser_bookmarks_list"
+            || tool == "browser_bookmarks_search"
+            || tool == "browser_bookmark_add"
+            || tool == "browser_bookmark_open"
+        {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Low,
                 decision: BrowserRiskDecision::Allow,
                 policy_code: "SAFE_STORAGE_READ_WRITE".to_string(),
-                reason: "Standard history/bookmark query or safe bookmark addition permitted.".to_string(),
+                reason: "Standard history/bookmark query or safe bookmark addition permitted."
+                    .to_string(),
                 user_explanation: "Action permitted.".to_string(),
             };
         }
 
-        if tool == "browser_history_delete" || tool == "browser_bookmark_remove" || tool == "browser_bookmark_delete" || tool == "browser_bookmarks_delete" || tool == "browser_bookmark_folder_delete" || tool == "browser_bookmarks_delete_folder" || (tool.contains("bookmark") && tool.contains("delete")) || (tool.contains("bookmark") && tool.contains("remove")) {
+        if tool == "browser_history_delete"
+            || tool == "browser_bookmark_remove"
+            || tool == "browser_bookmark_delete"
+            || tool == "browser_bookmarks_delete"
+            || tool == "browser_bookmark_folder_delete"
+            || tool == "browser_bookmarks_delete_folder"
+            || (tool.contains("bookmark") && tool.contains("delete"))
+            || (tool.contains("bookmark") && tool.contains("remove"))
+        {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Medium,
                 decision: BrowserRiskDecision::RequireApproval,
@@ -399,7 +421,9 @@ impl BrowserRiskEngine {
                 decision: BrowserRiskDecision::RequireApproval,
                 policy_code: "DOWNLOAD_CANCEL_APPROVAL".to_string(),
                 reason: "Cancelling an active download requires operator confirmation.".to_string(),
-                user_explanation: "Approval required: this action cancels an in-progress file download.".to_string(),
+                user_explanation:
+                    "Approval required: this action cancels an in-progress file download."
+                        .to_string(),
             };
         }
 
@@ -408,8 +432,11 @@ impl BrowserRiskEngine {
                 risk_level: BrowserRiskLevel::Blocked,
                 decision: BrowserRiskDecision::Block,
                 policy_code: "BLOCKED_BINARY_EXECUTION".to_string(),
-                reason: "Automatic execution of downloaded binaries is strictly blocked for security.".to_string(),
-                user_explanation: "Blocked: autonomous execution of downloaded files is prohibited.".to_string(),
+                reason:
+                    "Automatic execution of downloaded binaries is strictly blocked for security."
+                        .to_string(),
+                user_explanation:
+                    "Blocked: autonomous execution of downloaded files is prohibited.".to_string(),
             };
         }
 
@@ -434,7 +461,10 @@ impl BrowserRiskEngine {
             };
         }
 
-        if tool == "browser_profile_create" || tool == "browser_profile_rename" || tool == "browser_profile_switch" {
+        if tool == "browser_profile_create"
+            || tool == "browser_profile_rename"
+            || tool == "browser_profile_switch"
+        {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Medium,
                 decision: BrowserRiskDecision::RequireApproval,
@@ -476,12 +506,17 @@ impl BrowserRiskEngine {
         }
 
         // Phase 5.6F-A: Advanced Browser Utilities Risk Rules
-        if tool == "browser_find" || tool == "browser_find_next" || tool == "browser_find_previous" || tool == "browser_zoom" {
+        if tool == "browser_find"
+            || tool == "browser_find_next"
+            || tool == "browser_find_previous"
+            || tool == "browser_zoom"
+        {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Low,
                 decision: BrowserRiskDecision::Allow,
                 policy_code: "SAFE_BROWSER_UTILITY".to_string(),
-                reason: "Finding text and adjusting zoom in page are safe non-mutating utilities.".to_string(),
+                reason: "Finding text and adjusting zoom in page are safe non-mutating utilities."
+                    .to_string(),
                 user_explanation: "Action permitted.".to_string(),
             };
         }
@@ -497,12 +532,16 @@ impl BrowserRiskEngine {
         }
 
         // Phase 5.6F-B: Save Page + Reader Mode Risk Rules
-        if tool == "browser_reader_mode_enter" || tool == "browser_reader_mode_exit" || tool == "browser_reader_mode_get" {
+        if tool == "browser_reader_mode_enter"
+            || tool == "browser_reader_mode_exit"
+            || tool == "browser_reader_mode_get"
+        {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Low,
                 decision: BrowserRiskDecision::Allow,
                 policy_code: "SAFE_READER_MODE".to_string(),
-                reason: "Reader mode content extraction and viewing is a safe read-only operation.".to_string(),
+                reason: "Reader mode content extraction and viewing is a safe read-only operation."
+                    .to_string(),
                 user_explanation: "Action permitted.".to_string(),
             };
         }
@@ -518,7 +557,12 @@ impl BrowserRiskEngine {
         }
 
         // Phase 5.6F-C: Tab Groups & Advanced Tab Management Risk Rules
-        if tool == "browser_tab_groups_list" || tool == "browser_tab_group_create" || tool == "browser_tab_group_rename" || tool == "browser_tab_group_move_tab" || tool == "browser_tab_group_remove_tab" {
+        if tool == "browser_tab_groups_list"
+            || tool == "browser_tab_group_create"
+            || tool == "browser_tab_group_rename"
+            || tool == "browser_tab_group_move_tab"
+            || tool == "browser_tab_group_remove_tab"
+        {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Low,
                 decision: BrowserRiskDecision::Allow,
@@ -533,8 +577,10 @@ impl BrowserRiskEngine {
                 risk_level: BrowserRiskLevel::Medium,
                 decision: BrowserRiskDecision::RequireApproval,
                 policy_code: "TAB_GROUP_DELETE_APPROVAL".to_string(),
-                reason: "Deleting a user tab group requires confirmation (tabs will be ungrouped).".to_string(),
-                user_explanation: "Approval required: the agent requests to delete a tab group.".to_string(),
+                reason: "Deleting a user tab group requires confirmation (tabs will be ungrouped)."
+                    .to_string(),
+                user_explanation: "Approval required: the agent requests to delete a tab group."
+                    .to_string(),
             };
         }
 
@@ -548,13 +594,20 @@ impl BrowserRiskEngine {
             };
         }
 
-        if tool.contains("cookie") || tool.contains("credential") || tool.contains("password") || tool.contains("export_storage") {
+        if tool.contains("cookie")
+            || tool.contains("credential")
+            || tool.contains("password")
+            || tool.contains("export_storage")
+        {
             return BrowserRiskAssessment {
                 risk_level: BrowserRiskLevel::Blocked,
                 decision: BrowserRiskDecision::Block,
                 policy_code: "BLOCKED_CREDENTIAL_EXTRACTION".to_string(),
-                reason: "Extracting cookies, credentials, or session databases is strictly prohibited.".to_string(),
-                user_explanation: "Blocked: credential and cookie extraction is forbidden.".to_string(),
+                reason:
+                    "Extracting cookies, credentials, or session databases is strictly prohibited."
+                        .to_string(),
+                user_explanation: "Blocked: credential and cookie extraction is forbidden."
+                    .to_string(),
             };
         }
 
@@ -573,7 +626,10 @@ impl BrowserRiskEngine {
             risk_level: BrowserRiskLevel::Blocked,
             decision: BrowserRiskDecision::Block,
             policy_code: "UNKNOWN_TOOL".to_string(),
-            reason: format!("Tool '{}' is not registered in the Browser Safety Policy.", tool),
+            reason: format!(
+                "Tool '{}' is not registered in the Browser Safety Policy.",
+                tool
+            ),
             user_explanation: "Blocked: Unrecognized browser action.".to_string(),
         }
     }
@@ -609,7 +665,10 @@ impl BrowserRiskEngine {
 
     /// Retrieves recent risk audit log entries.
     pub fn get_audit_logs() -> Vec<BrowserRiskAuditEntry> {
-        BROWSER_RISK_AUDIT_LOG.lock().map(|logs| logs.clone()).unwrap_or_default()
+        BROWSER_RISK_AUDIT_LOG
+            .lock()
+            .map(|logs| logs.clone())
+            .unwrap_or_default()
     }
 
     /// Creates a pending approval record for human operator authorization.
@@ -636,11 +695,17 @@ impl BrowserRiskEngine {
     }
 
     /// Resolves a pending approval (Approved / Rejected).
-    pub fn resolve_approval(approval_id: &str, decision: &str) -> Result<PendingBrowserActionApproval, String> {
+    pub fn resolve_approval(
+        approval_id: &str,
+        decision: &str,
+    ) -> Result<PendingBrowserActionApproval, String> {
         let mut store = PENDING_APPROVALS.lock().map_err(|e| e.to_string())?;
         if let Some(record) = store.get_mut(approval_id) {
             if record.status != "pending" {
-                return Err(format!("Approval '{}' is already resolved as '{}'.", approval_id, record.status));
+                return Err(format!(
+                    "Approval '{}' is already resolved as '{}'.",
+                    approval_id, record.status
+                ));
             }
             record.status = decision.to_lowercase();
             Ok(record.clone())
@@ -655,9 +720,16 @@ impl BrowserRiskEngine {
 // ============================================================================
 
 #[tauri::command]
-pub fn browser_assess_action_risk(context: BrowserActionContext) -> Result<BrowserRiskAssessment, String> {
+pub fn browser_assess_action_risk(
+    context: BrowserActionContext,
+) -> Result<BrowserRiskAssessment, String> {
     let assessment = BrowserRiskEngine::assess_risk(&context);
-    BrowserRiskEngine::record_audit_log(None, context.tool_name.clone(), context.tab_id.clone(), &assessment);
+    BrowserRiskEngine::record_audit_log(
+        None,
+        context.tool_name.clone(),
+        context.tab_id.clone(),
+        &assessment,
+    );
     Ok(assessment)
 }
 
@@ -667,6 +739,9 @@ pub fn browser_get_risk_audit_log() -> Result<Vec<BrowserRiskAuditEntry>, String
 }
 
 #[tauri::command]
-pub fn browser_resolve_action_approval(approval_id: String, decision: String) -> Result<PendingBrowserActionApproval, String> {
+pub fn browser_resolve_action_approval(
+    approval_id: String,
+    decision: String,
+) -> Result<PendingBrowserActionApproval, String> {
     BrowserRiskEngine::resolve_approval(&approval_id, &decision)
 }

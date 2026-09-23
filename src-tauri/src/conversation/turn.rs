@@ -40,17 +40,18 @@ impl TurnStatus {
         }
 
         match self {
-            TurnStatus::Created => matches!(
-                target,
-                TurnStatus::InputAccepted | TurnStatus::Cancelled
-            ),
-            TurnStatus::InputAccepted => matches!(
-                target,
-                TurnStatus::Processing | TurnStatus::Cancelled
-            ),
+            TurnStatus::Created => {
+                matches!(target, TurnStatus::InputAccepted | TurnStatus::Cancelled)
+            }
+            TurnStatus::InputAccepted => {
+                matches!(target, TurnStatus::Processing | TurnStatus::Cancelled)
+            }
             TurnStatus::Processing => matches!(
                 target,
-                TurnStatus::Streaming | TurnStatus::Completed | TurnStatus::Failed | TurnStatus::Cancelled
+                TurnStatus::Streaming
+                    | TurnStatus::Completed
+                    | TurnStatus::Failed
+                    | TurnStatus::Cancelled
             ),
             TurnStatus::Streaming => matches!(
                 target,

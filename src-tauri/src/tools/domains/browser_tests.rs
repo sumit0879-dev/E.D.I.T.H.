@@ -3,8 +3,8 @@ use crate::browser_agent::to_universal_tool_name;
 use crate::events::envelope::EventCorrelation;
 use crate::events::{EventEmitter, TaskId};
 use crate::policy::context::PolicyContext;
-use crate::policy::{OperatorDecision, PolicyEngine};
 use crate::policy::types::{ActionRequest, ActionTarget, PolicyOutcome, RiskLevel};
+use crate::policy::{OperatorDecision, PolicyEngine};
 use crate::task::runtime::TaskRuntime;
 use crate::task::types::{TaskOwner, TaskType};
 use crate::tools::executor::DomainExecutorRegistry;
@@ -203,10 +203,15 @@ async fn test_browser_confirmation_resumption() {
 
     let res = router.execute(req.clone()).await;
     assert_eq!(res.status, ToolStatus::ApprovalRequired);
-    let approval_id = res.approval_id.expect("Expected approval_id to be populated");
+    let approval_id = res
+        .approval_id
+        .expect("Expected approval_id to be populated");
 
     // Approve the request
-    assert!(engine.resolve_approval(&approval_id, OperatorDecision::Approve).await.is_ok());
+    assert!(engine
+        .resolve_approval(&approval_id, OperatorDecision::Approve)
+        .await
+        .is_ok());
 
     // Replay request with approval token
     req.active_approval_id = Some(approval_id.clone());
@@ -234,10 +239,16 @@ async fn test_browser_replay_consumed_rejected() {
     );
     let ctx = PolicyContext::default();
     let initial_decision = engine.evaluate(&approval_req, &ctx).await;
-    assert_eq!(initial_decision.outcome, PolicyOutcome::ConfirmationRequired);
+    assert_eq!(
+        initial_decision.outcome,
+        PolicyOutcome::ConfirmationRequired
+    );
     let approval_id = initial_decision.approval_id.expect("Expected approval_id");
 
-    assert!(engine.resolve_approval(&approval_id, OperatorDecision::Approve).await.is_ok());
+    assert!(engine
+        .resolve_approval(&approval_id, OperatorDecision::Approve)
+        .await
+        .is_ok());
 
     // First consume succeeds
     let mut authed_ctx = ctx.clone();
@@ -371,19 +382,37 @@ async fn test_browser_execution_timeout() {
 
 #[test]
 fn test_browser_agent_routes_through_tool_router() {
-    assert_eq!(to_universal_tool_name("browser_open_url"), "browser.navigate");
+    assert_eq!(
+        to_universal_tool_name("browser_open_url"),
+        "browser.navigate"
+    );
     assert_eq!(to_universal_tool_name("browser_observe"), "browser.observe");
     assert_eq!(to_universal_tool_name("browser_click"), "browser.click");
     assert_eq!(to_universal_tool_name("browser_type"), "browser.type");
     assert_eq!(to_universal_tool_name("browser_scroll"), "browser.scroll");
-    assert_eq!(to_universal_tool_name("browser_press_key"), "browser.press_key");
+    assert_eq!(
+        to_universal_tool_name("browser_press_key"),
+        "browser.press_key"
+    );
     assert_eq!(to_universal_tool_name("browser_focus"), "browser.focus");
     assert_eq!(to_universal_tool_name("browser_wait"), "browser.wait");
-    assert_eq!(to_universal_tool_name("browser_select_option"), "browser.select_option");
-    assert_eq!(to_universal_tool_name("browser_get_tabs"), "browser.get_tabs");
-    assert_eq!(to_universal_tool_name("browser_get_active_tab"), "browser.get_active_tab");
+    assert_eq!(
+        to_universal_tool_name("browser_select_option"),
+        "browser.select_option"
+    );
+    assert_eq!(
+        to_universal_tool_name("browser_get_tabs"),
+        "browser.get_tabs"
+    );
+    assert_eq!(
+        to_universal_tool_name("browser_get_active_tab"),
+        "browser.get_active_tab"
+    );
     assert_eq!(to_universal_tool_name("browser_new_tab"), "browser.new_tab");
-    assert_eq!(to_universal_tool_name("browser.custom_action"), "browser.custom_action");
+    assert_eq!(
+        to_universal_tool_name("browser.custom_action"),
+        "browser.custom_action"
+    );
 }
 
 #[tokio::test]

@@ -9,20 +9,20 @@ use std::collections::HashMap;
 pub fn embed_text_hash(text: &str) -> Vec<f32> {
     const DIM: usize = 384;
     let mut vec = vec![0.0f32; DIM];
-    
+
     let text_lower = text.to_lowercase();
     let words: Vec<&str> = text_lower.split_whitespace().collect();
-    
+
     if words.is_empty() {
         return vec;
     }
-    
+
     // Word unigrams
     let mut word_counts: HashMap<&str, usize> = HashMap::new();
     for w in &words {
         *word_counts.entry(w).or_insert(0) += 1;
     }
-    
+
     for (word, count) in &word_counts {
         let tf = (*count as f32) / (words.len() as f32);
         // Hash word into multiple positions using different hash seeds
@@ -33,19 +33,19 @@ pub fn embed_text_hash(text: &str) -> Vec<f32> {
             vec[pos] += val * tf;
         }
     }
-    
+
     // Character trigrams for subword information
     for word in &words {
         let chars: Vec<char> = word.chars().collect();
         for i in 0..chars.len().saturating_sub(2) {
-            let trigram: String = chars[i..i+3].iter().collect();
+            let trigram: String = chars[i..i + 3].iter().collect();
             let h = fnv_hash(trigram.as_bytes(), 42);
             let pos = (h as usize) % DIM;
             let val = (fnv_hash(trigram.as_bytes(), 99) as f32 / u64::MAX as f32) * 2.0 - 1.0;
             vec[pos] += val * 0.3;
         }
     }
-    
+
     // Positional encoding
     for (i, word) in words.iter().enumerate() {
         let h = fnv_hash(word.as_bytes(), i as u64 + 200);
@@ -53,7 +53,7 @@ pub fn embed_text_hash(text: &str) -> Vec<f32> {
         let position_weight = 1.0 / (1.0 + i as f32).ln().max(1.0);
         vec[pos] += position_weight * 0.1;
     }
-    
+
     // L2 normalize
     let norm: f32 = vec.iter().map(|x| x * x).sum::<f32>().sqrt();
     if norm > 1e-9 {
@@ -61,7 +61,7 @@ pub fn embed_text_hash(text: &str) -> Vec<f32> {
             *x /= norm;
         }
     }
-    
+
     vec
 }
 

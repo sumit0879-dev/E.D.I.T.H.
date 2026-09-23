@@ -107,7 +107,10 @@ pub fn sanitize_value(val: &serde_json::Value) -> serde_json::Value {
             let mut sanitized_map = serde_json::Map::new();
             for (k, v) in map {
                 if is_sensitive_key(k) {
-                    sanitized_map.insert(k.clone(), serde_json::Value::String("[REDACTED]".to_string()));
+                    sanitized_map.insert(
+                        k.clone(),
+                        serde_json::Value::String("[REDACTED]".to_string()),
+                    );
                 } else {
                     sanitized_map.insert(k.clone(), sanitize_value(v));
                 }
@@ -155,12 +158,7 @@ impl SecurityAuditTrail {
     /// Retrieves up to `limit` recent audit records in descending chronological order.
     pub async fn get_recent(&self, limit: usize) -> Vec<AuditRecord> {
         let guard = self.entries.read().await;
-        guard
-            .iter()
-            .rev()
-            .take(limit)
-            .cloned()
-            .collect()
+        guard.iter().rev().take(limit).cloned().collect()
     }
 
     /// Returns the current number of stored audit records.

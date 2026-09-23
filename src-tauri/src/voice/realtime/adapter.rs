@@ -22,14 +22,9 @@ pub enum RealtimeProviderEvent {
     /// Provider connected and session initialized.
     Connected,
     /// Partial or finalized speech transcription delta.
-    TranscriptDelta {
-        text: String,
-        is_final: bool,
-    },
+    TranscriptDelta { text: String, is_final: bool },
     /// Synthesized speech audio chunk for immediate hardware playback.
-    AudioDelta {
-        frame: AudioFrame,
-    },
+    AudioDelta { frame: AudioFrame },
     /// Model-requested tool invocation requiring execution through Universal Tool Runtime.
     ToolCall {
         call_id: String,
@@ -37,15 +32,11 @@ pub enum RealtimeProviderEvent {
         arguments: serde_json::Value,
     },
     /// Interruption signal from provider (e.g. server-side VAD).
-    Interrupted {
-        reason: String,
-    },
+    Interrupted { reason: String },
     /// Conversational exchange boundary signaled by provider.
     TurnComplete,
     /// Provider or network error.
-    Error {
-        message: String,
-    },
+    Error { message: String },
 }
 
 /// Interface for an active realtime duplex voice provider session.
@@ -107,7 +98,9 @@ impl RealtimeSessionAdapter for MockRealtimeSessionAdapter {
     ) -> Pin<Box<dyn Future<Output = Result<(), VoiceError>> + Send + 'a>> {
         Box::pin(async move {
             if self.closed_flag.load(Ordering::SeqCst) {
-                return Err(VoiceError::Internal("Session adapter is closed".to_string()));
+                return Err(VoiceError::Internal(
+                    "Session adapter is closed".to_string(),
+                ));
             }
             self.transport.send_frame(frame).await
         })
@@ -115,7 +108,8 @@ impl RealtimeSessionAdapter for MockRealtimeSessionAdapter {
 
     fn next_event<'a>(
         &'a self,
-    ) -> Pin<Box<dyn Future<Output = Result<Option<RealtimeProviderEvent>, VoiceError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<Option<RealtimeProviderEvent>, VoiceError>> + Send + 'a>>
+    {
         Box::pin(async move {
             if self.closed_flag.load(Ordering::SeqCst) {
                 return Ok(None);
@@ -127,7 +121,10 @@ impl RealtimeSessionAdapter for MockRealtimeSessionAdapter {
                     Ok(Some(RealtimeProviderEvent::AudioDelta { frame }))
                 }
                 Some(TransportEvent::TranscriptDelta { text, is_final }) => {
-                    Ok(Some(RealtimeProviderEvent::TranscriptDelta { text, is_final }))
+                    Ok(Some(RealtimeProviderEvent::TranscriptDelta {
+                        text,
+                        is_final,
+                    }))
                 }
                 Some(TransportEvent::ToolCall {
                     call_id,

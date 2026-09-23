@@ -35,13 +35,19 @@ impl DomainExecutorRegistry {
 
     /// Registers an executor for its declared domain.
     pub fn register(&self, executor: Arc<dyn DomainExecutor>) {
-        let mut lock = self.executors.write().expect("DomainExecutorRegistry write lock poisoned");
+        let mut lock = self
+            .executors
+            .write()
+            .expect("DomainExecutorRegistry write lock poisoned");
         lock.insert(executor.domain(), executor);
     }
 
     /// Retrieves the executor responsible for a specific domain.
     pub fn get(&self, domain: &ToolDomain) -> Option<Arc<dyn DomainExecutor>> {
-        let lock = self.executors.read().expect("DomainExecutorRegistry read lock poisoned");
+        let lock = self
+            .executors
+            .read()
+            .expect("DomainExecutorRegistry read lock poisoned");
         lock.get(domain).cloned()
     }
 }

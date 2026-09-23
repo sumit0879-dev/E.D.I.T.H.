@@ -427,7 +427,8 @@ impl DomainExecutor for BrowserDomainExecutor {
         request: &'a ToolRequest,
         _definition: &'a ToolDefinition,
         cancel_token: ScopedCancellationToken,
-    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ToolExecutionError>> + Send + 'a>> {
+    ) -> Pin<Box<dyn Future<Output = Result<serde_json::Value, ToolExecutionError>> + Send + 'a>>
+    {
         Box::pin(async move {
             // Check cancellation before dispatching
             if cancel_token.is_cancelled() {

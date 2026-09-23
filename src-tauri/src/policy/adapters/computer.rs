@@ -4,9 +4,11 @@
 //! requirements before any desktop or system control action is dispatched.
 
 use crate::computer_control::{ComputerControlState, GLOBAL_COMPUTER_CONTROL_MGR};
-use crate::policy::context::PolicyContext;
-use crate::policy::types::{ActionRequest, ActionTarget, PolicyConstraints, PolicyOutcome, RiskLevel};
 use crate::plugins::BUILTIN_APPS;
+use crate::policy::context::PolicyContext;
+use crate::policy::types::{
+    ActionRequest, ActionTarget, PolicyConstraints, PolicyOutcome, RiskLevel,
+};
 
 /// Evaluates desktop automation and system interaction proposals.
 pub struct ComputerAdapter;
@@ -22,7 +24,8 @@ impl ComputerAdapter {
             return (
                 RiskLevel::High,
                 PolicyOutcome::Blocked,
-                "Autonomous computer execution is currently paused by human operator takeover.".to_string(),
+                "Autonomous computer execution is currently paused by human operator takeover."
+                    .to_string(),
             );
         }
 
@@ -54,7 +57,12 @@ impl ComputerAdapter {
             // Inspect target window/context if specified
             let target_str = match &req.target {
                 ActionTarget::SystemTarget(t) => t.to_lowercase(),
-                _ => req.arguments.get("target").and_then(|v| v.as_str()).unwrap_or("").to_lowercase(),
+                _ => req
+                    .arguments
+                    .get("target")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase(),
             };
 
             // Disallow clicking into secure desktop or UAC prompts
@@ -80,7 +88,12 @@ impl ComputerAdapter {
         if op == "focus_window" {
             let title = match &req.target {
                 ActionTarget::SystemTarget(t) => t.to_lowercase(),
-                _ => req.arguments.get("title").and_then(|v| v.as_str()).unwrap_or("").to_lowercase(),
+                _ => req
+                    .arguments
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase(),
             };
 
             if title.contains("uac") || title.contains("windows security") {
@@ -104,13 +117,19 @@ impl ComputerAdapter {
                 return (
                     RiskLevel::High,
                     PolicyOutcome::Blocked,
-                    "Application launching is disabled under active policy constraints.".to_string(),
+                    "Application launching is disabled under active policy constraints."
+                        .to_string(),
                 );
             }
 
             let app_name = match &req.target {
                 ActionTarget::SystemTarget(a) => a.clone(),
-                _ => req.arguments.get("app_name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                _ => req
+                    .arguments
+                    .get("app_name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
             };
 
             let trimmed = app_name.trim().to_lowercase();
@@ -132,7 +151,10 @@ impl ComputerAdapter {
                 return (
                     RiskLevel::Critical,
                     PolicyOutcome::Blocked,
-                    format!("Application '{}' is not registered in the approved application catalog.", app_name),
+                    format!(
+                        "Application '{}' is not registered in the approved application catalog.",
+                        app_name
+                    ),
                 );
             }
 
@@ -140,7 +162,10 @@ impl ComputerAdapter {
             return (
                 RiskLevel::High,
                 PolicyOutcome::ConfirmationRequired,
-                format!("Launching application '{}' requires explicit operator confirmation.", app_name),
+                format!(
+                    "Launching application '{}' requires explicit operator confirmation.",
+                    app_name
+                ),
             );
         }
 
@@ -148,10 +173,19 @@ impl ComputerAdapter {
         if op == "close_window" {
             let title = match &req.target {
                 ActionTarget::SystemTarget(t) => t.to_lowercase(),
-                _ => req.arguments.get("title").and_then(|v| v.as_str()).unwrap_or("").to_lowercase(),
+                _ => req
+                    .arguments
+                    .get("title")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_lowercase(),
             };
 
-            if title.contains("explorer") || title.contains("edith") || title.contains("task manager") || title.contains("taskmgr") {
+            if title.contains("explorer")
+                || title.contains("edith")
+                || title.contains("task manager")
+                || title.contains("taskmgr")
+            {
                 return (
                     RiskLevel::Critical,
                     PolicyOutcome::Blocked,
@@ -168,8 +202,16 @@ impl ComputerAdapter {
 
         // 8. Text Typing (type)
         if op == "type" {
-            let text = req.arguments.get("text").and_then(|v| v.as_str()).unwrap_or("");
-            let is_sensitive = req.arguments.get("is_sensitive").and_then(|v| v.as_bool()).unwrap_or(false);
+            let text = req
+                .arguments
+                .get("text")
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
+            let is_sensitive = req
+                .arguments
+                .get("is_sensitive")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
 
             let lower_text = text.to_lowercase();
             let has_sensitive_tokens = is_sensitive
@@ -196,8 +238,13 @@ impl ComputerAdapter {
 
         // 9. Single Key Press (press_key)
         if op == "press_key" {
-            let key = req.arguments.get("key").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-            
+            let key = req
+                .arguments
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_lowercase();
+
             // Critical keys that can alter system power or security
             if key == "power" || key == "sleep" {
                 return (
@@ -230,7 +277,10 @@ impl ComputerAdapter {
             let joined = keys.join("+");
 
             // Strictly prohibited system escalation hotkeys
-            if joined.contains("ctrl+alt+del") || joined.contains("win+r") || joined.contains("win+l") {
+            if joined.contains("ctrl+alt+del")
+                || joined.contains("win+r")
+                || joined.contains("win+l")
+            {
                 return (
                     RiskLevel::Critical,
                     PolicyOutcome::Blocked,
