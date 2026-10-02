@@ -2832,7 +2832,7 @@ pub async fn browser_save_page_html(
 
     // Record in database for downloads list integration
     if let Ok(app_dir) = app.path().app_data_dir() {
-        if let Ok(conn) = crate::db::init_db_at(&app_dir.join("edith.db")) {
+        if let Ok(conn) = crate::db::init_db_at(&app_dir.join("edith_memory.db")) {
             let _ = crate::db::upsert_browser_download(
                 &conn,
                 &crate::db::BrowserDownloadRecord {

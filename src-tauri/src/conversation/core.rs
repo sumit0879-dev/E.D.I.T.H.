@@ -217,7 +217,12 @@ impl ConversationCore {
         // Context Assembly Boundary
         let assembled_messages = self
             .context_assembler
-            .assemble_messages(&history_messages, &user_message)
+            .assemble_messages_with_model(
+                &history_messages,
+                &user_message,
+                Some(&model_selection.provider_id),
+                Some(&model_selection.model_id),
+            )
             .await;
 
         // Resolve provider adapter from ProviderRegistry
@@ -313,7 +318,7 @@ impl ConversationCore {
                 let accumulated = Arc::new(std::sync::Mutex::new(String::new()));
                 let acc_clone = accumulated.clone();
 
-                let stream_res = streamer
+                let stream_future = streamer
                     .stream(
                         &req,
                         &credentials,
@@ -336,8 +341,22 @@ impl ConversationCore {
                                 );
                             }
                         }),
-                    )
-                    .await;
+                    );
+
+                let stream_res = match tokio::time::timeout(std::time::Duration::from_secs(60), stream_future).await {
+                    Ok(res) => res,
+                    Err(_) => {
+                        let err_str = "Generation request timed out after 60 seconds".to_string();
+                        let _ = self
+                            .emitter
+                            .emit_stream_failed(&correlation, &err_str, None);
+                        let mut turn = turn_arc.write().await;
+                        turn.status = TurnStatus::Failed;
+                        turn.completed_at_ms = Some(now_ms());
+                        turn.error = Some(err_str.clone());
+                        return Err(ConversationError::Timeout(err_str));
+                    }
+                };
 
                 if cancellation_token.is_cancelled() {
                     let mut turn = turn_arc.write().await;
@@ -370,7 +389,25 @@ impl ConversationCore {
                     }
                 }
             } else if let Some(gen) = adapter.as_text_generation() {
-                let gen_res = gen.generate(&req, &credentials).await;
+                let gen_res = match tokio::time::timeout(
+                    std::time::Duration::from_secs(60),
+                    gen.generate(&req, &credentials),
+                )
+                .await
+                {
+                    Ok(res) => res,
+                    Err(_) => {
+                        let err_str = "Generation request timed out after 60 seconds".to_string();
+                        let _ = self
+                            .emitter
+                            .emit_stream_failed(&correlation, &err_str, None);
+                        let mut turn = turn_arc.write().await;
+                        turn.status = TurnStatus::Failed;
+                        turn.completed_at_ms = Some(now_ms());
+                        turn.error = Some(err_str.clone());
+                        return Err(ConversationError::Timeout(err_str));
+                    }
+                };
 
                 if cancellation_token.is_cancelled() {
                     let mut turn = turn_arc.write().await;
@@ -433,6 +470,7 @@ impl ConversationCore {
                     ));
 
                     // Execute each requested tool through the Universal Tool Runtime
+                    let mut approval_required_info = None;
                     for call in tool_calls {
                         if cancellation_token.is_cancelled() {
                             break;
@@ -459,6 +497,11 @@ impl ConversationCore {
                                 .to_string()
                             }
                             ToolStatus::ApprovalRequired => {
+                                approval_required_info = Some((
+                                    call.name.clone(),
+                                    tool_result.approval_id.clone().unwrap_or_default(),
+                                    tool_result.error.clone(),
+                                ));
                                 json!({
                                     "status": "approval_required",
                                     "approval_id": tool_result.approval_id,
@@ -488,6 +531,30 @@ impl ConversationCore {
                             call.name.clone(),
                             result_payload,
                         ));
+
+                        if approval_required_info.is_some() {
+                            // If this action requires approval, do not execute further actions in this turn
+                            break;
+                        }
+                    }
+
+                    if let Some((tool_name, approval_id, reason)) = approval_required_info {
+                        // Human-In-The-Loop Security Gate: Halt agentic iteration immediately!
+                        // Do NOT re-prompt the LLM until the human operator has explicitly approved the action.
+                        let notice = if !response.text.is_empty() {
+                            format!(
+                                "{}\n\n[Operator Approval Required]: Action '{}' requires human confirmation (Approval ID: {}). Please review and approve.",
+                                response.text, tool_name, approval_id
+                            )
+                        } else {
+                            format!(
+                                "Action '{}' requires operator approval before execution (Reason: {}). Please review and approve.",
+                                tool_name,
+                                reason.as_deref().unwrap_or("Confirmation required by security policy")
+                            )
+                        };
+                        final_text = notice;
+                        break;
                     }
 
                     // Feed tool outputs back to the model in the same conversational turn!

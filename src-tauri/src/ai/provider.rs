@@ -113,6 +113,60 @@ impl Default for ChatMessage {
     }
 }
 
+/// Formats a slice of ChatMessage items into the canonical OpenAI/Groq wire format.
+///
+/// In OpenAI/Groq REST specifications:
+/// - An assistant message with tool calls MUST serialize each call as:
+///   `{"id": "...", "type": "function", "function": {"name": "...", "arguments": "..."}}`
+///   Missing `"type": "function"` causes Groq API to reject with `messages.X.tool_calls.0.type is missing`.
+/// - A tool result message MUST serialize with `role: "tool"`, `tool_call_id: "..."`, and `content: "..."`.
+pub fn format_messages_for_openai_wire(messages: &[ChatMessage]) -> Vec<serde_json::Value> {
+    messages
+        .iter()
+        .map(|m| {
+            let mut obj = serde_json::Map::new();
+            obj.insert("role".to_string(), serde_json::json!(m.role));
+
+            if let Some(ref tool_calls) = m.tool_calls {
+                let tc_json: Vec<serde_json::Value> = tool_calls
+                    .iter()
+                    .map(|tc| {
+                        serde_json::json!({
+                            "id": tc.id,
+                            "type": "function",
+                            "function": {
+                                "name": tc.name,
+                                "arguments": tc.arguments,
+                            }
+                        })
+                    })
+                    .collect();
+                obj.insert("tool_calls".to_string(), serde_json::json!(tc_json));
+                if !m.content.is_empty() {
+                    obj.insert("content".to_string(), serde_json::json!(m.content));
+                } else {
+                    obj.insert("content".to_string(), serde_json::Value::Null);
+                }
+            } else if m.role == "tool" {
+                obj.insert("content".to_string(), serde_json::json!(m.content));
+                if let Some(ref tcid) = m.tool_call_id {
+                    obj.insert("tool_call_id".to_string(), serde_json::json!(tcid));
+                }
+                if let Some(ref name) = m.name {
+                    obj.insert("name".to_string(), serde_json::json!(name));
+                }
+            } else {
+                obj.insert("content".to_string(), serde_json::json!(m.content));
+                if let Some(ref name) = m.name {
+                    obj.insert("name".to_string(), serde_json::json!(name));
+                }
+            }
+
+            serde_json::Value::Object(obj)
+        })
+        .collect()
+}
+
 /// Request payload for text generation or streaming.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GenerateRequest {
@@ -286,5 +340,51 @@ mod tests {
         assert_eq!(tools_arr.len(), 1);
         assert_eq!(tools_arr[0]["name"], "browser.navigate");
         assert_eq!(json_val["tool_choice"], "auto");
+    }
+
+    #[test]
+    fn test_format_messages_for_openai_wire_assistant_tool_calls() {
+        let assistant_msg = ChatMessage::assistant_with_tools(
+            "",
+            vec![
+                ToolCall::new("call_abc123", "computer.click", "{\"x\": 100, \"y\": 200}"),
+                ToolCall::new("call_def456", "browser.navigate", "{\"url\": \"https://example.com\"}"),
+            ],
+        );
+        let wire_json = format_messages_for_openai_wire(&[assistant_msg]);
+        assert_eq!(wire_json.len(), 1);
+
+        let msg_obj = &wire_json[0];
+        assert_eq!(msg_obj["role"], "assistant");
+        assert!(msg_obj["content"].is_null());
+
+        let tool_calls = msg_obj["tool_calls"].as_array().expect("tool_calls must be an array");
+        assert_eq!(tool_calls.len(), 2);
+
+        // Verify P0-A requirement: type MUST be "function"
+        assert_eq!(tool_calls[0]["id"], "call_abc123");
+        assert_eq!(tool_calls[0]["type"], "function");
+        assert_eq!(tool_calls[0]["function"]["name"], "computer.click");
+        assert_eq!(tool_calls[0]["function"]["arguments"], "{\"x\": 100, \"y\": 200}");
+
+        assert_eq!(tool_calls[1]["id"], "call_def456");
+        assert_eq!(tool_calls[1]["type"], "function");
+        assert_eq!(tool_calls[1]["function"]["name"], "browser.navigate");
+    }
+
+    #[test]
+    fn test_format_messages_for_openai_wire_tool_result() {
+        let result_msg = ChatMessage::tool_result(
+            "call_abc123",
+            "computer.click",
+            "{\"status\": \"success\"}",
+        );
+        let wire_json = format_messages_for_openai_wire(&[result_msg]);
+        assert_eq!(wire_json.len(), 1);
+
+        let msg_obj = &wire_json[0];
+        assert_eq!(msg_obj["role"], "tool");
+        assert_eq!(msg_obj["tool_call_id"], "call_abc123");
+        assert_eq!(msg_obj["content"], "{\"status\": \"success\"}");
     }
 }

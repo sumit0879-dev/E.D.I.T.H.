@@ -195,6 +195,16 @@ pub fn init_db_at(db_path: &PathBuf) -> Result<Connection> {
         CREATE TABLE IF NOT EXISTS personal_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, timestamp TEXT);
         CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, title TEXT, timestamp TEXT);
         CREATE TABLE IF NOT EXISTS messages (id INTEGER PRIMARY KEY AUTOINCREMENT, session_id TEXT, role TEXT, text TEXT, time TEXT);
+        CREATE TABLE IF NOT EXISTS custom_apps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL UNIQUE,
+            path TEXT NOT NULL,
+            keywords TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS plugin_states (
+            id TEXT PRIMARY KEY,
+            enabled INTEGER NOT NULL DEFAULT 1
+        );
 
         CREATE TABLE IF NOT EXISTS memories (
             id TEXT PRIMARY KEY,
@@ -1682,3 +1692,105 @@ pub fn toggle_browser_privacy_rule(
     )?;
     Ok(count > 0)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct TempDb {
+        path: PathBuf,
+    }
+
+    impl TempDb {
+        fn new() -> Self {
+            let path = std::env::temp_dir().join(format!("edith_test_{}.db", uuid::Uuid::new_v4()));
+            Self { path }
+        }
+    }
+
+    impl Drop for TempDb {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_file(&self.path);
+        }
+    }
+
+    #[test]
+    fn test_fresh_db_initialization_contains_plugin_states_and_custom_apps() {
+        let temp = TempDb::new();
+        let conn = init_db_at(&temp.path).expect("init_db_at failed");
+
+        // Verify plugin_states table exists and can be queried cleanly
+        let states = get_plugin_states(&conn).expect("get_plugin_states failed on fresh db");
+        assert!(states.is_empty(), "Fresh db should have empty plugin_states");
+
+        // Verify custom_apps table exists and can be queried cleanly
+        let apps = get_custom_apps(&conn).expect("get_custom_apps failed on fresh db");
+        assert!(apps.is_empty(), "Fresh db should have empty custom_apps");
+    }
+
+    #[test]
+    fn test_plugin_states_crud() {
+        let temp = TempDb::new();
+        let conn = init_db_at(&temp.path).expect("init_db_at failed");
+
+        set_plugin_state(&conn, "search", true).expect("failed to set search plugin");
+        set_plugin_state(&conn, "computer", false).expect("failed to set computer plugin");
+
+        let states = get_plugin_states(&conn).expect("failed to get plugin states");
+        assert_eq!(states.get("search"), Some(&true));
+        assert_eq!(states.get("computer"), Some(&false));
+        assert_eq!(states.get("nonexistent"), None);
+    }
+
+    #[test]
+    fn test_custom_apps_crud() {
+        let temp = TempDb::new();
+        let conn = init_db_at(&temp.path).expect("init_db_at failed");
+
+        add_custom_app(&conn, "Notepad", "notepad.exe", "text notes editor").expect("failed to add app");
+        let apps = get_custom_apps(&conn).expect("failed to get custom apps");
+        assert_eq!(apps.len(), 1);
+        assert_eq!(apps[0].name, "notepad");
+        assert_eq!(apps[0].path, "notepad.exe");
+
+        let app_id = apps[0].id;
+        delete_custom_app(&conn, app_id).expect("failed to delete app");
+        let apps_after = get_custom_apps(&conn).expect("failed to get custom apps after delete");
+        assert!(apps_after.is_empty());
+    }
+
+    #[test]
+    fn test_database_self_healing_missing_tables() {
+        let temp = TempDb::new();
+
+        // Simulate an existing database created when custom_apps and plugin_states were missing
+        {
+            let conn = Connection::open(&temp.path).expect("failed to open raw connection");
+            conn.execute_batch(
+                "CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT);
+                 CREATE TABLE personal_notes (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT, timestamp TEXT);
+                 INSERT INTO settings (key, value) VALUES ('theme', 'dark');"
+            ).expect("failed to seed legacy db");
+        }
+
+        // Run init_db_at on the existing database to simulate application launch self-healing
+        let conn = init_db_at(&temp.path).expect("self-healing init_db_at failed");
+
+        // Verify existing data preserved
+        let settings = get_all_settings(&conn).expect("failed to load settings");
+        assert_eq!(settings.get("theme"), Some(&"dark".to_string()));
+
+        // Verify missing tables were created safely
+        let states = get_plugin_states(&conn).expect("plugin_states missing after self-healing");
+        assert!(states.is_empty());
+
+        let apps = get_custom_apps(&conn).expect("custom_apps missing after self-healing");
+        assert!(apps.is_empty());
+
+        // Verify write operations succeed on the healed tables
+        set_plugin_state(&conn, "web_search", true).expect("failed to write to healed plugin_states");
+        let healed_states = get_plugin_states(&conn).expect("failed to read healed states");
+        assert_eq!(healed_states.get("web_search"), Some(&true));
+    }
+}
+

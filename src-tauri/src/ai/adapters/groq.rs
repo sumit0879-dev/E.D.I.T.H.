@@ -169,7 +169,7 @@ impl TextGenerationCapability for GroqAdapter {
 
             let mut body = json!({
                 "model": req.model,
-                "messages": req.messages,
+                "messages": crate::ai::provider::format_messages_for_openai_wire(&req.messages),
                 "temperature": req.temperature,
                 "stream": false
             });
@@ -291,7 +291,7 @@ impl StreamingTextCapability for GroqAdapter {
 
             let mut body = json!({
                 "model": req.model,
-                "messages": req.messages,
+                "messages": crate::ai::provider::format_messages_for_openai_wire(&req.messages),
                 "temperature": req.temperature,
                 "stream": true
             });
@@ -350,20 +350,24 @@ impl StreamingTextCapability for GroqAdapter {
             let mut finish_reason = None;
             let mut partial_tool_calls: std::collections::HashMap<usize, ToolCall> =
                 std::collections::HashMap::new();
+            let mut emitted_done = false;
 
-            while let Ok(Some(chunk)) = res.chunk().await {
+            'stream_loop: while let Ok(Some(chunk)) = res.chunk().await {
                 let chunk_str = String::from_utf8_lossy(&chunk);
                 for line in chunk_str.lines() {
                     let trimmed = line.trim();
                     if trimmed.starts_with("data: ") {
                         let data = &trimmed[6..].trim();
                         if *data == "[DONE]" {
-                            on_chunk(StreamChunk {
-                                text: String::new(),
-                                is_done: true,
-                                tool_calls: None,
-                            });
-                            break;
+                            if !emitted_done {
+                                emitted_done = true;
+                                on_chunk(StreamChunk {
+                                    text: String::new(),
+                                    is_done: true,
+                                    tool_calls: None,
+                                });
+                            }
+                            break 'stream_loop;
                         }
 
                         if let Ok(parsed) = serde_json::from_str::<Value>(data) {
@@ -405,6 +409,14 @@ impl StreamingTextCapability for GroqAdapter {
                         }
                     }
                 }
+            }
+
+            if !emitted_done {
+                on_chunk(StreamChunk {
+                    text: String::new(),
+                    is_done: true,
+                    tool_calls: None,
+                });
             }
 
             let final_tool_calls = if partial_tool_calls.is_empty() {

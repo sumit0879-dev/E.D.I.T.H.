@@ -196,28 +196,31 @@ export const ChatView: React.FC = () => {
     setHasNewMessagesBelow(false);
     setTimeout(() => scrollToBottom('smooth'), 50);
 
-    // Correlated stream subscription: strictly isolated to this assistantMsgId (turnId)
-    const unsubscribeStream = tauriService.streamRouter.subscribeTurn(
-      assistantMsgId,
-      ({ text: chunkText }) => {
-        setMessages((prev) =>
-          prev.map((m) =>
-            m.id === assistantMsgId
-              ? {
-                  ...m,
-                  text: (m.text || '') + chunkText,
-                  content: (m.content || '') + chunkText,
-                }
-              : m
-          )
-        );
+    // Helper callback to append streaming chunk text to the assistant message
+    const handleStreamChunk = ({ text: chunkText }: { text: string }) => {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === assistantMsgId
+            ? {
+                ...m,
+                text: (m.text || '') + chunkText,
+                content: (m.content || '') + chunkText,
+              }
+            : m
+        )
+      );
 
-        if (isAutoScroll) {
-          setTimeout(scrollToBottom, 50);
-        } else {
-          setHasNewMessagesBelow(true);
-        }
+      if (isAutoScroll) {
+        setTimeout(scrollToBottom, 50);
+      } else {
+        setHasNewMessagesBelow(true);
       }
+    };
+
+    // Correlated stream subscription: initial clientTurnId for fallback
+    let unsubscribeStream = tauriService.streamRouter.subscribeTurn(
+      assistantMsgId,
+      handleStreamChunk
     );
 
     currentTurnIdRef.current = assistantMsgId;
@@ -230,14 +233,26 @@ export const ChatView: React.FC = () => {
 
       try {
         // Authoritative path: ConversationCore agentic execution
+        const effectiveProvider = settings.selectedProvider || settings.aiProvider;
+        const effectiveModel = settings.selectedModel || settings.aiModel;
+
         const turnResult = await conversationService.submitConversationTurn({
           sessionId: targetSessionId,
           message: text.trim(),
-          providerId: settings.aiProvider,
-          modelId: settings.aiModel,
+          providerId: effectiveProvider,
+          modelId: effectiveModel,
           temperature: parseFloat(settings.temperature || '0.7'),
           clientTurnId: assistantMsgId,
         });
+
+        // Backend is authoritative creator and owner of TurnId.
+        // Switch stream listener to authoritative turnResult.turn_id:
+        unsubscribeStream();
+        unsubscribeStream = tauriService.streamRouter.subscribeTurn(
+          turnResult.turn_id,
+          handleStreamChunk
+        );
+        currentTurnIdRef.current = turnResult.turn_id;
 
         responseText = await conversationService.executeConversationTurn(
           turnResult.turn_id,
