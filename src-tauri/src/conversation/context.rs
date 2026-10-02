@@ -120,6 +120,25 @@ impl ContextAssembler {
         sys
     }
 
+    /// Builds a formatted system instruction string incorporating persona, user profile, memory, and runtime model identity.
+    pub fn build_system_prompt_with_identity(
+        &self,
+        memory_items: &[String],
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+    ) -> String {
+        let mut sys = self.build_system_prompt(memory_items);
+
+        if let (Some(prov), Some(model)) = (provider_id, model_id) {
+            sys.push_str(&format!(
+                "\n\n[Runtime Identity Grounding]: You are executing on provider '{}' with model '{}'. When asked about your model, architecture, or provider, state this accurately.",
+                prov, model
+            ));
+        }
+
+        sys
+    }
+
     /// Asynchronously retrieves relevant semantic memory items using the pluggable boundary.
     pub async fn retrieve_memory(&self, query: &str) -> Vec<String> {
         self.memory_retriever.retrieve_context(query).await
@@ -131,8 +150,23 @@ impl ContextAssembler {
         history: &[ChatMessage],
         current_input: &str,
     ) -> Vec<ChatMessage> {
+        self.assemble_messages_with_model(history, current_input, None, None).await
+    }
+
+    /// Assembles the complete list of ChatMessage items with authoritative runtime model grounding.
+    pub async fn assemble_messages_with_model(
+        &self,
+        history: &[ChatMessage],
+        current_input: &str,
+        provider_id: Option<&str>,
+        model_id: Option<&str>,
+    ) -> Vec<ChatMessage> {
         let memory_items = self.retrieve_memory(current_input).await;
-        let system_prompt = self.build_system_prompt(&memory_items);
+        let system_prompt = self.build_system_prompt_with_identity(
+            &memory_items,
+            provider_id,
+            model_id,
+        );
 
         let mut messages = Vec::with_capacity(history.len() + 2);
         messages.push(ChatMessage::system(system_prompt));

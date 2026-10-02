@@ -727,7 +727,7 @@ mod tests {
     impl crate::ai::TextGenerationCapability for MockApprovalToolProvider {
         fn generate<'a>(
             &'a self,
-            req: &'a GenerateRequest,
+            _req: &'a GenerateRequest,
             _creds: &'a Option<String>,
         ) -> Pin<Box<dyn Future<Output = Result<GenerateResponse, ProviderError>> + Send + 'a>> {
             Box::pin(async move {
@@ -744,14 +744,7 @@ mod tests {
                         )]),
                     })
                 } else {
-                    let tool_msg = req.messages.iter().find(|m| m.role == "tool").expect("Expected tool message");
-                    assert!(tool_msg.content.contains("approval_required"), "Expected approval_required status, got: {}", tool_msg.content);
-                    Ok(GenerateResponse {
-                        text: "Confirmation required before launching notepad.".to_string(),
-                        model: "tool-model".to_string(),
-                        finish_reason: Some("stop".to_string()),
-                        tool_calls: None,
-                    })
+                    panic!("Security failure: LLM must NEVER be re-prompted when an action requires human approval!");
                 }
             })
         }
@@ -763,7 +756,7 @@ mod tests {
         let prov = Arc::new(MockApprovalToolProvider {
             call_count: std::sync::atomic::AtomicUsize::new(0),
         });
-        registry.register(prov);
+        registry.register(prov.clone());
 
         let core = ConversationCore::mock(registry);
 
@@ -801,7 +794,12 @@ mod tests {
         let turn_id = TurnId::from_string(sub.turn_id);
         let res = core.execute_turn(&turn_id, None).await.unwrap();
 
-        assert_eq!(res, "Confirmation required before launching notepad.");
+        // Model must NOT have been called a second time
+        assert_eq!(prov.call_count.load(std::sync::atomic::Ordering::SeqCst), 1);
+
+        // Turn output informs operator that approval is required
+        assert!(res.contains("[Operator Approval Required]"));
+        assert!(res.contains("computer.launch_app"));
 
         // Verify pending approvals exist in policy engine
         let pending = policy_engine.list_pending_approvals().await;

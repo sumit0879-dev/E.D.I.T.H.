@@ -46,7 +46,7 @@ impl ChatResponse {
 
 fn plugin_enabled(state: &DbState, plugin_id: &str) -> Result<bool, String> {
     let conn = state.conn.lock().map_err(|e| e.to_string())?;
-    let saved = db::get_plugin_states(&conn).map_err(|e| e.to_string())?;
+    let saved = db::get_plugin_states(&conn).unwrap_or_default();
     Ok(*saved.get(plugin_id).unwrap_or(&true))
 }
 
